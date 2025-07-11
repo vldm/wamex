@@ -129,71 +129,47 @@ pub struct DataSymbol {
     pub range: Range<usize>,
 }
 
-fn get_data_symbols(data_segments: &[Data], symbols: &[SymbolInfo]) -> Result<Vec<DataSymbol>> {
-    let mut data_symbols = Vec::new();
-    for (symbol_index, info) in symbols.iter().enumerate() {
-        let SymbolInfo::Data {
-            symbol: Some(symbol),
-            ..
-        } = info
-        else {
-            continue;
-        };
-        if symbol.size == 0 {
-            // Ignore zero-size symbols since they cannot be the target of a relocation.
-            continue;
-        }
-        let data_segment = data_segments
-            .get(symbol.index as usize)
-            .ok_or_else(|| anyhow!("Invalid data segment index in symbol: {:?}", symbol))?;
-        if symbol
-            .offset
-            .checked_add(symbol.size)
-            .ok_or_else(|| anyhow!("Invalid symbol: {symbol:?}"))? as usize
-            > data_segment.data.len()
-        {
-            bail!(
-                "Invalid symbol {symbol:?} for data segment of size {:?}",
-                data_segment.data.len()
-            );
-        }
-        let offset = data_segment.range.end - data_segment.data.len() + (symbol.offset as usize);
-        let range = offset..(offset + symbol.size as usize);
-        data_symbols.push(DataSymbol {
-            symbol_index,
-            range,
-        });
-    }
-    data_symbols.sort_by_key(|symbol| symbol.range.start);
-    Ok(data_symbols)
-}
 
 #[derive(Default)]
 pub struct InputModule<'a> {
     pub raw: &'a [u8],
+    // parsed sections
     pub types: Vec<FuncType>,
     pub imports: Vec<Import<'a>>,
     pub tables: Vec<Table<'a>>,
     pub tags: Vec<TagType>,
     pub globals: Vec<Global<'a>>,
     pub exports: Vec<Export<'a>>,
-    pub export_map: HashMap<(isize, usize), (usize, &'a str)>,
+    // Should be only one memory
     pub memories: Vec<MemoryType>,
     pub elements: Vec<Element<'a>>,
+
+    pub start: Option<InputFuncId>,
+    // Code section basic info from CodeSectionStart
     pub code_section_offset: usize,
     pub code_section_index: usize,
+    // function (CodeSectionEntry)
+    pub defined_funcs: Vec<DefinedFunc<'a>>,
+    // data section with multiple Data<'a> entries
     pub data_segments: Vec<Data<'a>>,
     pub data_section_offset: usize,
     pub data_section_index: usize,
+    pub custom_sections: Vec<CustomSection<'a>>,
+
+    // Custom sections
+    // sections "reloc.*"
+    pub relocs: HashMap<usize, Vec<RelocationEntry>>,
+    // section "name"
+    pub names: Names<'a>,
+    // section "linking"
+    pub symbols: Vec<SymbolInfo<'a>>,
+
+    // post-processed fields
     pub imported_funcs: Vec<ImportId>,
     pub imported_func_map: HashMap<ImportId, InputFuncId>,
-    pub defined_funcs: Vec<DefinedFunc<'a>>,
-    pub custom_sections: Vec<CustomSection<'a>>,
-    pub start: Option<InputFuncId>,
-    pub names: Names<'a>,
-    pub symbols: Vec<SymbolInfo<'a>>,
     pub data_symbols: Vec<DataSymbol>,
-    pub relocs: HashMap<usize, Vec<RelocationEntry>>,
+    pub export_map: HashMap<(isize, usize), (usize, &'a str)>,
+    pub wal: walrus::Module,
 }
 
 impl<'a> InputModule<'a> {
@@ -202,6 +178,11 @@ impl<'a> InputModule<'a> {
             raw: wasm,
             ..Default::default()
         };
+        module.wal = walrus::Module::from_buffer(wasm)?;
+
+        for data in module.wal.globals.iter() {
+            println!("SPLIT: Data: {:#?}", data);
+        }
         let mut function_types: Vec<FuncTypeId> = Vec::new();
         let mut section_index = 0;
         let parser = wasmparser::Parser::new(0);

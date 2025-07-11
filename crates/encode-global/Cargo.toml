@@ -1,0 +1,8 @@
+[package]
+name = "encode-global"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+wasm-encoder = { version = "0.227.0", features = ["wasmparser"] }

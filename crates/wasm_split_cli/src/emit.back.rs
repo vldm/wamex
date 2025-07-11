@@ -928,3 +928,40 @@ pub fn emit_modules(
 
     Ok(())
 }
+
+// data transformation:
+// 1. add global symbol
+// 2. init segment at (global.get $env.lib_memory_base)
+// 3. implement fn that init global symbols
+//
+// example:
+
+//```wat
+// (module
+//   (type $t0 (func))
+//   (type $t1 (func (param i32) (result i32)))
+//   (memory (;0;) 17)
+//   (global $__stack_pointer (;0;) (mut i32) i32.const 1048576)
+//   (func $getter (type $t1) (param $p0 i32) (result i32)
+//     i32.const 100
+//     i32.load)
+//   (export "getter" (func $getter))
+//   (data $d0 (i32.const 100) "Hello, world!"))
+
+//```
+// Result:
+// ```wat
+// (module
+//   (type $t0 (func))
+//   (type $t1 (func (param i32) (result i32)))
+//   (import "env" "__lib_base" (global $__lib_base i32))
+//   (import "env" "__stack_pointer" (global $__stack_pointer i32))
+//   (import "env" "memory" (memory $memory 1))
+//   (func $getter (type $t1) (param $p0 i32) (result i32)
+//     global.get $greeting
+//   )
+//   ;; THIS CODE IS NOT WORK with wat2wasm CLI so use `wasm-tools parse` instead
+//   (global $greeting i32 global.get $__lib_base i32.const 0 i32.add) ;; 0 is local offset
+//   (export "getter" (func $getter))
+//   (data $d0 (global.get $__lib_base) "Hello, world!"))
+//```
