@@ -589,4 +589,4 @@ fn convert_indirect_name_map<'a>(
 // self.generate_data_section()?;
 // self.generate_wasm_bindgen_sections();
 // self.generate_name_section()?;
-// self.generate_target_features_section();
+// mod read;

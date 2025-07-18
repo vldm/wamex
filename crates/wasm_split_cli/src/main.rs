@@ -5,13 +5,14 @@ use anyhow::Result;
 use clap::Parser;
 // use split_point::SplitModuleIdentifier;
 
+// todo: Refactor analysis and emit modules.
 mod analysis;
 mod emit;
 mod index;
-mod wasm_parse;
-// mod read;
+mod modify;
 mod read;
-mod relocation;
+
+use read::InputModule;
 
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
@@ -27,6 +28,15 @@ struct Cli {
     verbose: bool,
 }
 
+//The flow of the program is simple:
+// 1. Parse the input wasm file.
+// 2. Analyze the wasm module to gather information about its structural dependencies. And indetify split points.
+// 3. Modify module:
+//    - Relocate functions.
+//    - Patch data lookups. (e.g. const.get -> global.get)
+// 4. Emit processed modules to the output directory.
+// Also there should be a routine that can compare and reload changed chunks.
+
 fn main() -> Result<()> {
     let _ = env_logger::Builder::new()
         .parse_filters("debug")
@@ -34,7 +44,7 @@ fn main() -> Result<()> {
         .init();
     let args = Cli::parse();
     let input_wasm = std::fs::read(&args.input)?;
-    let module = crate::wasm_parse::InputModule::parse(&input_wasm)?;
+    let module = InputModule::parse(&input_wasm)?;
     let info = analysis::ModuleInfo::new(&module)?;
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
@@ -52,18 +62,19 @@ fn main() -> Result<()> {
         }
     }
 
-    //     crate::emit::emit_modules(
-    //         &module,
-    //         &split_program_info,
-    //         &|output_module_index: usize, data: &[u8]| -> Result<()> {
-    //             let identifier = &split_program_info.output_modules[output_module_index].0;
-    //             let output_filename = identifier.name() + ".wasm";
-    //             let output_path = args.output.join(output_filename);
-    //             std::fs::create_dir_all(&args.output)?;
-    //             std::fs::write(output_path, data)?;
-    //             Ok(())
-    //         },
-    //     )?;
+    crate::emit::emit_modules(
+        &info,
+        &split_program_info,
+        &dep_graph,
+        &|output_module_index: usize, data: &[u8]| -> Result<()> {
+            let identifier = &split_program_info.output_modules[output_module_index].0;
+            let output_filename = identifier.name() + ".wasm";
+            let output_path = args.output.join(output_filename);
+            std::fs::create_dir_all(&args.output)?;
+            std::fs::write(output_path, data)?;
+            Ok(())
+        },
+    )?;
 
     //     let mut javascript = String::new();
     //     javascript.push_str(

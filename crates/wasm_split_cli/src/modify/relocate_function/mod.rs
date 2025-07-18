@@ -1,26 +1,22 @@
-use std::{collections::HashMap, ops::Range};
+mod encode;
+use std::collections::HashMap;
 
 use anyhow::{anyhow, bail, Result};
-use wasmparser::{RelocationEntry, SymbolInfo};
+use wasmparser::RelocationEntry;
 
 use crate::{
+    emit::EmitInfo,
     index::InputFuncId,
-    wasm_parse::{linking::SymInfo, InputModule, SymbolType},
+    read::{linking::SymbolType, InputModule},
 };
 
-struct ModuleEmitState<'a> {
-    input_module: &'a InputModule<'a>,
-    // output_module_index: usize,
-    // output_module_info: &'a OutputModuleInfo,
-    // emit_state: &'a EmitState,
-    // program_info: &'a SplitProgramInfo,
-    // output_module: wasm_encoder::Module,
-    // output_functions: Vec<OutputFunction>,
-    input_function_output_id: HashMap<InputFuncId, usize>,
-    // indirect_function_table_range: Range<usize>,
+pub struct RelocateFunctionInfo<'a> {
+    pub input_module: &'a InputModule<'a>,
+    pub emit_info: &'a EmitInfo,
+    pub input_function_output_id: &'a HashMap<InputFuncId, usize>,
 }
 
-impl ModuleEmitState<'_> {
+impl RelocateFunctionInfo<'_> {
     fn get_relocation_input_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
         let Some((input_func_id, SymbolType::Func)) = self
             .input_module
@@ -47,24 +43,25 @@ impl ModuleEmitState<'_> {
     }
 
     fn get_relocated_function_table_index(&self, relocation: &RelocationEntry) -> Result<usize> {
-        todo!()
-        // let input_func_id = self.get_relocation_input_function_index(relocation)?;
-        // self.emit_state
-        //     .indirect_functions
-        //     .function_table_index
-        //     .get(&input_func_id)
-        //     .ok_or_else(|| {
-        //         anyhow!(
-        //             "Dependency analysis error: \
-        //              No indirect function table index \
-        //              for input function {input_func_id} \
-        //              referenced by relocation {relocation:?}"
-        //         )
-        //     })
-        //     .copied()
+        let input_func_id = self.get_relocation_input_function_index(relocation)?;
+
+        let Some(&table_index) = self
+            .emit_info
+            .indirect_functions
+            .function_table_index
+            .get(&input_func_id)
+        else {
+            bail!(
+                "Dependency analysis error: \
+                     No indirect function table index \
+                     for input function {input_func_id} \
+                     referenced by relocation {relocation:?}"
+            )
+        };
+        Ok(table_index)
     }
 
-    fn apply_relocation(
+    pub fn apply_relocation(
         &self,
         data: &mut [u8],
         data_offset: usize,
@@ -73,7 +70,7 @@ impl ModuleEmitState<'_> {
         let relocation_range = relocation.relocation_range();
         let target =
             &mut data[(relocation_range.start - data_offset)..(relocation_range.end - data_offset)];
-        use super::encode::*;
+        use encode::*;
         use wasmparser::RelocationType::*;
         match relocation.ty {
             FunctionIndexLeb => {
@@ -116,6 +113,7 @@ impl ModuleEmitState<'_> {
             | TableIndexRelSleb64 => {
                 bail!("Unsupported relocation type {relocation:?}");
             }
+
             _ => {}
         }
 

@@ -3,14 +3,15 @@
 //!
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Range;
 
 use anyhow::{anyhow, bail, Context, Result};
 use vec_map::VecMap;
-use wasmparser::{Data, SymbolInfo, TypeRef};
+use wasmparser::{Data, TypeRef};
 
-use crate::wasm_parse::{self, linking};
+use crate::read::{self, linking::section::DataInSegment};
 
 use crate::index::{DataSegmentId, ImportId, InputFuncId, SymbolIndex};
 
@@ -28,7 +29,7 @@ pub struct ImportFuncsInfo {
 pub struct DataSymbol<'a> {
     pub segment_index: DataSegmentId,
     pub symbol_index: SymbolIndex,
-    pub data_in_segment: &'a linking::DataInSegment<'a>,
+    pub data_in_segment: &'a DataInSegment<'a>,
     // Range relative to the start of the WebAssembly file.
     pub range: Range<usize>,
 }
@@ -42,11 +43,13 @@ pub struct ModuleInfo<'a> {
     // Symbol table with data entries sorted by offsets
     pub data_symbols: Vec<DataSymbol<'a>>,
 
-    module: &'a wasm_parse::InputModule<'a>,
+    pub source: &'a read::InputModule<'a>,
+
+    pub export_map: HashMap<(isize, usize), (usize, &'a str)>,
 }
 
 impl<'a> ModuleInfo<'a> {
-    pub fn new(module: &'a wasm_parse::InputModule<'a>) -> Result<ModuleInfo<'a>> {
+    pub fn new(module: &'a read::InputModule<'a>) -> Result<ModuleInfo<'a>> {
         let data_symbols = get_data_symbols(
             module.data.section_payload.data_segments.as_slice(),
             &module.linking.linking_symbols.data_in_segments,
@@ -69,10 +72,22 @@ impl<'a> ModuleInfo<'a> {
             imported_funcs,
             imported_func_map,
         };
+        let export_map = module
+            .exports
+            .iter()
+            .enumerate()
+            .map(|(i, export)| {
+                (
+                    (export.kind as isize, export.index as usize),
+                    (i, export.name),
+                )
+            })
+            .collect();
         Ok(ModuleInfo {
             import_funcs_info,
             data_symbols,
-            module,
+            source: module,
+            export_map,
         })
     }
 
@@ -83,7 +98,7 @@ impl<'a> ModuleInfo<'a> {
     }
 
     pub fn find_function_id_by_name(&self, name: &str) -> Option<usize> {
-        let func = self.module.names.functions.iter().find(|f| *f.1 == name)?;
+        let func = self.source.names.functions.iter().find(|f| *f.1 == name)?;
         Some(func.0 + self.import_funcs_info.imported_funcs.len())
     }
 
@@ -101,7 +116,7 @@ impl<'a> ModuleInfo<'a> {
 
     pub fn find_function_id_containing_range(&self, range: Range<usize>) -> Result<usize> {
         let func_index = Self::find_by_range(
-            &self.module.code.section_payload.defined_funcs,
+            &self.source.code.section_payload.defined_funcs,
             &range,
             |defined_func| defined_func.body.range(),
         )
@@ -145,12 +160,13 @@ impl<'a> ModuleInfo<'a> {
 
 fn get_data_symbols<'a>(
     data_segments: &[Data],
-    symbols: &'a VecMap<Vec<linking::DataInSegment<'a>>>,
+    symbols: &'a VecMap<Vec<DataInSegment<'a>>>,
 ) -> Result<Vec<DataSymbol<'a>>> {
     let mut data_symbols = Vec::new();
     for (segment_id, symbols) in symbols.iter() {
         for (symbol_index, symbol) in symbols.iter().enumerate() {
             if symbol.size == 0 {
+                println!("Data segment has zero-size symbol: {:?}", symbol);
                 // Ignore zero-size symbols since they cannot be the target of a relocation.
                 continue;
             }

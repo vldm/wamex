@@ -7,10 +7,10 @@ use std::{
 use anyhow::Context;
 use wasmparser::RelocationType;
 
-use crate::{analysis, index::DataSegmentId, wasm_parse::InputModule};
+use crate::{analysis, index::DataSegmentId, read::InputModule};
 use crate::{
     index::{InputFuncId, SymbolIndex},
-    wasm_parse::SymbolType,
+    read::linking::SymbolType,
 };
 
 #[derive(Debug, PartialEq, Eq, Hash, Copy, PartialOrd, Ord, Clone)]
@@ -75,7 +75,7 @@ pub fn get_dependencies(
                 info,
                 shift_range(entry.relocation_range(), module.code.starting_offset),
             )
-            .with_context(|| format!("Invalid relocation entry {entry:?}"))?;
+            .with_context(|| format!("Invalid code relocation entry {entry:?}"))?;
 
             match entry.ty {
                 RelocationType::TypeIndexLeb => {
@@ -93,7 +93,7 @@ pub fn get_dependencies(
                 info,
                 shift_range(entry.relocation_range(), module.data.starting_offset),
             )
-            .with_context(|| format!("Invalid relocation entry {entry:?}"))?;
+            .with_context(|| format!("Invalid data relocation entry {entry:?}"))?;
             add_dep(
                 DepNode::DataSymbol(segment_index, symbol_index),
                 entry.index,
@@ -149,7 +149,11 @@ impl ReachabilityGraph {
                 format!("func[{index}] <{name:?}>")
             }
             DepNode::DataSymbol(segment, idx) => {
-                let symbol = module.linking.linking_symbols.data_in_segments[segment][*idx].name;
+                let symbol = module
+                    .linking
+                    .get_data_in_segment(*segment, *idx)
+                    .expect("indexes should be valid")
+                    .name;
                 let segment = module.names.data_segments[segment];
                 format!("data[{segment}:{idx}] <{symbol:?}>")
             }
@@ -210,7 +214,7 @@ mod tests {
 
     use crate::{
         analysis::{self, dep_graph::DepNode},
-        wasm_parse,
+        read,
     };
 
     // checkout test-data/simple-graph crate at root (just keep wasm in case rustc changes)
@@ -218,7 +222,7 @@ mod tests {
 
     #[test]
     fn load_dep_graph() {
-        let module = wasm_parse::InputModule::parse(&WASM_FILE).unwrap();
+        let module = read::InputModule::parse(&WASM_FILE).unwrap();
         let info = analysis::ModuleInfo::new(&module).unwrap();
         let dep_graph = super::get_dependencies(&module, &info).unwrap();
 
@@ -269,14 +273,14 @@ mod tests {
     }
 
     #[test]
-    fn richablity_graph() {
-        let module = wasm_parse::InputModule::parse(&WASM_FILE).unwrap();
+    fn reachablity_graph() {
+        let module = read::InputModule::parse(&WASM_FILE).unwrap();
         let info = analysis::ModuleInfo::new(&module).unwrap();
         let dep_graph = super::get_dependencies(&module, &info).unwrap();
 
         let no_inline_fn = info.find_function_id_by_name("no_inline_fn").unwrap();
 
-        let richability_graph = super::ReachabilityGraph::find_reachable_deps(
+        let reachability_graph = super::ReachabilityGraph::find_reachable_deps(
             &dep_graph,
             &HashSet::from([DepNode::Function(no_inline_fn)]),
             &HashSet::new(),
@@ -287,20 +291,20 @@ mod tests {
         //              -> func1 -> data1
         //              -> func2 -> data2
         //              -> func3 -> data3
-        richability_graph.print("no_inline_fn", &module, &info);
-        assert_eq!(richability_graph.reachable.len(), 7); // root +  3 data + 3 funcs
+        reachability_graph.print("no_inline_fn", &module, &info);
+        assert_eq!(reachability_graph.reachable.len(), 7); // root +  3 data + 3 funcs
 
         let indirrect_fn = info.find_function_id_by_name("indirrect_fn").unwrap();
-        let richability_graph = super::ReachabilityGraph::find_reachable_deps(
+        let reachability_graph = super::ReachabilityGraph::find_reachable_deps(
             &dep_graph,
             &HashSet::from([DepNode::Function(indirrect_fn)]),
             &HashSet::new(),
         );
-        richability_graph.print("indirrect_fn", &module, &info);
+        reachability_graph.print("indirrect_fn", &module, &info);
         // almost same count, but indirrect_fn has more deep graph and switchtable
         // indirrect_fn -> switchtable -> func1 -> data1
         //                             -> func2 -> data2
         //                             -> func3 -> data3
-        assert_eq!(richability_graph.reachable.len(), 8); // root + <switchtable> +  3 data + 3 funcs
+        assert_eq!(reachability_graph.reachable.len(), 8); // root + <switchtable> +  3 data + 3 funcs
     }
 }

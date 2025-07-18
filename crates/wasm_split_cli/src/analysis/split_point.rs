@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use super::dep_graph::{DepGraph, DepNode, ReachabilityGraph};
 use crate::analysis;
 use crate::index::{ExportId, ImportId, InputFuncId, SymbolIndex};
-use crate::wasm_parse::InputModule;
+use crate::read::InputModule;
 use anyhow::{anyhow, bail};
 use lazy_static::lazy_static;
 use regex::Regex;
