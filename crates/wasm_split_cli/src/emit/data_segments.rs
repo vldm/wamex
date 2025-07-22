@@ -11,6 +11,7 @@ use wasmparser::{Data, DataKind, SymbolFlags};
 use crate::{
     analysis,
     emit::globals::DataSymbol,
+    helpers::ShiftRange,
     index::{DataSegmentId, SymbolIndex},
     read::linking::section::DataInSegment,
 };
@@ -33,9 +34,6 @@ pub struct DataSegment<'a> {
 }
 
 impl<'a> DataSegment<'a> {
-    fn shift_range_left(range: Range<usize>, start_offset: usize) -> Range<usize> {
-        (range.start - start_offset)..(range.end - start_offset)
-    }
     pub fn new_inner(data: Data<'a>, symbols: &[analysis::DataSymbol<'a>]) -> Result<Self> {
         let mut data_parts = vec![];
         let mut linking_symbols = VecMap::new();
@@ -45,8 +43,10 @@ impl<'a> DataSegment<'a> {
                 // Ignore zero-size symbols since they cannot be the target of a relocation.
                 continue;
             }
-            let chunk = &data.data
-                [Self::shift_range_left(sym.range.clone(), data.range.end - data.data.len())];
+            let chunk = &data.data[sym
+                .range
+                .clone()
+                .shift_left(data.range.end - data.data.len())];
             let name = sym.data_in_segment.name;
 
             linking_symbols.insert(sym.symbol_index, data_parts.len());

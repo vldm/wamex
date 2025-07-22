@@ -12,17 +12,19 @@ mod relocate_function;
 use std::{collections::HashMap, iter::Peekable, ops::Range};
 
 use anyhow::{bail, Result};
+use leb128fmt::{decode_u32, decode_uint_slice};
 use wasm_encoder::Encode;
 use wasmparser::{BinaryReader, FunctionBody, RelocationType};
 
 use crate::{
     analysis::ModuleInfo,
     emit::ModuleEmitState,
+    helpers::ShiftRange,
     index::{GlobalId, SymbolId},
-    modify::relocate_function::RelocateFunctionInfo,
 };
 use constant_extraction::ConstantExtractionEntry;
-
+pub use constant_extraction::GlobalVar;
+use relocate_function::{encode::encode_leb128_u32_5byte, RelocateFunctionInfo};
 #[derive(Debug)]
 pub struct ModifyContext<'a> {
     pub function_name: &'a str,
@@ -228,10 +230,17 @@ impl<'a> ModifyContext<'a> {
                     bail!("Unsupported relocation type: {relocation:?}");
                 }
                 RelocationType::GlobalIndexLeb => {
-                    // encode_leb128_u32_5byte(
-                    //     self.get_relocated_function_index(relocation)? as u32,
-                    //     target.try_into().unwrap(),
-                    // );
+                    let val: [u8; 5] = dbg!(&result[relocation.relocation_range()])
+                        .try_into()
+                        .unwrap();
+                    let (val, _idx) = decode_u32(val)
+                        .ok_or_else(|| anyhow::anyhow!("Failed to decode global index"))?;
+                    encode_leb128_u32_5byte(
+                        val + num_new_global_imports,
+                        (&mut result[relocation.relocation_range()])
+                            .try_into()
+                            .unwrap(),
+                    );
                     continue;
                 }
 
@@ -301,12 +310,8 @@ pub enum ModifyEntry {
 }
 
 impl ModifyEntry {
-    fn shift_range_left(range: Range<usize>, start_offset: usize) -> Range<usize> {
-        (range.start - start_offset)..(range.end - start_offset)
-    }
-
     pub fn from_relocation_entry(
-        mut global_getter: impl FnMut(SymbolId) -> Result<GlobalId>,
+        mut global_getter: impl FnMut(SymbolId) -> Result<GlobalVar>,
         entry: &wasmparser::RelocationEntry,
         start_offset: usize,
     ) -> Result<ModifyEntry> {
@@ -332,9 +337,9 @@ impl ModifyEntry {
             | RelocationType::MemoryAddrSleb
             | RelocationType::MemoryAddrI32 => ModifyEntry::Data(ConstantExtractionEntry {
                 relocation_type: entry.ty,
-                global_index: global_getter(entry.index as SymbolId)? as u32,
+                global_index: global_getter(entry.index as SymbolId)?,
                 addend: entry.addend,
-                range: Self::shift_range_left(entry.relocation_range(), start_offset),
+                range: entry.relocation_range().shift_left(start_offset),
             }),
             RelocationType::EventIndexLeb
             | RelocationType::TypeIndexLeb

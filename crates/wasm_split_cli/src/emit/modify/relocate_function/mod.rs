@@ -1,4 +1,4 @@
-mod encode;
+pub mod encode;
 use std::collections::HashMap;
 
 use anyhow::{anyhow, bail, Result};

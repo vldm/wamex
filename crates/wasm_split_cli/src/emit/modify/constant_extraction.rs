@@ -16,11 +16,24 @@ use super::{ModifyContext, StoreType};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstantExtractionEntry {
     pub(super) relocation_type: RelocationType,
-    pub(super) global_index: u32,
+    pub(super) global_index: GlobalVar,
     /// Addend to add to the address, or `0` if not applicable. The value must
     /// be consistent with the `self.ty.addend_kind()`.
     pub(super) addend: i64,
     pub(super) range: Range<usize>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GlobalVar {
+    /// Data segment extracted to global variable
+    Extract(u32),
+    /// Keep original constant value untoucked
+    Untouched,
+}
+
+impl Default for GlobalVar {
+    fn default() -> Self {
+        GlobalVar::Untouched
+    }
 }
 
 impl ConstantExtractionEntry {
@@ -38,6 +51,11 @@ impl ConstantExtractionEntry {
         use wasm_encoder::Instruction;
         use wasmparser::Operator;
 
+        let GlobalVar::Extract(global_index) = self.global_index else {
+            log::trace!("Skipping global get for func:{}", ctx.function_name);
+            <Instruction<'_> as TryFrom<_>>::try_from(ctx.instruction)?.encode(ctx.writer);
+            return Ok(());
+        };
         let ix = match ctx.instruction {
             Operator::I32Const { value } => Instruction::I32Const(value),
             // Operator::I64Const { value } => Instruction::I64Const(value),
@@ -45,7 +63,7 @@ impl ConstantExtractionEntry {
                 bail!("Unsupported relocation operand: {:?}", ctx.instruction)
             }
         };
-        let result_ix = Instruction::GlobalGet(self.global_index);
+        let result_ix = Instruction::GlobalGet(global_index);
         log::trace!(
             "Replacing func[{name}:{range:?}] {ix:?} with {result_ix:?}, append {addend}",
             addend = self.addend,
@@ -84,6 +102,12 @@ impl ConstantExtractionEntry {
             let mut memargs: wasm_encoder::MemArg = memarg.into();
             memargs.offset = self.addend as u64;
             memargs
+        };
+
+        let GlobalVar::Extract(global_index) = self.global_index else {
+            log::trace!("Skipping global get for func:{}", ctx.function_name);
+            <Instruction<'_> as TryFrom<_>>::try_from(ctx.instruction)?.encode(ctx.writer);
+            return Ok(());
         };
 
         let (store, ix) = match ctx.instruction {
@@ -169,7 +193,7 @@ impl ConstantExtractionEntry {
             }
         }
 
-        Instruction::GlobalGet(self.global_index).encode(ctx.writer);
+        Instruction::GlobalGet(global_index).encode(ctx.writer);
         Instruction::I32Add.encode(ctx.writer); // add offset from global_index variable to the dyn_offset part of instruction
 
         // Recover back global variable

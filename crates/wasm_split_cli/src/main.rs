@@ -8,8 +8,8 @@ use clap::Parser;
 // todo: Refactor analysis and emit modules.
 mod analysis;
 mod emit;
+mod helpers;
 mod index;
-mod modify;
 mod read;
 
 use read::InputModule;
@@ -66,6 +66,7 @@ fn main() -> Result<()> {
         &info,
         &split_program_info,
         &dep_graph,
+        emit::FnResolveType::IndirectFunctionTable,
         &|output_module_index: usize, data: &[u8]| -> Result<()> {
             let identifier = &split_program_info.output_modules[output_module_index].0;
             let output_filename = identifier.name() + ".wasm";

@@ -17,6 +17,8 @@ use crate::index::{DataSegmentId, ImportId, InputFuncId, SymbolIndex};
 
 pub mod dep_graph;
 pub mod split_point;
+#[cfg(test)]
+mod testing;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ImportFuncsInfo {
@@ -143,7 +145,9 @@ impl<'a> ModuleInfo<'a> {
             .or_else(|index| {
                 bail!(
                     "Prev range is: {:?}, next range is: {:?}",
-                    items.get(index - 1).map(|item| (item, get_range(item))),
+                    index
+                        .checked_sub(1)
+                        .and_then(|i| items.get(i).map(|item| (item, get_range(item)))),
                     items.get(index).map(|item| (item, get_range(item)))
                 )
             })?;

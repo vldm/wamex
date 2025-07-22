@@ -7,7 +7,7 @@ use std::{
 use anyhow::Context;
 use wasmparser::RelocationType;
 
-use crate::{analysis, index::DataSegmentId, read::InputModule};
+use crate::{analysis, helpers::ShiftRange, index::DataSegmentId, read::InputModule};
 use crate::{
     index::{InputFuncId, SymbolIndex},
     read::linking::SymbolType,
@@ -66,14 +66,13 @@ pub fn get_dependencies(
         };
     };
 
-    let shift_range =
-        |range: Range<usize>, offset: usize| (range.start + offset)..(range.end + offset);
-
     if let Some(relocs) = module.relocs.get_section(module.code.section_index) {
         for entry in &relocs.entries {
             let func_index = find_function_containing_range(
                 info,
-                shift_range(entry.relocation_range(), module.code.starting_offset),
+                entry
+                    .relocation_range()
+                    .shift_right(module.code.starting_offset),
             )
             .with_context(|| format!("Invalid code relocation entry {entry:?}"))?;
 
@@ -91,7 +90,9 @@ pub fn get_dependencies(
         for entry in &relocs.entries {
             let (segment_index, symbol_index) = find_data_symbol_containing_range(
                 info,
-                shift_range(entry.relocation_range(), module.data.starting_offset),
+                entry
+                    .relocation_range()
+                    .shift_right(module.data.starting_offset),
             )
             .with_context(|| format!("Invalid data relocation entry {entry:?}"))?;
             add_dep(
@@ -193,6 +194,19 @@ impl ReachabilityGraph {
     }
 }
 
+struct NamedGraph<'a> {
+    // Module name, None if main.
+    module: Option<&'a str>,
+
+    reachable: Vec<DepNode>,
+}
+
+struct SharedEntries<'a> {
+    module_names: Vec<&'a str>,
+
+    nodes: Vec<DepNode>,
+}
+
 fn find_function_containing_range(
     info: &analysis::ModuleInfo,
     range: Range<usize>,
@@ -212,8 +226,14 @@ fn find_data_symbol_containing_range(
 mod tests {
     use std::collections::HashSet;
 
+    use lazy_static::lazy_static;
+
     use crate::{
-        analysis::{self, dep_graph::DepNode},
+        analysis::{
+            self,
+            dep_graph::{DepGraph, DepNode},
+            testing,
+        },
         read,
     };
 
@@ -306,5 +326,16 @@ mod tests {
         //                             -> func2 -> data2
         //                             -> func3 -> data3
         assert_eq!(reachability_graph.reachable.len(), 8); // root + <switchtable> +  3 data + 3 funcs
+    }
+
+    lazy_static! {
+        static ref GRAPH: DepGraph = testing::parse_deps(
+            r#"
+            F(1) -> D(2, 3) & F(4) -> D(5, 6) & F(7) -> D(8, 9)
+            F(11) -> F(4) & F(12) 
+            "#
+        )
+        .unwrap()
+        .1;
     }
 }
