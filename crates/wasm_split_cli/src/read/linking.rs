@@ -1,10 +1,7 @@
 use anyhow::Result;
 use vec_map::VecMap;
 
-pub use std::ops::Range;
 use wasmparser::{Comdat, InitFunc, Segment};
-
-pub type InputRange = Range<usize>;
 
 use super::CustomSectionReader;
 use crate::index::{DataSegmentId, SymbolIndex};

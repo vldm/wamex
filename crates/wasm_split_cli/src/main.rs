@@ -49,16 +49,16 @@ fn main() -> Result<()> {
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
     println!("dep_graph={dep_graph:?}");
-    let split_points = analysis::split_point::get_split_points(&module, &info)?;
+    let split_points = analysis::split_point::find_split_points(&module, &info)?;
 
     println!("split_points={split_points:?}");
     let split_program_info =
-        SplitProgramInfo::compute_split_modules(&module, &info, &dep_graph, &split_points)?;
+        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
 
     println!("split_program_info={split_program_info:?}");
     if args.verbose {
         for (name, split_deps) in split_program_info.output_modules.iter() {
-            split_deps.print(format!("{:?}", name).as_str(), &module, &info);
+            split_deps.print(format!("{:?}", name).as_str(), &info);
         }
     }
 
@@ -66,7 +66,6 @@ fn main() -> Result<()> {
         &info,
         &split_program_info,
         &dep_graph,
-        emit::FnResolveType::IndirectFunctionTable,
         &|output_module_index: usize, data: &[u8]| -> Result<()> {
             let identifier = &split_program_info.output_modules[output_module_index].0;
             let output_filename = identifier.name() + ".wasm";

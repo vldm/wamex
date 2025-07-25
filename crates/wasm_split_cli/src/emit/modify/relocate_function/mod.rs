@@ -113,7 +113,6 @@ impl RelocateFunctionInfo<'_> {
             | TableIndexRelSleb64 => {
                 bail!("Unsupported relocation type {relocation:?}");
             }
-
             _ => {}
         }
 

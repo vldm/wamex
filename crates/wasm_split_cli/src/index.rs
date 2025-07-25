@@ -4,6 +4,7 @@ pub type SymbolIndex = usize;
 pub type SymbolId = usize;
 pub type FuncTypeId = usize;
 pub type InputFuncId = usize;
+pub type OutputFuncId = usize;
 pub type TableId = usize;
 pub type ImportId = usize;
 pub type ExportId = usize;

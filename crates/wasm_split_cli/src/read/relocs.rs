@@ -1,9 +1,7 @@
 use anyhow::Result;
-pub use std::ops::Range;
 use vec_map::VecMap;
 pub use wasmparser::RelocationEntry;
 use wasmparser::SectionLimited;
-pub type InputRange = Range<usize>;
 
 use super::CustomSectionReader;
 use crate::index::SectionIndex;

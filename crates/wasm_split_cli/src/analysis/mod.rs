@@ -15,6 +15,7 @@ use crate::read::{self, linking::section::DataInSegment};
 
 use crate::index::{DataSegmentId, ImportId, InputFuncId, SymbolIndex};
 
+mod debug;
 pub mod dep_graph;
 pub mod split_point;
 #[cfg(test)]

@@ -1,20 +1,10 @@
-use anyhow::{anyhow, bail, ensure, Result};
-use vec_map::VecMap;
+use anyhow::{anyhow, bail, Result};
 use wasm_encoder::CustomSection;
 
-use std::collections::HashMap;
-pub use std::ops::Range;
-use wasmparser::{
-    BinaryReader, Comdat, ComdatMap, InitFunc, InitFuncMap, Payload, SectionLimited, Segment,
-    SegmentMap, TypeRef,
-};
-pub use wasmparser::{
-    Data, Element, Export, FuncType, FunctionBody, Global, Import, MemoryType, RelocationEntry,
-    SymbolInfo, Table, TagType,
-};
-pub type InputRange = Range<usize>;
+use wasmparser::{BinaryReader, Payload};
+pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::index::{DataSegmentId, FuncTypeId, IndexedSection, InputFuncId, SectionIndex};
+use crate::index::{FuncTypeId, IndexedSection, InputFuncId};
 
 pub mod code;
 pub mod data;

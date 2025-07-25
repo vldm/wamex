@@ -19,12 +19,40 @@ pub enum DepNode {
     DataSymbol(DataSegmentId, SymbolIndex),
 }
 
+impl DepNode {
+    pub fn as_function(&self) -> Option<InputFuncId> {
+        match self {
+            DepNode::Function(id) => Some(*id),
+            _ => None,
+        }
+    }
+    pub fn as_data_symbol(&self) -> Option<(DataSegmentId, SymbolIndex)> {
+        match self {
+            DepNode::DataSymbol(segment_id, symbol_index) => Some((*segment_id, *symbol_index)),
+            _ => None,
+        }
+    }
+}
+
 pub type DepGraph = HashMap<DepNode, HashSet<DepNode>>;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ReachabilityGraph {
     pub reachable: HashSet<DepNode>,
-    pub parents: HashMap<DepNode, DepNode>,
+    pub parents: DepGraph,
+}
+
+#[derive(Debug, Clone)]
+pub struct NamedGraph<Id> {
+    pub module: Id,
+    pub deps: ReachabilityGraph,
+}
+
+#[derive(Debug, Clone)]
+pub struct SharedEntries<Id> {
+    pub module_names: Vec<Id>,
+    pub shared_deps: HashSet<DepNode>,
+    pub topmost_shared: HashSet<DepNode>,
 }
 
 pub trait SymbolTable {
@@ -105,16 +133,12 @@ pub fn get_dependencies(
 }
 
 impl ReachabilityGraph {
-    pub fn find_reachable_deps(
-        deps: &DepGraph,
-        roots: &HashSet<DepNode>,
-        exclude: &HashSet<DepNode>,
-    ) -> ReachabilityGraph {
+    // traverse the dep graph starting from roots and return all reachable nodes
+    pub fn find_reachable_deps(deps: &DepGraph, roots: &HashSet<DepNode>) -> ReachabilityGraph {
         let mut queue: VecDeque<DepNode> = roots.iter().copied().collect();
         let mut seen = HashSet::<DepNode>::new();
-        // println!("exclude = {exclude:?}");
-        // multiple parents?
-        let mut parents = HashMap::<DepNode, DepNode>::new();
+
+        let mut parents = DepGraph::new();
         while let Some(node) = queue.pop_front() {
             // println!("queue node: {node:?}");
             seen.insert(node);
@@ -122,10 +146,10 @@ impl ReachabilityGraph {
                 continue;
             };
             for child in children {
-                if seen.contains(&child) || exclude.contains(&child) {
+                if seen.contains(&child) {
                     continue;
                 }
-                parents.entry(*child).or_insert(node);
+                parents.entry(*child).or_default().insert(node);
                 queue.push_back(*child);
             }
         }
@@ -134,77 +158,132 @@ impl ReachabilityGraph {
             parents,
         }
     }
-    pub fn print(&self, module_name: &str, module: &InputModule, info: &analysis::ModuleInfo) {
-        Self::print_deps_inner(module_name, module, info, &self.reachable, &self.parents);
-    }
-    pub(crate) fn print_deps_inner(
-        module_name: &str,
-        module: &InputModule,
-        info: &analysis::ModuleInfo,
-        reachable: &HashSet<DepNode>,
-        parents: &HashMap<DepNode, DepNode>,
-    ) {
-        let format_dep = |dep: &DepNode| match dep {
-            DepNode::Function(index) => {
-                let name = module.names.functions.get(*index);
-                format!("func[{index}] <{name:?}>")
-            }
-            DepNode::DataSymbol(segment, idx) => {
-                let symbol = module
-                    .linking
-                    .get_data_in_segment(*segment, *idx)
-                    .expect("indexes should be valid")
-                    .name;
-                let segment = module.names.data_segments[segment];
-                format!("data[{segment}:{idx}] <{symbol:?}>")
-            }
-        };
 
-        println!("SPLIT: ============== {module_name}");
-        let mut total_size: usize = 0;
-        for dep in reachable.iter() {
-            let size = match dep {
-                DepNode::Function(index) => {
-                    let size = index
-                        .checked_sub(info.import_funcs_info.imported_funcs.len())
-                        .map(|defined_index| {
-                            module.code.section_payload.defined_funcs[defined_index]
-                                .body
-                                .range()
-                                .len()
-                        })
-                        .unwrap_or_default();
-                    size
+    pub fn remove_node(&mut self, node: &DepNode, graph: &DepGraph) {
+        let mut queue = VecDeque::from([*node]);
+
+        let mut seen = HashSet::<DepNode>::new();
+        while let Some(node) = queue.pop_front() {
+            seen.insert(node);
+
+            // Can be unreachable if cycle in graph
+            let _reachable = self.reachable.remove(&node);
+
+            if let Some(childs) = graph.get(&node) {
+                for child in childs {
+                    let child_parent = self.parents.get_mut(&node).expect("Parent should exist");
+                    child_parent.remove(child);
+                    if child_parent.is_empty() {
+                        if seen.contains(child) {
+                            continue;
+                        }
+                        queue.push_back(*child);
+                    }
                 }
-                DepNode::DataSymbol(segment, idx) => {
-                    module.linking.linking_symbols.data_in_segments[*segment][*idx].size as usize
-                }
-            };
-
-            total_size += size;
-
-            println!("   {} size={size:?}", format_dep(dep));
-            let mut node = dep;
-            while let Some(parent) = parents.get(node) {
-                println!("      <== {}", format_dep(parent));
-                node = parent;
             }
         }
-        println!("SPLIT: ============== {module_name}  : total size: {total_size}");
+    }
+
+    fn check_unreachable(&self, deps: &HashSet<DepNode>) -> bool {
+        for dep in deps {
+            if self.reachable.contains(dep) {
+                log::warn!("Unreachable dep {dep:?} found in deps");
+                return false;
+            }
+        }
+        true
     }
 }
 
-struct NamedGraph<'a> {
-    // Module name, None if main.
-    module: Option<&'a str>,
+impl<Id> NamedGraph<Id> {
+    /// Collect list of modules that owns a given dep node
+    /// Returns a map of dep node to set of module ids that owns it
+    fn collect_visited_by(modules: &[NamedGraph<Id>]) -> HashMap<DepNode, HashSet<usize>> {
+        let mut visited_by: HashMap<DepNode, HashSet<usize>> = HashMap::new();
+        for (module_id, module) in modules.iter().enumerate() {
+            for dep in module.deps.reachable.iter() {
+                visited_by.entry(*dep).or_default().insert(module_id);
+            }
+        }
+        visited_by
+    }
 
-    reachable: Vec<DepNode>,
-}
+    /// Remove all entries which all parents are also in shared entries.
+    pub fn reduce_shared_entries(
+        shared_entries: HashSet<DepNode>,
+        parents: &DepGraph,
+    ) -> HashSet<DepNode> {
+        let mut reduced = HashSet::new();
+        for dep in &shared_entries {
+            if let Some(parent) = parents.get(dep) {
+                if parent.iter().all(|p| shared_entries.contains(p)) {
+                    continue; // skip if all parents are also in shared entries
+                }
+            }
+            reduced.insert(*dep);
+        }
+        reduced
+    }
 
-struct SharedEntries<'a> {
-    module_names: Vec<&'a str>,
+    /// Build a reverse graph from the given dep graph.
+    /// parent -> child becomes child -> parent
+    ///
+    /// This is usefull for finding all parents of a given node.
+    pub fn reverse(graph: &DepGraph) -> DepGraph {
+        let mut reversed = DepGraph::new();
+        for (node, deps) in graph.iter() {
+            for dep in deps {
+                reversed.entry(*dep).or_default().insert(*node);
+            }
+        }
+        reversed
+    }
 
-    nodes: Vec<DepNode>,
+    /// Calculate shared entries between modules.
+    /// Returns a vector of SharedEntries, each containing a list of module names and shared dependencies.
+    /// Shared dependencies are those that are reachable from multiple modules.
+    pub fn calculate_shared_modules(
+        modules: &mut [NamedGraph<Id>],
+        graph: &DepGraph,
+    ) -> Vec<SharedEntries<Id>>
+    where
+        Id: Clone + Ord,
+    {
+        let mut shared_entries: HashMap<Vec<usize>, HashSet<DepNode>> = HashMap::new();
+
+        let parents = Self::reverse(graph);
+        let visited_by = Self::collect_visited_by(modules);
+
+        for (dep, owner_modules) in visited_by {
+            if owner_modules.len() > 1 {
+                for module_id in &owner_modules {
+                    let module = &mut modules[*module_id];
+
+                    module.deps.remove_node(&dep, graph);
+                }
+                let mut owner_modules: Vec<usize> = owner_modules.into_iter().collect();
+                owner_modules.sort_unstable();
+                shared_entries.entry(owner_modules).or_default().insert(dep);
+            }
+        }
+        let mut res = shared_entries
+            .into_iter()
+            .map(|(module_names, shared_deps)| {
+                let reduced_shared_deps =
+                    Self::reduce_shared_entries(shared_deps.clone(), &parents);
+                SharedEntries {
+                    module_names: module_names
+                        .into_iter()
+                        .map(|id| modules[id].module.clone())
+                        .collect(),
+                    shared_deps,
+                    topmost_shared: reduced_shared_deps,
+                }
+            })
+            .collect::<Vec<_>>();
+        res.sort_by(|left, right| left.module_names.cmp(&right.module_names));
+        res
+    }
 }
 
 fn find_function_containing_range(
@@ -303,7 +382,6 @@ mod tests {
         let reachability_graph = super::ReachabilityGraph::find_reachable_deps(
             &dep_graph,
             &HashSet::from([DepNode::Function(no_inline_fn)]),
-            &HashSet::new(),
         );
         // no_inline_fn -> data1
         //              -> data2
@@ -311,16 +389,15 @@ mod tests {
         //              -> func1 -> data1
         //              -> func2 -> data2
         //              -> func3 -> data3
-        reachability_graph.print("no_inline_fn", &module, &info);
+        reachability_graph.print("no_inline_fn", &info);
         assert_eq!(reachability_graph.reachable.len(), 7); // root +  3 data + 3 funcs
 
         let indirrect_fn = info.find_function_id_by_name("indirrect_fn").unwrap();
         let reachability_graph = super::ReachabilityGraph::find_reachable_deps(
             &dep_graph,
             &HashSet::from([DepNode::Function(indirrect_fn)]),
-            &HashSet::new(),
         );
-        reachability_graph.print("indirrect_fn", &module, &info);
+        reachability_graph.print("indirrect_fn", &info);
         // almost same count, but indirrect_fn has more deep graph and switchtable
         // indirrect_fn -> switchtable -> func1 -> data1
         //                             -> func2 -> data2
@@ -329,13 +406,190 @@ mod tests {
     }
 
     lazy_static! {
-        static ref GRAPH: DepGraph = testing::parse_deps(
+        static ref TEST_GRAPH: DepGraph = testing::parse_deps(
             r#"
             F(1) -> D(2, 3) & F(4) -> D(5, 6) & F(7) -> D(8, 9)
-            F(11) -> F(4) & F(12) 
+            F(11) -> F(4) & F(12)
             "#
         )
-        .unwrap()
-        .1;
+        .unwrap();
+    }
+    #[test]
+    fn test_unique_nodes() {
+        let graph = TEST_GRAPH.clone();
+        let modules = vec![
+            super::NamedGraph {
+                module: "module1",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &graph,
+                    &testing::uniq_nodes("F(1)").unwrap(),
+                ),
+            },
+            super::NamedGraph {
+                module: "module2",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &graph,
+                    &testing::uniq_nodes("F(11)").unwrap(),
+                ),
+            },
+        ];
+
+        let first_module = &modules[0];
+        let first_graph =
+            testing::uniq_nodes("F(1) & D(2, 3) & F(4) & D(5, 6) & F(7) & D(8, 9)").unwrap();
+
+        assert_eq!(first_module.deps.reachable, first_graph);
+        assert!(first_module
+            .deps
+            .check_unreachable(&testing::uniq_nodes("F(11) & F(12)").unwrap()));
+
+        let second_module = &modules[1];
+        let second_graph =
+            testing::uniq_nodes("F(11) & F(12) & F(4) & D(5, 6) & F(7) & D(8, 9)").unwrap();
+        assert_eq!(second_module.deps.reachable, second_graph);
+
+        assert!(second_module
+            .deps
+            .check_unreachable(&testing::uniq_nodes("F(1) & D(2, 3)").unwrap()));
+    }
+
+    #[test]
+    fn test_shared_entries() {
+        let graph = TEST_GRAPH.clone();
+        let mut modules = vec![
+            super::NamedGraph {
+                module: "module1",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &graph,
+                    &testing::uniq_nodes("F(1)").unwrap(),
+                ),
+            },
+            super::NamedGraph {
+                module: "module2",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &graph,
+                    &testing::uniq_nodes("F(11)").unwrap(),
+                ),
+            },
+        ];
+
+        let shared_entries = super::NamedGraph::calculate_shared_modules(&mut modules, &graph);
+
+        assert_eq!(shared_entries.len(), 1);
+        assert_eq!(shared_entries[0].module_names, vec!["module1", "module2"]);
+        assert_eq!(
+            shared_entries[0].shared_deps,
+            testing::uniq_nodes("D(5, 6) & D(8, 9) & F(4) & F(7)").unwrap()
+        );
+
+        // Test that top_most_dep contains only F(4)
+        // It is top-most because it doesn't depend on other shared dependencies
+        // F(7), D(5,6) and D(8,9) are not top-most because F(4) -> D(5,6) & F(7)and F(7) -> D(8,9)
+        assert_eq!(
+            shared_entries[0].topmost_shared,
+            testing::uniq_nodes("F(4)").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_multiple_shared_deps() {
+        let input = r#"
+        F(1) -> D(2, 3) & F(11) & F(4) -> D(5, 6) 
+        F(11) -> D(12, 13) -> F(12) & F(4) & F(7) -> D(8, 9)
+        F(10) -> D(11, 12) & F(7)
+        F(20) -> F(4) & F(7)
+        "#;
+        let mut modules = vec![
+            super::NamedGraph {
+                module: "module1",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &testing::parse_deps(input).unwrap(),
+                    &testing::uniq_nodes("F(1)").unwrap(),
+                ),
+            },
+            super::NamedGraph {
+                module: "module2",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &testing::parse_deps(input).unwrap(),
+                    &testing::uniq_nodes("F(10)").unwrap(),
+                ),
+            },
+            super::NamedGraph {
+                module: "module3",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &testing::parse_deps(input).unwrap(),
+                    &testing::uniq_nodes("F(20)").unwrap(),
+                ),
+            },
+        ];
+
+        let shared_entries = super::NamedGraph::calculate_shared_modules(
+            &mut modules,
+            &testing::parse_deps(input).unwrap(),
+        );
+
+        assert_eq!(shared_entries.len(), 2);
+        assert_eq!(
+            shared_entries[0].module_names,
+            vec!["module1", "module2", "module3"]
+        );
+        assert_eq!(
+            shared_entries[0].shared_deps,
+            testing::uniq_nodes("D(8, 9) & F(7)").unwrap()
+        );
+        assert_eq!(
+            shared_entries[0].topmost_shared,
+            testing::uniq_nodes("F(7)").unwrap()
+        );
+        assert_eq!(shared_entries[1].module_names, vec!["module1", "module3"]);
+        assert_eq!(
+            shared_entries[1].shared_deps, // F(7) and childs are stored in [m1,m2,m3] shared deps
+            testing::uniq_nodes("F(4) & D(5, 6)").unwrap()
+        );
+        assert_eq!(
+            shared_entries[1].topmost_shared,
+            testing::uniq_nodes("F(4)").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_recursive_shared_deps() {
+        // F4 is parent of F7 which call F4
+        let input = r#"
+        F(1) -> D(2, 3) & F(4) -> D(5, 6) & F(7) -> D(8, 9) & F(4)
+        F(10) -> D(11, 12) -> F(4)
+        "#;
+        let mut modules = vec![
+            super::NamedGraph {
+                module: "module1",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &testing::parse_deps(input).unwrap(),
+                    &testing::uniq_nodes("F(1)").unwrap(),
+                ),
+            },
+            super::NamedGraph {
+                module: "module2",
+                deps: super::ReachabilityGraph::find_reachable_deps(
+                    &testing::parse_deps(input).unwrap(),
+                    &testing::uniq_nodes("F(10)").unwrap(),
+                ),
+            },
+        ];
+
+        let shared_entries = super::NamedGraph::calculate_shared_modules(
+            &mut modules,
+            &testing::parse_deps(input).unwrap(),
+        );
+
+        assert_eq!(shared_entries.len(), 1);
+        assert_eq!(shared_entries[0].module_names, vec!["module1", "module2"]);
+        assert_eq!(
+            shared_entries[0].shared_deps,
+            testing::uniq_nodes("F(4) & D(5, 6) & F(7) & D(8, 9)").unwrap()
+        );
+        assert_eq!(
+            shared_entries[0].topmost_shared,
+            testing::uniq_nodes("F(4)").unwrap()
+        );
     }
 }

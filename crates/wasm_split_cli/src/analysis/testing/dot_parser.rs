@@ -84,6 +84,7 @@ fn parse_oneline_deps(input: &str) -> IResult<&str, HashMap<DepNode, HashSet<Dep
     if input.trim().is_empty() {
         return Ok((input, HashMap::new()));
     }
+
     let (input, first_node) = parse_any_node(input)?;
     let mut nodes: HashMap<DepNode, HashSet<DepNode>> = HashMap::new();
     let mut last_parrent = first_node;
@@ -96,6 +97,7 @@ fn parse_oneline_deps(input: &str) -> IResult<&str, HashMap<DepNode, HashSet<Dep
             nom::error::ErrorKind::Tag,
         )));
     }
+
     let (input, next_node) = parse_any_node(input)?;
     nodes.entry(last_parrent).or_default().insert(next_node);
     let mut last_child = next_node;
@@ -119,6 +121,9 @@ fn parse_oneline_deps(input: &str) -> IResult<&str, HashMap<DepNode, HashSet<Dep
             }
         }
         last_child = next_node;
+
+        let (next_input, _) = complete::multispace0(input)?;
+        input = next_input;
     }
 
     Ok((input, nodes))
@@ -137,15 +142,47 @@ pub fn parse_deps(input: &str) -> IResult<&str, HashMap<DepNode, HashSet<DepNode
         for (parent, children) in nodes {
             deps.entry(parent).or_default().extend(children);
         }
-        if next_input.is_empty() {
-            input = next_input;
-            break;
-        }
+
         let (next_input, _) = complete::multispace0(next_input)?;
         input = next_input;
     }
 
     Ok((input, deps))
+}
+
+pub fn parse_list(input: &str) -> IResult<&str, Vec<DepNode>> {
+    let mut nodes = Vec::new();
+    let mut input = input;
+
+    while !input.is_empty() {
+        // Remove leading whitespace and newlines
+        let (next_input, val) = nom::bytes::complete::take_while(|c| c != '\n').parse(input)?;
+
+        let mut line = val;
+        while !line.is_empty() {
+            let (next_input, node) = parse_any_node(line)?;
+            nodes.push(node);
+
+            let (next_input, _) = complete::multispace0(next_input)?;
+            if next_input.is_empty() {
+                break;
+            }
+            let (next_input, operator) = parse_operator(next_input)?;
+            if let Operator::Arrow = operator {
+                return Err(nom::Err::Error(nom::error::Error::new(
+                    next_input,
+                    nom::error::ErrorKind::Tag,
+                )));
+            }
+
+            line = next_input;
+        }
+
+        let (next_input, _) = complete::multispace0(next_input)?;
+        input = next_input;
+    }
+
+    Ok((input, nodes))
 }
 
 #[cfg(test)]
@@ -220,7 +257,7 @@ mod tests {
         let input = r#"
         F(1) -> D(2, 3) & F(4) -> D(5, 6) & F(7) -> D(8, 9)
         F(10) -> D(11, 12)
-        F(13) -> F(1) & F(4)
+        F(13) -> F(1) & F(4) 
         "#;
         let (remaining, nodes) = super::parse_deps(input).unwrap();
         assert_eq!(remaining, "");
@@ -263,5 +300,21 @@ mod tests {
             );
             map
         });
+    }
+
+    #[test]
+    fn test_list() {
+        let input = "F(1) & D(2, 3) & F(4) & D(5, 6)";
+        let (remaining, nodes) = super::parse_list(input).unwrap();
+        assert_eq!(remaining, "");
+        assert_eq!(
+            nodes,
+            vec![
+                super::DepNode::Function(1),
+                super::DepNode::DataSymbol(2, 3),
+                super::DepNode::Function(4),
+                super::DepNode::DataSymbol(5, 6)
+            ]
+        );
     }
 }

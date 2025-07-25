@@ -5,13 +5,14 @@ use std::ops::Range;
 use anyhow::{anyhow, bail, Context, Result};
 use globals::GlobalConstructor;
 use wasm_encoder::{EntityType, GlobalType};
-use wasmparser::{ConstExpr, RelocationEntry, RelocationType};
+use wasmparser::{ConstExpr, RelocationEntry, RelocationType, TypeRef};
 
-use crate::analysis;
 use crate::analysis::split_point::SplitModuleIdentifier;
 use crate::emit::data_segments::DataSegment;
-use crate::index::GlobalId;
+use crate::helpers::iter_if;
+use crate::index::{FuncTypeId, GlobalId, OutputFuncId};
 use crate::read::linking::SymbolType;
+use crate::{analysis, main};
 use modify::{init_each_store_var, ModifyContext, StoreType};
 
 use crate::{
@@ -27,86 +28,94 @@ mod globals;
 
 mod modify;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
-pub enum FnResolveType {
-    // Exports from shared fns are stored in indirect_function_table which are used by dependant modules.
-    IndirectFunctionTable,
-    // Main module exports all shared functions, this functions are used as imports in other modules.
-    MainExportSubImport,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
-enum OutputFunctionKind {
-    // Extract import function from source, or add import of defined source defined function.
-    Import,
-    // Extract defined function from source
-    Define { export: bool },
-    // Replace defined function with stub that call imported function.
-    CreateIndirectStub,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct OutputFunction {
-    kind: OutputFunctionKind,
+struct DefinedFunction {
     input_func_id: InputFuncId,
+    export: bool,
     // List of modifications that should be applied to this function.
     modification_list: Vec<modify::ModifyEntry>,
 }
 
-// ignore relocations field in order
-impl Ord for OutputFunction {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.kind.cmp(&other.kind) {
-            std::cmp::Ordering::Equal => self.input_func_id.cmp(&other.input_func_id),
-            ord => return ord,
+struct ImportedFunction<'a> {
+    input_func_id: InputFuncId,
+    kind: ImportFunctionKind<'a>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ImportFunctionKind<'a> {
+    // use existing import function
+    Existing {
+        module_name: &'a str,
+    },
+    // Add new import function from another module (e.g. main module).
+    New {
+        link_module: usize,
+        output_function_index: usize,
+    },
+}
+
+impl ImportedFunction<'_> {
+    pub fn input_func_id(&self) -> InputFuncId {
+        self.input_func_id
+    }
+    pub fn module_name(&self) -> String {
+        match self.kind {
+            ImportFunctionKind::Existing { module_name, .. } => module_name.to_string(),
+            ImportFunctionKind::New { link_module, .. } => {
+                format!("__wasm_split_link_{}", link_module)
+            }
         }
     }
 }
-impl PartialOrd for OutputFunction {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-// #[derive(Debug)]
-// struct EmitState<'a> {
-//     // indirect_functions: IndirectFunctionEmitInfo,
-//     // All relocations, ordered by offset, which are relative to the start of
-//     // the file rather than the start of the section.
-//     all_relocations: Vec<relocation::RelocationEntry>,
-
-//     // Imports (corresponding to split points) to exclude from all modules.
-//     split_point_imports: HashSet<ImportId>,
-// }
 
 enum Global<'a> {
     PlainCopy(wasmparser::Global<'a>),
     WithConstructor(GlobalConstructor),
 }
+
 struct ExtraImportGlobal {
     global_id: u32,
     global_type: wasm_encoder::GlobalType,
 }
 
+// ignore relocations field in order
+impl Ord for DefinedFunction {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.input_func_id.cmp(&other.input_func_id) {
+            std::cmp::Ordering::Equal => self.export.cmp(&other.export),
+            ord => return ord,
+        }
+    }
+}
+impl PartialOrd for DefinedFunction {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 pub struct ModuleEmitState<'a> {
-    // Data Section
+    // Function section
+    import_functions: Vec<ImportedFunction<'a>>,
+    defined_functions: Vec<DefinedFunction>,
     // Global variables:
+    // - lib_base_id for library base address (import)
     // - existing globals from src module
-    // - lib_base_id for library base address (import?)
     // - "store" globals for `modify::constant_extractions`
     // - globals for data segments (lib_base_id + offset)
     globals: Vec<Global<'a>>,
     pub global_tmp_store: HashMap<StoreType, GlobalId>,
-    data: Vec<data_segments::DataSegmentOutput>,
-    output_functions: Vec<OutputFunction>,
-
-    // src module
-    pub info: &'a analysis::ModuleInfo<'a>,
-
     // extra imports that should be emitted for lib
     // Not available for main module.
     lib_base_import: Option<ExtraImportGlobal>,
+
+    // Data Section
+    data: Vec<data_segments::DataSegmentOutput>,
+
     pub emit_info: &'a EmitInfo,
+    // src module
+    pub info: &'a analysis::ModuleInfo<'a>,
+    // Generated fields:
+    // Fields that calculated from other fields, and should be updated after any change.
     pub input_function_output_id: HashMap<InputFuncId, usize>,
     pub indirect_function_table_range: Range<usize>,
 }
@@ -118,71 +127,62 @@ impl<'a> ModuleEmitState<'a> {
         program_info: &SplitProgramInfo,
         dep_graph: &analysis::dep_graph::DepGraph,
         output_module_index: usize,
-        resolve_type: FnResolveType,
     ) -> ModuleEmitState<'a> {
         let output_module_info = &program_info.output_modules[output_module_index].1;
 
         log::debug!("output_module_info: {output_module_info:#?}");
         // We need to include definitions for all of the `included_symbols`.
-        let mut funcs_to_define = HashSet::<(InputFuncId, OutputFunctionKind)>::new();
-        funcs_to_define.extend(output_module_info.included_symbols.iter().filter_map(
-            |dep| match dep {
-                DepNode::Function(func_id) => {
-                    let kind = if *func_id < module_info.import_funcs_info.imported_funcs.len() {
-                        OutputFunctionKind::Import
-                    } else {
-                        OutputFunctionKind::Define { export: false }
-                    };
-                    Some((*func_id, kind))
+        let mut funcs_to_define = HashSet::<(InputFuncId, bool)>::new();
+        let mut import_functions = Vec::new();
+
+        let main_module = output_module_index == 0;
+
+        let shared_imports = program_info
+            .output_modules
+            .iter()
+            .filter_map(|(id, output_module)| {
+                if let SplitModuleIdentifier::Shared(_) = id {
+                    Some(output_module.included_symbols.iter())
+                } else {
+                    None
                 }
-                _ => None,
-            },
-        ));
+            })
+            .flatten();
 
-        let main_export = resolve_type == FnResolveType::MainExportSubImport;
-
-        // For the main module, we need to include all functions that are shared in other submodules
-        if output_module_index == 0 {
-            let shared_imports = program_info
-                .output_modules
-                .iter()
-                .filter_map(|(id, output_module)| {
-                    if let SplitModuleIdentifier::Chunk(_) = id {
-                        Some(output_module.included_symbols.iter())
-                    } else {
-                        None
-                    }
-                })
-                .flatten()
-                .filter_map(|dep| match dep {
-                    DepNode::Function(func_id) => Some(*func_id),
-                    _ => None,
+        for func_id in output_module_info
+            .included_symbols
+            .iter()
+            .chain(iter_if(main_module, shared_imports))
+            .filter_map(DepNode::as_function)
+        {
+            if func_id < module_info.import_funcs_info.imported_funcs.len() {
+                let import_id = module_info.import_funcs_info.imported_funcs[func_id as usize];
+                import_functions.push(ImportedFunction {
+                    input_func_id: func_id,
+                    kind: ImportFunctionKind::Existing {
+                        module_name: module_info.source.imports[import_id].module,
+                    },
                 });
-            funcs_to_define.extend(shared_imports.map(|func_id| {
-                let kind = {
-                    if func_id < module_info.import_funcs_info.imported_funcs.len() {
-                        OutputFunctionKind::Import
-                    } else {
-                        OutputFunctionKind::Define {
-                            export: main_export,
-                        }
-                    }
-                };
-                (func_id, kind)
-            }));
-        } else {
-            // submodule uses only needed shared imports
-            funcs_to_define.extend(output_module_info.shared_imports.iter().map(|func_id| {
-                let kind = {
-                    // TODO: check that this is our chunk?
-                    if main_export {
-                        OutputFunctionKind::Import
-                    } else {
-                        OutputFunctionKind::CreateIndirectStub
-                    }
-                };
-                (*func_id, kind)
-            }));
+            } else {
+                funcs_to_define.insert((func_id, false));
+            }
+        }
+
+        if !main_module {
+            // submodule imports needed function from main module.
+            import_functions.extend(
+                output_module_info
+                    .link_symbols
+                    .iter()
+                    .filter_map(DepNode::as_function)
+                    .map(|func_id| ImportedFunction {
+                        input_func_id: func_id,
+                        kind: ImportFunctionKind::New {
+                            link_module: 0,
+                            output_function_index: 0,
+                        },
+                    }),
+            );
         }
 
         let mut globals: Vec<_> = module_info
@@ -294,71 +294,78 @@ impl<'a> ModuleEmitState<'a> {
             data_segments.push(out);
         }
 
-        let mut output_functions: Vec<_> = funcs_to_define
+        let mut defined_functions: Vec<_> = funcs_to_define
             .iter()
-            .map(|&(func_id, kind)| {
-                let modification_list = if matches!(kind, OutputFunctionKind::Define{..}) {
-                    let defined_id = func_id
-                        .checked_sub(module_info.import_funcs_info.imported_funcs.len())
-                        .unwrap();
-                    // Collect all relocation entries that modify something within this function.
-                    let func_info =
-                        &module_info.source.code.section_payload.defined_funcs[defined_id];
-                    let range = func_info.body.range();
-                    let func_relocs =
-                        Self::get_relocations_for_range(&emit_info.all_relocations, &range);
+            .map(|&(func_id, export)| {
+                let defined_id = func_id
+                    .checked_sub(module_info.import_funcs_info.imported_funcs.len())
+                    .unwrap();
+                // Collect all relocation entries that modify something within this function.
+                let func_info = &module_info.source.code.section_payload.defined_funcs[defined_id];
+                let range = func_info.body.range();
+                let func_relocs =
+                    Self::get_relocations_for_range(&emit_info.all_relocations, &range);
 
-                    let name = module_info
-                        .source
-                        .names
-                        .functions
-                        .get(func_id)
-                        .map(|(name)| name.to_string())
-                        .unwrap_or(format!("func_{func_id}"));
-                    println!("func_name[{defined_id}:{func_id}]: {} {:?}, {:?}", &name, &range, &func_relocs);
-                    func_relocs
-                        .iter()
-                        .map(|entry| {
-                            // TODO: Filter shared symbols - don't relocate them
-                            modify::ModifyEntry::from_relocation_entry(
-                                |id| {
-                                    let (data_id, SymbolType::DataDefined(segment_id)) =
-                                        module_info.source.linking.linking_symbols.original_indexes
-                                            [id] else {
-                                        bail!(
-                                            "Relocation {entry:?} does not refer to a valid data symbol"
-                                        );
-                                    };
-                                    Ok(globals_map.get(dbg!(&(segment_id, data_id))).copied().map(GlobalVar::Extract)
-                                        .unwrap_or_default()
-                                    )
-                                },
-                                entry,
-                                range.start,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                        .unwrap()
-                } else {
-                    vec![]
-                };
+                let name = module_info
+                    .source
+                    .names
+                    .functions
+                    .get(func_id)
+                    .map(|(name)| name.to_string())
+                    .unwrap_or(format!("func_{func_id}"));
+                println!(
+                    "func_name[{defined_id}:{func_id}]: {} {:?}, {:?}",
+                    &name, &range, &func_relocs
+                );
+                let modification_list = func_relocs
+                    .iter()
+                    .map(|entry| {
+                        // TODO: Filter shared symbols - don't relocate them
+                        modify::ModifyEntry::from_relocation_entry(
+                            |id| {
+                                let (data_id, SymbolType::DataDefined(segment_id)) =
+                                    module_info.source.linking.linking_symbols.original_indexes[id]
+                                else {
+                                    bail!(
+                                        "Relocation {entry:?} does not refer to a valid data symbol"
+                                    );
+                                };
+                                Ok(globals_map
+                                    .get(dbg!(&(segment_id, data_id)))
+                                    .copied()
+                                    .map(GlobalVar::Extract)
+                                    .unwrap_or_default())
+                            },
+                            entry,
+                            range.start,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
 
-                OutputFunction {
-                    kind,
+                DefinedFunction {
+                    export,
                     input_func_id: func_id,
                     modification_list,
                 }
             })
             .collect();
-        output_functions.sort();
+        defined_functions.sort();
 
-        let mut input_function_output_id: HashMap<_, _> = output_functions
-            .iter()
-            .enumerate()
-            .map(|(output_func_id, &OutputFunction { input_func_id, .. })| {
-                (input_func_id, output_func_id)
-            })
-            .collect();
+        let mut input_function_output_id: HashMap<_, _> = {
+            let import_fns = import_functions
+                .iter()
+                .map(|import_func| import_func.input_func_id());
+            let defined_fns = defined_functions
+                .iter()
+                .map(|DefinedFunction { input_func_id, .. }| *input_func_id);
+
+            import_fns
+                .chain(defined_fns)
+                .enumerate()
+                .map(|(output_func_id, input_func_id)| (input_func_id, output_func_id))
+                .collect()
+        };
 
         dbg!(&input_function_output_id);
         // Map references to `import_func` to `export_func`.
@@ -379,7 +386,8 @@ impl<'a> ModuleEmitState<'a> {
             emit_info.indirect_functions.table_range_for_output_module[output_module_index].clone();
 
         Self {
-            output_functions,
+            import_functions,
+            defined_functions,
             info: module_info,
             data: data_segments,
             globals,
@@ -427,14 +435,18 @@ impl<'a> ModuleEmitState<'a> {
         // self.generate_custom_sections(output_module)?;
 
         // self.generate_wasm_bindgen_sections(output_module);
+        // Names + Linking + Relocations
+        // self.generate_compiler_tools_sections(output_module)?;
         // self.generate_name_section(output_module)?;
         // self.generate_target_features_section(output_module);
         Ok(())
     }
 
+    // TODO: Regenerate function types section (remove unused types)
     fn generate_type_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         // Simply copy all types.  Unneeded types may be pruned by `wasm-opt`.
         let mut section = wasm_encoder::TypeSection::new();
+        // Only use func_types from OutputFunctions
         for input_func_type in self.info.source.types.iter() {
             let output_func_type: wasm_encoder::FuncType =
                 input_func_type.clone().try_into().unwrap();
@@ -448,25 +460,18 @@ impl<'a> ModuleEmitState<'a> {
     }
 
     fn generate_import_section(&self, output_module: &mut wasm_encoder::Module) {
+        // TODO: Only main module should have original imports.
+        // Submodule should contain data + function imports from main module.
+        // Additionally import memory + heap + stack globals.
+
         let mut section = wasm_encoder::ImportSection::new();
         let original_imports = &self.info.import_funcs_info.imported_funcs;
-        // Function imports
-        for (func_id, &import_id) in original_imports.iter().enumerate() {
-            // TODO: later avoid outer iter
-            if !self.output_functions.iter().any(
-                |OutputFunction {
-                     input_func_id,
-                     kind,
-                     ..
-                 }| {
-                    input_func_id == &func_id && *kind == OutputFunctionKind::Import
-                },
-            ) {
-                continue;
-            }
-            let import = &self.info.source.imports[import_id];
-            let ty: wasm_encoder::EntityType = import.ty.clone().try_into().unwrap();
-            section.import(import.module, import.name, ty);
+
+        for (index, import_fn) in self.import_functions.iter().enumerate() {
+            let ty = wasm_encoder::EntityType::Function(self.get_function_type(index) as u32);
+            let fn_name = self.get_function_name(index);
+            let module_name = import_fn.module_name();
+            section.import(&module_name, &fn_name, ty);
         }
 
         // Copy all non-function imports from input.
@@ -519,6 +524,55 @@ impl<'a> ModuleEmitState<'a> {
             }
         }
         output_module.section(&section);
+    }
+
+    fn _get_input_func_id(&self, index: OutputFuncId) -> InputFuncId {
+        dbg!(index);
+        if index < dbg!(self.import_functions.len()) {
+            self.import_functions[index].input_func_id()
+        } else {
+            let defined_func_id = index - self.import_functions.len();
+            self.defined_functions[defined_func_id].input_func_id
+        }
+    }
+
+    // Get type of output function by index.
+    // TODO: regenerate type section
+    fn get_function_type(&self, index: OutputFuncId) -> FuncTypeId {
+        let input_func_id = dbg!(self._get_input_func_id(index));
+
+        if input_func_id >= self.info.import_funcs_info.imported_funcs.len() {
+            // It's a defined function.
+
+            let defined_index = input_func_id - self.info.import_funcs_info.imported_funcs.len();
+            return self.info.source.defined_func_type_id(defined_index);
+        }
+        // It's import function - recover from import id.
+
+        let import_id = self.info.import_funcs_info.imported_funcs[input_func_id];
+        let TypeRef::Func(ty) = self.info.source.imports[import_id].ty else {
+            panic!("Expected function type")
+        };
+        ty as FuncTypeId
+    }
+    // Get name of output function by index.
+    fn get_function_name(&self, index: OutputFuncId) -> String {
+        let input_func_id = self._get_input_func_id(index);
+        if input_func_id < self.info.import_funcs_info.imported_funcs.len() {
+            // It's an import function.
+            let import_id = self.info.import_funcs_info.imported_funcs[input_func_id];
+            self.info.source.imports[import_id].name.to_string()
+        } else {
+            // It's a defined function.
+            let defined_index = input_func_id - self.info.import_funcs_info.imported_funcs.len();
+            self.info
+                .source
+                .names
+                .functions
+                .get(defined_index)
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| format!("func_{index}"))
+        }
     }
 
     fn get_global_name(&self, index: usize) -> String {
@@ -610,16 +664,12 @@ impl<'a> ModuleEmitState<'a> {
     }
 
     fn generate_function_section(&self, output_module: &mut wasm_encoder::Module) {
-        let mut section = wasm_encoder::FunctionSection::new();
-        for OutputFunction { input_func_id, .. } in self
-            .output_functions
-            .iter()
-            .filter(|OutputFunction { kind, .. }| matches!(kind, OutputFunctionKind::Define { .. }))
-        {
-            section.function(self.info.source.defined_func_type_id(
-                *input_func_id - self.info.import_funcs_info.imported_funcs.len(),
-            ) as u32);
+        let mut section: wasm_encoder::FunctionSection = wasm_encoder::FunctionSection::new();
+        for (index, _func) in self.defined_functions.iter().enumerate() {
+            let func_type = self.get_function_type(index + self.import_functions.len());
+            section.function(func_type as u32);
         }
+
         output_module.section(&section);
     }
 
@@ -705,37 +755,13 @@ impl<'a> ModuleEmitState<'a> {
 
     fn generate_code_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         let mut section = wasm_encoder::CodeSection::new();
-        for output_func in self.output_functions.iter() {
-            match output_func.kind {
-                OutputFunctionKind::Import => {
-                    continue;
-                }
-
-                OutputFunctionKind::CreateIndirectStub => {
-                    continue;
-                    todo!()
-                    // let indirect_index = self
-                    //     .emit_state
-                    //     .indirect_functions
-                    //     .function_table_index
-                    //     .get(&output_func.input_func_id)
-                    //     .unwrap();
-                    // let function = self.generate_indirect_stub(
-                    //     *indirect_index,
-                    //     self.input_module.func_type_id(output_func.input_func_id),
-                    // );
-                    // section.function(&function);
-                    // continue;
-                }
-                OutputFunctionKind::Define { export: bool } => {
-                    // main branch
-                }
-            }
-
+        for output_func in self.defined_functions.iter() {
             let defined_id = output_func
                 .input_func_id
                 .checked_sub(self.info.import_funcs_info.imported_funcs.len())
                 .unwrap();
+
+            // TODO: collect relocations.
 
             let result = ModifyContext::emit_code_with_changes(
                 &self,
@@ -847,7 +873,15 @@ impl IndirectFunctionEmitInfo {
     fn new(module: &InputModule, program_info: &SplitProgramInfo) -> Result<Self> {
         let mut indirect_functions = get_indirect_functions(module)?;
 
-        indirect_functions.extend(program_info.shared_funcs.iter());
+        indirect_functions.extend(
+            program_info
+                .shared_nodes
+                .iter()
+                .filter_map(|dep| match dep {
+                    DepNode::Function(func_id) => Some(*func_id),
+                    _ => None,
+                }),
+        );
 
         // Remove all split point imports. These are placeholders. Any
         // references to these functions will be replaced by a reference to the
@@ -967,7 +1001,6 @@ pub fn emit_modules(
     module: &analysis::ModuleInfo<'_>,
     program_info: &SplitProgramInfo,
     deps: &analysis::dep_graph::DepGraph,
-    resolve_type: FnResolveType,
     emit_fn: &dyn Fn(usize, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     // For now we will ignore data symbols because that simplifies things quite a bit.
@@ -975,8 +1008,8 @@ pub fn emit_modules(
     let emit_info = EmitInfo::new(&module.source, program_info)?;
 
     for (output_module_index, (id, _)) in program_info.output_modules.iter().enumerate() {
-        if let SplitModuleIdentifier::Chunk(_) = id {
-            continue; // Chunks are processed inside modules.
+        if let SplitModuleIdentifier::Shared(_) = id {
+            continue; // Shared modules are processed inside modules.
         }
         let module = ModuleEmitState::produce_state(
             module,
@@ -984,7 +1017,6 @@ pub fn emit_modules(
             program_info,
             deps,
             output_module_index,
-            resolve_type,
         );
         let identifier = &program_info.output_modules[output_module_index].0;
         let mut encoder = wasm_encoder::Module::new();

@@ -71,3 +71,8 @@ pub fn debug_fmt_mostly_filled<T: Debug>(
     writer.result.pop(); // Remove last space
     writer
 }
+
+/// Returns an iterator if the condition is true, otherwise returns an empty iterator.
+pub fn iter_if<T>(condition: bool, iter: impl Iterator<Item = T>) -> impl Iterator<Item = T> {
+    condition.then_some(iter).into_iter().flatten()
+}

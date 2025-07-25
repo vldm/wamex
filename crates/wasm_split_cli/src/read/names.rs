@@ -1,9 +1,6 @@
 use super::CustomSectionReader;
 use anyhow::{bail, Result};
-pub use std::ops::Range;
 use vec_map::VecMap;
-
-pub type InputRange = Range<usize>;
 
 // Custom sections
 #[derive(Default, Clone)]

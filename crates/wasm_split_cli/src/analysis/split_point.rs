@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Debug;
 
 use super::dep_graph::{DepGraph, DepNode, ReachabilityGraph};
 use crate::analysis;
-use crate::helpers::debug_fmt_mostly_filled;
-use crate::index::{ExportId, ImportId, InputFuncId, SymbolIndex};
+use crate::analysis::dep_graph::NamedGraph;
+use crate::index::{ExportId, ImportId, InputFuncId};
 use crate::read::InputModule;
 use anyhow::{anyhow, bail};
 use lazy_static::lazy_static;
@@ -13,75 +13,9 @@ use regex::Regex;
 #[derive(Default)]
 pub struct OutputModuleInfo {
     pub included_symbols: HashSet<DepNode>,
-    pub parents: HashMap<DepNode, DepNode>,
-    pub shared_imports: HashSet<InputFuncId>,
+    // Shared imports that should be imported from other modules.
+    pub link_symbols: HashSet<DepNode>,
     pub split_points: Vec<SplitPoint>,
-}
-
-impl Debug for OutputModuleInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut included_fns = self
-            .included_symbols
-            .iter()
-            .filter_map(|dep| match dep {
-                DepNode::Function(func_id) => Some(*func_id),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        included_fns.sort_unstable();
-
-        let mut included_datas = self
-            .included_symbols
-            .iter()
-            .filter_map(|dep| match dep {
-                DepNode::DataSymbol(segment, data_id) => Some((*segment, *data_id)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        included_datas.sort_unstable();
-
-        let mut shared_imports = self.shared_imports.iter().collect::<Vec<_>>();
-        shared_imports.sort_unstable();
-
-        f.debug_struct("OutputModuleInfo")
-            .field(
-                "shared_imports",
-                &debug_fmt_mostly_filled(&shared_imports, 4, 7, "...", |a, b| *a + 1 != **b),
-            )
-            .field(
-                "included_fns",
-                &debug_fmt_mostly_filled(&included_fns, 4, 15, "...", |a, b| a + 1 != *b),
-            )
-            .field(
-                "included_datas",
-                &debug_fmt_mostly_filled(&included_datas, 3, 7, "...", |a, b| a.1 + 1 != b.1),
-            )
-            .field("parents", &self.parents)
-            .field("split_points", &self.split_points)
-            .finish()
-    }
-}
-
-impl OutputModuleInfo {
-    pub fn print(&self, module_name: &str, module: &InputModule, info: &analysis::ModuleInfo) {
-        ReachabilityGraph::print_deps_inner(
-            module_name,
-            module,
-            info,
-            &self.included_symbols,
-            &self.parents,
-        );
-    }
-}
-
-impl From<ReachabilityGraph> for OutputModuleInfo {
-    fn from(reachability: ReachabilityGraph) -> Self {
-        Self {
-            included_symbols: reachability.reachable,
-            parents: reachability.parents,
-            ..Default::default()
-        }
-    }
 }
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SplitPoint {
@@ -100,7 +34,7 @@ pub struct SplitPoint {
 /// Search for _wasm_split_00<module_name>00_import_<import_id> and
 /// _wasm_split_00<module_name>00_export_<export_id> functions
 /// and extract them as SplitPoints.
-pub fn get_split_points(
+pub fn find_split_points(
     module: &InputModule,
     info: &analysis::ModuleInfo,
 ) -> anyhow::Result<Vec<SplitPoint>> {
@@ -179,18 +113,35 @@ pub fn get_split_points(
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
-pub enum SplitModuleIdentifier {
+pub enum ModuleIdentifier {
     Main,
     Split(String),
-    Chunk(Vec<String>),
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub enum SplitModuleIdentifier {
+    Single(ModuleIdentifier),
+    Shared(Vec<ModuleIdentifier>),
+}
+
+impl ModuleIdentifier {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Main => "main",
+            Self::Split(name) => name,
+        }
+    }
+}
 impl SplitModuleIdentifier {
     pub fn name(&self) -> String {
         match self {
-            Self::Main => "main".to_string(),
-            Self::Split(name) => name.clone(),
-            Self::Chunk(names) => names.join("_"),
+            Self::Single(name) => name.name().to_string(),
+            Self::Shared(names) => names.iter().fold(String::new(), |mut acc, n| {
+                if !acc.is_empty() {
+                    acc.push('_');
+                }
+                acc + &n.name()
+            }),
         }
     }
 }
@@ -198,8 +149,7 @@ impl SplitModuleIdentifier {
 #[derive(Debug, Default)]
 pub struct SplitProgramInfo {
     pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
-    pub output_module_identifiers: HashMap<SplitModuleIdentifier, usize>,
-    pub shared_funcs: HashSet<InputFuncId>,
+    pub shared_nodes: HashSet<DepNode>,
     pub symbol_output_module: HashMap<DepNode, usize>,
 }
 
@@ -208,15 +158,14 @@ impl SplitProgramInfo {
     // Add start_func, exports and imports
     // Filter-out all split points related functions.
     fn get_main_module_roots(
-        module: &InputModule,
         info: &analysis::ModuleInfo,
         split_points: &[SplitPoint],
     ) -> HashSet<DepNode> {
         let mut roots: HashSet<DepNode> = HashSet::new();
-        if let Some(id) = module.code.section_payload.start_func {
+        if let Some(id) = info.source.code.section_payload.start_func {
             roots.insert(DepNode::Function(id));
         }
-        for export in module.exports.iter() {
+        for export in info.source.exports.iter() {
             let wasmparser::Export {
                 index,
                 kind: wasmparser::ExternalKind::Func,
@@ -264,9 +213,8 @@ impl SplitProgramInfo {
                 .push(module_name.to_string());
         }
     }
-    
+
     pub fn compute_split_modules(
-        module: &InputModule,
         info: &analysis::ModuleInfo,
         dep_graph: &DepGraph,
         split_points: &[SplitPoint],
@@ -279,151 +227,92 @@ impl SplitProgramInfo {
             .map(|split_point| (split_point.import_func, split_point.export_func))
             .collect();
 
-        let remove_ignored_deps = |deps: &mut HashSet<DepNode>| {
-            for split_point in split_points.iter() {
-                deps.remove(&DepNode::Function(split_point.import_func));
-            }
-        };
-        let remove_ignored_funcs = |deps: &mut HashSet<InputFuncId>| {
-            for split_point in split_points.iter() {
-                deps.remove(&split_point.import_func);
-            }
-        };
-
-        let main_roots = Self::get_main_module_roots(module, info, &split_points);
+        let main_roots = Self::get_main_module_roots(info, &split_points);
 
         // graph root -> dep -> dep
-        let mut main_deps =
-            ReachabilityGraph::find_reachable_deps(dep_graph, &main_roots, &HashSet::new());
+        let main_deps = ReachabilityGraph::find_reachable_deps(dep_graph, &main_roots);
 
-        log::trace!("reachable_main={main_deps:?}");
-        remove_ignored_deps(&mut main_deps.reachable);
+        let mut named_modules = vec![NamedGraph {
+            module: ModuleIdentifier::Main,
+            deps: main_deps.clone(),
+        }];
+
+        // log::trace!("reachable_main={main_deps:?}");
+        // remove_ignored_deps(&mut main_deps.reachable);
 
         // ModuleName -> ([Dep], (Dep -> Parent))
 
         // Determine reachable symbols (excluding main module symbols) for each
         // split module. Symbols may be reachable from more than one split module;
         // these symbols will be moved to a separate module.
-        let mut module_deps: HashMap<String, ReachabilityGraph> = split_points_by_module
-            .iter()
-            .map(|(module_name, entry_points)| {
-                let mut roots = HashSet::<DepNode>::new();
-                for entry_point in entry_points.iter() {
-                    roots.insert(DepNode::Function(entry_point.export_func));
-                }
+        for (module_name, entry_points) in split_points_by_module.iter() {
+            let mut roots = HashSet::<DepNode>::new();
+            for entry_point in entry_points.iter() {
+                roots.insert(DepNode::Function(entry_point.export_func));
+            }
 
-                let mut split_functions =
-                    ReachabilityGraph::find_reachable_deps(dep_graph, &roots, &HashSet::new());
-                println!("reachable_subchain_splits={split_functions:?}");
-                remove_ignored_deps(&mut split_functions.reachable);
-                (module_name.clone(), split_functions)
-            })
-            .collect();
-        log::trace!("split_module_candidates={module_deps:?}");
+            let split_functions = ReachabilityGraph::find_reachable_deps(dep_graph, &roots);
+            println!("reachable_subchain_splits={split_functions:?}");
+            named_modules.push(NamedGraph {
+                module: ModuleIdentifier::Split(module_name.clone()),
+                deps: split_functions,
+            });
+        }
 
-        module_deps.insert("main".to_string(), main_deps);
-        // Dep -> ModuleName
+        // Calculate shared deps.
+        let shared_deps = NamedGraph::calculate_shared_modules(&mut named_modules, dep_graph);
 
-        // Set of split modules from which each symbol is reachable.
-        let mut dep_candidate_modules = HashMap::<DepNode, Vec<String>>::new();
-        for (module_name, deps) in module_deps.iter() {
-            Self::collect_deps_module(
-                &mut dep_candidate_modules,
-                module_name,
-                deps.reachable.iter(),
+        let mut split_module_contents = BTreeMap::<SplitModuleIdentifier, OutputModuleInfo>::new();
+
+        split_module_contents.extend(named_modules.into_iter().map(|named_graph| {
+            (
+                SplitModuleIdentifier::Single(named_graph.module),
+                OutputModuleInfo {
+                    included_symbols: named_graph.deps.reachable,
+                    ..Default::default()
+                },
+            )
+        }));
+
+        let mut all_links = HashSet::new();
+
+        for shared in shared_deps {
+            for module in shared.module_names.iter() {
+                let split_module = split_module_contents
+                    .get_mut(&SplitModuleIdentifier::Single(module.clone()))
+                    .unwrap();
+
+                split_module
+                    .link_symbols
+                    .extend(shared.topmost_shared.iter().cloned());
+            }
+
+            all_links.extend(shared.topmost_shared.iter().cloned());
+            split_module_contents.insert(
+                SplitModuleIdentifier::Shared(shared.module_names.clone()),
+                OutputModuleInfo {
+                    included_symbols: shared.shared_deps,
+                    link_symbols: shared.topmost_shared,
+                    split_points: vec![],
+                },
             );
         }
 
-        let mut program_info = SplitProgramInfo::default();
-
-        let mut split_module_contents = HashMap::<SplitModuleIdentifier, OutputModuleInfo>::new();
-
-        // SplitModuleIdentifier::Main -> In main module
-        // SplitModuleIdentifier::Chunk -> More than one module (shared data)
-        // SplitModuleIdentifier::Split -> One module
-        for (dep, mut modules) in dep_candidate_modules {
-            // TODO: child of dep root should be also moved
-            if modules.len() > 1 {
-                modules.sort();
-                for module in modules.iter() {
-                    let module_contents = module_deps.get_mut(module).unwrap();
-                    module_contents.reachable.remove(&dep);
-                }
-                split_module_contents
-                    .entry(SplitModuleIdentifier::Chunk(modules))
-                    .or_default()
-                    .included_symbols
-                    .insert(dep);
-            }
-        }
-
-        split_module_contents.extend(module_deps.drain().map(|(module_name, deps)| {
-            if module_name == "main" {
-                return (SplitModuleIdentifier::Main, deps.into());
-            }
-            (SplitModuleIdentifier::Split(module_name), deps.into())
-        }));
-
-        // Populate shared_imports
-        // By traversing all deps.children funcs
-        for contents in split_module_contents.values_mut() {
-            for symbol in contents.included_symbols.iter() {
-                let Some(neighbors) = dep_graph.get(symbol) else {
-                    continue;
-                };
-                for mut called_func_id in neighbors.iter().filter_map(|symbol| match symbol {
-                    DepNode::Function(func_id) => Some(*func_id),
-                    _ => None,
-                }) {
-                    // replace split_module::import_fn -> split_module::export_fn
-
-                    called_func_id = *split_import_to_export
-                        .get(&called_func_id)
-                        .unwrap_or(&called_func_id);
-                    if !contents
-                        .included_symbols
-                        .contains(&DepNode::Function(called_func_id))
-                    {
-                        contents.shared_imports.insert(called_func_id);
-                        program_info.shared_funcs.insert(called_func_id);
-                    }
-                }
-            }
-            remove_ignored_funcs(&mut contents.shared_imports);
-        }
-        remove_ignored_funcs(&mut program_info.shared_funcs);
-
-        // populate split_points
-        for split_point in split_points {
-            program_info.shared_funcs.insert(split_point.export_func);
-            let output_module = split_module_contents
-                .get_mut(&SplitModuleIdentifier::Split(
-                    split_point.module_name.to_string(),
-                ))
-                .unwrap();
-            output_module.split_points.push(split_point.clone());
-        }
-
-        program_info.output_modules = split_module_contents.drain().collect();
-        program_info
-            .output_modules
-            .sort_by_key(|(identifier, _)| (*identifier).clone());
-        program_info.output_module_identifiers = program_info
-            .output_modules
+        let symbol_output_module = split_module_contents
             .iter()
             .enumerate()
-            .map(|(index, (identifier, _))| (identifier.clone(), index))
+            .flat_map(|(output_index, (_, info))| {
+                info.included_symbols
+                    .iter()
+                    .map(move |symbol| (symbol.clone(), output_index))
+            })
             .collect();
 
-        for (output_index, (_, info)) in program_info.output_modules.iter().enumerate() {
-            for &symbol in info.included_symbols.iter() {
-                program_info
-                    .symbol_output_module
-                    .insert(symbol, output_index);
-            }
-        }
-
-        Ok(program_info)
+        Ok(SplitProgramInfo {
+            output_modules: split_module_contents.into_iter().collect(),
+            shared_nodes: all_links,
+            symbol_output_module,
+        })
     }
 }
 
