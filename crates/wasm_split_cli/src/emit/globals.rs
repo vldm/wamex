@@ -1,8 +1,6 @@
-use vec_map::VecMap;
 use wasm_encoder::GlobalType;
 
-use super::StoreType;
-use crate::index::{GlobalId, SymbolId};
+use crate::index::SymbolId;
 
 // Init global variable that will replace all usage of DataSymbol.
 #[derive(Clone, Debug)]

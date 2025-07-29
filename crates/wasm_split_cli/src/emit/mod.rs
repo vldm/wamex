@@ -4,21 +4,21 @@ use std::ops::Range;
 
 use anyhow::{anyhow, bail, Context, Result};
 use globals::GlobalConstructor;
-use wasm_encoder::{EntityType, GlobalType};
-use wasmparser::{ConstExpr, RelocationEntry, RelocationType, TypeRef};
+use wasm_encoder::GlobalType;
+use wasmparser::{RelocationEntry, RelocationType, TypeRef};
 
+use crate::analysis;
 use crate::analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier};
 use crate::emit::data_segments::DataSegment;
 use crate::helpers::iter_if;
-use crate::index::{DataId, DataSegmentId, DataSymbolId, FuncTypeId, GlobalId, OutputFuncId};
+use crate::index::{DataId, FuncTypeId, GlobalId, OutputFuncId};
 use crate::read::linking::SymbolType;
-use crate::{analysis, main};
 use modify::{init_each_store_var, ModifyContext, StoreType};
 
 use crate::{
     analysis::dep_graph::DepNode,
-    analysis::split_point::{OutputModuleInfo, SplitProgramInfo},
-    index::{ImportId, InputFuncId, SymbolIndex},
+    analysis::split_point::SplitProgramInfo,
+    index::{ImportId, InputFuncId},
     read::InputModule,
 };
 use modify::GlobalVar;
@@ -803,44 +803,6 @@ impl<'a> ModuleEmitState<'a> {
     fn generate_custom_sections(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         todo!("Not supported")
     }
-    //     fn get_global_name(&self, index: usize) -> String {
-    //         self.input_module
-    //             .names
-    //             .globals
-    //             .get(&index)
-    //             .map(|name| name.to_string())
-    //             .or_else(|| {
-    //                 self.input_module
-    //                     .export_map
-    //                     .get(&(wasmparser::ExternalKind::Global as isize, index))
-    //                     .map(|(_, name)| name.to_string())
-    //             })
-    //             .unwrap_or_else(|| format!("__global_{index}"))
-    //     }
-
-    //     fn generate_table_section(&mut self) {
-    //         if !self.is_main() {
-    //             return;
-    //         }
-    //         let mut section = wasm_encoder::TableSection::new();
-    //         section.table(self.get_indirect_function_table_type());
-    //         self.output_module.section(&section);
-    //     }
-
-    // fn get_memory_name(&self, index: usize) -> String {
-    //     self.input_module
-    //         .names
-    //         .memories
-    //         .get(&index)
-    //         .map(|name| name.to_string())
-    //         .or_else(|| {
-    //             self.input_module
-    //                 .export_map
-    //                 .get(&(wasmparser::ExternalKind::Memory as isize, index))
-    //                 .map(|(_, name)| name.to_string())
-    //         })
-    //         .unwrap_or_else(|| format!("__memory_{index}"))
-    // }
 }
 
 fn is_indirect_function_reloc(ty: RelocationType) -> bool {

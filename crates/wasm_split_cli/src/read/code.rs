@@ -1,6 +1,5 @@
 use anyhow::{bail, ensure, Result};
 
-pub use std::ops::Range;
 pub use wasmparser::FunctionBody;
 
 use super::Ind;

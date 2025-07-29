@@ -47,7 +47,7 @@ pub fn debug_fmt_mostly_filled<T: Debug>(
     let mut writer = DebugFmt {
         result: String::new(),
     };
-    let mut placeholder = format!("{placeholder:>width$} ");
+    let placeholder = format!("{placeholder:>width$} ");
 
     let mut last = None;
     let mut shift = 0;

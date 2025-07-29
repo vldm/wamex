@@ -1,22 +1,10 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    ops::Range,
-};
+use std::{collections::HashSet, fmt::Debug};
 
 use anyhow::Result;
-use nom::HexDisplay;
 use vec_map::VecMap;
-use wasm_encoder::GlobalType;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
-use crate::{
-    analysis,
-    emit::globals::DataSymbol,
-    helpers::ShiftRange,
-    index::{DataSegmentId, SymbolIndex},
-    read::linking::section::DataInSegment,
-};
+use crate::{analysis, emit::globals::DataSymbol, helpers::ShiftRange, index::SymbolIndex};
 
 #[derive(Clone)]
 pub struct NamedData<'a> {

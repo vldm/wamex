@@ -9,15 +9,12 @@
 mod constant_extraction;
 mod relocation;
 
-use std::{collections::HashMap, iter::Peekable, ops::Range};
+use std::{collections::HashMap, ops::Range};
 
 use anyhow::{bail, Result};
-use leb128fmt::{decode_u32, decode_uint_slice};
-use wasm_encoder::Encode;
 use wasmparser::{BinaryReader, FunctionBody, RelocationType};
 
 use crate::{
-    analysis::ModuleInfo,
     emit::ModuleEmitState,
     helpers::ShiftRange,
     index::{GlobalId, SymbolId},
@@ -115,7 +112,7 @@ impl<'a> ModifyContext<'a> {
             let instr_range = start..end;
             let entry_range = entry.range();
 
-            let shift = (result.len() as isize - instr_range.start as isize);
+            let shift = result.len() as isize - instr_range.start as isize;
             let ctx = ModifyContext {
                 function_name,
                 global_tmps: &module_emit.global_tmp_store,
