@@ -17,7 +17,7 @@ use wasmparser::{BinaryReader, FunctionBody, RelocationType};
 use crate::{
     emit::ModuleEmitState,
     helpers::ShiftRange,
-    index::{GlobalId, SymbolId},
+    index::{DefinedFuncId, GlobalId, InputFuncId, OutputGlobalId, SymbolId},
 };
 use constant_extraction::ConstantExtractionEntry;
 pub use constant_extraction::GlobalVar;
@@ -25,21 +25,23 @@ use relocation::RelocateState;
 #[derive(Debug)]
 pub struct ModifyContext<'a> {
     pub function_name: &'a str,
-    pub global_tmps: &'a HashMap<StoreType, GlobalId>,
+    pub global_tmps: &'a HashMap<StoreType, OutputGlobalId>,
     pub instruction: wasmparser::Operator<'a>,
     pub writer: &'a mut Vec<u8>,
 }
 impl<'a> ModifyContext<'a> {
-    pub fn emit_code_with_changes(
-        module_emit: &ModuleEmitState<'a>,
-        main_module: &ModuleEmitState<'a>,
+    pub fn emit_code_with_changes<'src>(
+        module_emit: &'a ModuleEmitState<'a, 'src>,
+        main_module: &'a ModuleEmitState<'a, 'src>,
         num_new_global_imports: usize,
-        defined_function_id: GlobalId,
+        defined_function_id: DefinedFuncId,
         entries: &[ModifyEntry],
     ) -> Result<Vec<u8>> {
         let (function_name, src_body) = {
-            let func_id =
-                defined_function_id + module_emit.info.import_funcs_info.imported_funcs.len();
+            let func_id = InputFuncId::from_index(
+                defined_function_id.as_raw_index()
+                    + module_emit.info.import_funcs_info.imported_funcs.len(),
+            );
             let defined_func =
                 &module_emit.info.source.code.section_payload.defined_funcs[defined_function_id];
             let name = module_emit
@@ -211,9 +213,13 @@ impl<'a> ModifyContext<'a> {
         let reloc_info = RelocateState {
             input_module: &module_emit.info.source,
             emit_info: &module_emit.emit_info,
-            main_module: &main_module,
+            main_module: main_module,
             input_function_output_id: &module_emit.input_function_output_id,
-            global_id_mapper: |global_id| Some(global_id + num_new_global_imports), // currently just increase global_id
+            global_id_mapper: |global_id: GlobalId| {
+                Some(
+                    GlobalId::from_index(global_id.as_raw_index() + num_new_global_imports), // currently just increase global_id
+                )
+            },
         };
 
         // TODO: apply relocations
@@ -228,8 +234,8 @@ impl<'a> ModifyContext<'a> {
     }
 
     // Same as emit_code_with_changes, but avoid deserializing.
-    fn emit_code_in_place(
-        module_emit: &ModuleEmitState<'a>,
+    fn emit_code_in_place<'src>(
+        module_emit: &ModuleEmitState<'a, 'src>,
         num_new_global_imports: u32,
         defined_function_id: GlobalId,
         entries: &[ModifyEntry],

@@ -3,10 +3,15 @@ use anyhow::{bail, ensure, Result};
 pub use wasmparser::FunctionBody;
 
 use super::Ind;
-use crate::index::{FuncTypeId, InputFuncId};
+use crate::index::{FuncTypeId, IdVec, InputFuncId};
 
 #[derive(Debug)]
-pub struct Function<'a> {
+pub enum InputFunction<'a> {
+    Import {},
+    Defined(FunctionBody<'a>),
+}
+#[derive(Debug)]
+pub struct FunctionWithBody<'a> {
     pub type_id: FuncTypeId,
     pub body: FunctionBody<'a>,
 }
@@ -15,7 +20,7 @@ pub struct Function<'a> {
 pub struct CodeSection<'a> {
     pub start_func: Option<InputFuncId>,
     // function (CodeSectionEntry)
-    pub defined_funcs: Vec<Function<'a>>,
+    pub defined_funcs: IdVec<FunctionWithBody<'a>>,
 
     pub(super) func_types: Vec<FuncTypeId>,
 }
@@ -49,7 +54,7 @@ impl<'a> CodeSection<'a> {
                 defined_funcs: funcs
                     .into_iter()
                     .zip(&func_types)
-                    .map(|(body, ty)| Function { type_id: *ty, body })
+                    .map(|(body, ty)| FunctionWithBody { type_id: *ty, body })
                     .collect(),
                 func_types,
             },

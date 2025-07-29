@@ -5,6 +5,8 @@ use anyhow::anyhow;
 use crate::analysis::dep_graph::DepNode;
 
 mod dot_parser;
+#[cfg(test)]
+pub use dot_parser::tests;
 
 /// Parses dependencies from a string in the format of a DOT like graph.
 pub fn parse_deps(input: &str) -> anyhow::Result<HashMap<DepNode, HashSet<DepNode>>> {

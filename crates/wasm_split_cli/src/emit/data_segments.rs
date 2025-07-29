@@ -1,17 +1,21 @@
 use std::{collections::HashSet, fmt::Debug};
 
 use anyhow::Result;
-use vec_map::VecMap;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
-use crate::{analysis, emit::globals::DataSymbol, helpers::ShiftRange, index::SymbolIndex};
+use crate::{
+    analysis,
+    emit::globals::DataSymbol,
+    helpers::ShiftRange,
+    index::{DataSymbolId, IdMap, Indexed, SymbolId},
+};
 
 #[derive(Clone)]
 pub struct NamedData<'a> {
     chunk: &'a [u8],
     // if no data symbol - emit anonymous symbol
     name: &'a str,
-    symbol_index: SymbolIndex,
+    symbol_index: DataSymbolId,
     flags: SymbolFlags,
 }
 
@@ -34,13 +38,13 @@ pub struct DataSegment<'a> {
     data_parts: Vec<NamedData<'a>>,
     pub kind: DataKind<'a>,
     // Map from original linking symbol id to index in `data_parts`.
-    linking_symbols_map: VecMap<SymbolIndex>,
+    linking_symbols_map: IdMap<DataSymbolId, SymbolId>,
 }
 
 impl<'a> DataSegment<'a> {
     pub fn new_inner(data: Data<'a>, symbols: &[analysis::DataSymbol<'a>]) -> Result<Self> {
         let mut data_parts = vec![];
-        let mut linking_symbols = VecMap::new();
+        let mut linking_symbols = IdMap::new();
         for sym in symbols {
             if sym.range.len() == 0 {
                 println!("Data segment has zero-size symbol: {:?}", sym);
@@ -71,7 +75,7 @@ impl<'a> DataSegment<'a> {
     }
 
     // Keeps only symbols with id is in `indexes`.
-    pub fn retain_symbols(&mut self, indexes: &HashSet<SymbolIndex>) {
+    pub fn retain_symbols(&mut self, indexes: &HashSet<DataSymbolId>) {
         let mut result = vec![];
 
         for item in self.data_parts.drain(..) {
@@ -105,7 +109,7 @@ impl<'a> DataSegment<'a> {
                 Some(offset_expr)
             }
         };
-        let mut globals = vec![];
+        let mut globals = Vec::new();
         for symbol in &self.data_parts {
             globals.push(DataSymbol {
                 data_offset: data.len() as i32,
@@ -148,4 +152,12 @@ impl DataSegmentOutput {
     pub fn globals(&self) -> &[super::globals::DataSymbol] {
         &self.globals
     }
+}
+
+impl<'a> Indexed for crate::emit::DataSegment<'a> {
+    type StaticIndexType = Data<'static>;
+}
+
+impl Indexed for crate::emit::DataSegmentOutput {
+    type StaticIndexType = Data<'static>;
 }

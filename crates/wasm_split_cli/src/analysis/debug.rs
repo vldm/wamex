@@ -5,7 +5,7 @@ use crate::analysis;
 use crate::analysis::dep_graph::{DepNode, ReachabilityGraph};
 use crate::analysis::split_point::OutputModuleInfo;
 use crate::helpers::debug_fmt_mostly_filled;
-use crate::read::InputModule;
+use crate::index::DefinedFuncId;
 
 impl ReachabilityGraph {
     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo) {
@@ -20,12 +20,14 @@ impl ReachabilityGraph {
         let size_fn = |dep: &DepNode| match dep {
             DepNode::Function(index) => {
                 let size = index
+                    .as_raw_index()
                     .checked_sub(info.import_funcs_info.imported_funcs.len())
                     .map(|defined_index| {
-                        info.source.code.section_payload.defined_funcs[defined_index]
-                            .body
-                            .range()
-                            .len()
+                        info.source.code.section_payload.defined_funcs
+                            [DefinedFuncId::from_index(defined_index)]
+                        .body
+                        .range()
+                        .len()
                     })
                     .unwrap_or_default();
                 size
@@ -47,8 +49,11 @@ impl ReachabilityGraph {
                     .get_data_in_segment(*segment, *idx)
                     .expect("indexes should be valid")
                     .name;
-                let segment = info.source.names.data_segments[segment];
-                format!("data[{segment}:{idx}] <{symbol:?}> (size={})", size_fn(dep))
+                let segment_name = info.source.names.data_segments[*segment];
+                format!(
+                    "data[{segment}:{idx}] {segment_name}<{symbol:?}> (size={})",
+                    size_fn(dep)
+                )
             }
         };
         let mut rev_tree = HashMap::new();
@@ -120,19 +125,19 @@ impl Debug for OutputModuleInfo {
         f.debug_struct("OutputModuleInfo")
             .field(
                 "shared_fns",
-                &debug_fmt_mostly_filled(&shared_fns, 4, 15, "...", |a, b| a + 1 != *b),
+                &debug_fmt_mostly_filled(&shared_fns, 4, 15, "...", |a, b| a.next() != *b),
             )
             .field(
                 "shared_datas",
-                &debug_fmt_mostly_filled(&shared_datas, 3, 7, "...", |a, b| a.1 + 1 != b.1),
+                &debug_fmt_mostly_filled(&shared_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
             )
             .field(
                 "included_fns",
-                &debug_fmt_mostly_filled(&included_fns, 4, 15, "...", |a, b| a + 1 != *b),
+                &debug_fmt_mostly_filled(&included_fns, 4, 15, "...", |a, b| a.next() != *b),
             )
             .field(
                 "included_datas",
-                &debug_fmt_mostly_filled(&included_datas, 3, 7, "...", |a, b| a.1 + 1 != b.1),
+                &debug_fmt_mostly_filled(&included_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
             )
             .field("split_points", &self.split_points)
             .finish()

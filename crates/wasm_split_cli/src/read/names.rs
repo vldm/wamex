@@ -1,3 +1,7 @@
+use crate::index::{
+    DataSegmentId, ElementId, FuncTypeId, GlobalId, IdMap, InputFuncId, MemoryId, TableId, TagId,
+};
+
 use super::CustomSectionReader;
 use anyhow::{bail, Result};
 use vec_map::VecMap;
@@ -6,16 +10,16 @@ use vec_map::VecMap;
 #[derive(Default, Clone)]
 pub struct Names<'a> {
     pub module: Option<&'a str>,
-    pub functions: VecMap<&'a str>,
+    pub functions: IdMap<InputFuncId, &'a str>,
     pub locals: VecMap<wasmparser::NameMap<'a>>,
     pub labels: VecMap<wasmparser::NameMap<'a>>,
-    pub types: VecMap<&'a str>,
-    pub tables: VecMap<&'a str>,
-    pub memories: VecMap<&'a str>,
-    pub globals: VecMap<&'a str>,
-    pub elements: VecMap<&'a str>,
-    pub data_segments: VecMap<&'a str>,
-    pub tags: VecMap<&'a str>,
+    pub types: IdMap<FuncTypeId, &'a str>,
+    pub tables: IdMap<TableId, &'a str>,
+    pub memories: IdMap<MemoryId, &'a str>,
+    pub globals: IdMap<GlobalId, &'a str>,
+    pub elements: IdMap<ElementId, &'a str>,
+    pub data_segments: IdMap<DataSegmentId, &'a str>,
+    pub tags: IdMap<TagId, &'a str>,
 }
 
 impl<'a> CustomSectionReader<'a> for Names<'a> {
@@ -72,11 +76,20 @@ impl<'a> CustomSectionReader<'a> for Names<'a> {
     }
 }
 
-fn convert_name_map<'a>(name_map: wasmparser::NameMap<'a>) -> Result<VecMap<&'a str>> {
+fn convert_name_map<'a, T>(
+    name_map: wasmparser::NameMap<'a>,
+) -> Result<IdMap<crate::index::Id<T>, &'a str>> {
     name_map
         .into_iter()
-        .map(|r| r.map(|naming| (naming.index as usize, naming.name)))
-        .collect::<Result<VecMap<&'a str>, _>>()
+        .map(|r| {
+            r.map(|naming| {
+                (
+                    crate::index::Id::from_index(naming.index as u32),
+                    naming.name,
+                )
+            })
+        })
+        .collect::<Result<IdMap<crate::index::Id<T>, &'a str>, _>>()
         .map_err(|e| e.into())
 }
 

@@ -46,7 +46,7 @@ pub fn find_split_points(
                     static ref PATTERN: Regex = Regex::new($pattern).unwrap();
                 }
 
-                for (id, item) in module.$member.iter().enumerate() {
+                for (id, item) in module.$member.iter() {
                     let Some(captures) = PATTERN.captures(&item.name) else {
                         continue;
                     };
@@ -100,7 +100,7 @@ pub fn find_split_points(
                 import: import_id,
                 import_func,
                 export: export_id,
-                export_func: index as InputFuncId,
+                export_func: InputFuncId::from_index(index),
             })
         })
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
@@ -171,7 +171,7 @@ impl SplitProgramInfo {
         if let Some(id) = info.source.code.section_payload.start_func {
             roots.insert(DepNode::Function(id));
         }
-        for export in info.source.exports.iter() {
+        for (_id, export) in info.source.exports.iter() {
             let wasmparser::Export {
                 index,
                 kind: wasmparser::ExternalKind::Func,
@@ -180,15 +180,12 @@ impl SplitProgramInfo {
             else {
                 continue;
             };
-            roots.insert(DepNode::Function(*index as usize));
+            roots.insert(DepNode::Function(InputFuncId::from_index(*index)));
         }
-        // Just add imported functions to list of deps.
-        // for func_id in 0..info.import_funcs_info.imported_funcs.len() {
-        //     roots.insert(DepNode::Function(func_id));
-        // }
+
         for split_point in split_points.iter() {
             roots.remove(&DepNode::Function(split_point.export_func));
-            roots.remove(&DepNode::Function(split_point.import_func));
+            roots.remove(&DepNode::Function(split_point.import_func.into()));
         }
         roots
     }

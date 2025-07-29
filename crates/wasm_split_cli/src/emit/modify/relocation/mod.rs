@@ -6,24 +6,27 @@ use wasmparser::RelocationEntry;
 
 use crate::{
     emit::{EmitInfo, ModuleEmitState},
-    index::{GlobalId, InputFuncId},
-    read::{linking::SymbolType, InputModule},
+    index::{DataSegmentId, DataSymbolId, GlobalId, InputFuncId},
+    read::{linking::SymbolIndex, InputModule},
 };
 
-pub struct RelocateState<'a, F> {
-    pub input_module: &'a InputModule<'a>,
-    pub emit_info: &'a EmitInfo,
-    pub main_module: &'a ModuleEmitState<'a>,
+pub struct RelocateState<'any, 'src, F> {
+    pub input_module: &'any InputModule<'src>,
+    pub emit_info: &'any EmitInfo,
+    pub main_module: &'any ModuleEmitState<'any, 'src>,
     pub global_id_mapper: F,
-    pub input_function_output_id: &'a HashMap<InputFuncId, usize>,
+    pub input_function_output_id: &'any HashMap<InputFuncId, usize>,
 }
 
-impl<F> RelocateState<'_, F>
+impl<F> RelocateState<'_, '_, F>
 where
     F: Fn(GlobalId) -> Option<GlobalId>,
 {
-    fn _get_relocation_input_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let Some((input_func_id, SymbolType::Func)) = self
+    fn _get_relocation_input_function_index(
+        &self,
+        relocation: &RelocationEntry,
+    ) -> Result<InputFuncId> {
+        let Some(SymbolIndex::Func(input_func_id)) = self
             .input_module
             .linking
             .linking_symbols
@@ -32,7 +35,7 @@ where
         else {
             bail!("Relocation {relocation:?} does not refer to a valid function");
         };
-        Ok(*input_func_id as usize)
+        Ok(*input_func_id)
     }
 
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
@@ -69,8 +72,8 @@ where
     fn _get_relocation_memory_symbol(
         &self,
         relocation: &RelocationEntry,
-    ) -> Result<(usize, usize)> {
-        let Some((data_index, SymbolType::DataDefined(segment_id))) = self
+    ) -> Result<(DataSegmentId, DataSymbolId)> {
+        let Some(SymbolIndex::DataDefined(segment_id, data_index)) = self
             .input_module
             .linking
             .linking_symbols
@@ -79,12 +82,15 @@ where
         else {
             bail!("Relocation {relocation:?} does not refer to a valid memory");
         };
-        Ok((*segment_id as usize, *data_index as usize))
+        Ok((*segment_id, *data_index))
     }
 
     fn get_relocated_memory_offset(&self, relocation: &RelocationEntry) -> Result<usize> {
         let (segment_id, data_index) = self._get_relocation_memory_symbol(relocation)?;
-        let (segment_id, data_index) = self.main_module.input_data_to_output_id.get(&(segment_id, data_index))
+        let (segment_id, data_index): &(DataSegmentId, usize) = self
+            .main_module
+            .input_data_to_output_id
+            .get(&(segment_id, data_index))
             .ok_or_else(|| {
                 anyhow!(
                     "Dependency analysis error: No output data segment for input segment {segment_id} and data {data_index} referenced by relocation {relocation:?}"
@@ -100,7 +106,7 @@ where
     }
 
     fn get_global_id(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let Some((original_global_id, SymbolType::Global)) = self
+        let Some(SymbolIndex::Global(original_global_id)) = self
             .input_module
             .linking
             .linking_symbols
@@ -115,7 +121,7 @@ where
                     "Dependency analysis error: No output global for input global {original_global_id} referenced by relocation {relocation:?}"
                 )
             })?;
-        Ok(global_id as usize)
+        Ok(global_id.as_raw_index())
     }
 
     pub fn apply_relocation(

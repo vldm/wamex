@@ -1,12 +1,12 @@
 use wasm_encoder::GlobalType;
 
-use crate::index::SymbolId;
+use crate::index::DataSymbolId;
 
 // Init global variable that will replace all usage of DataSymbol.
 #[derive(Clone, Debug)]
 pub struct DataSymbol {
     pub data_offset: i32,
-    pub symbol_index: SymbolId,
+    pub symbol_index: DataSymbolId,
     pub type_info: wasm_encoder::GlobalType,
 }
 

@@ -4,7 +4,7 @@ pub use wasmparser::RelocationEntry;
 use wasmparser::SectionLimited;
 
 use super::CustomSectionReader;
-use crate::index::SectionIndex;
+use crate::index::SectionId;
 
 #[derive(Default, Debug)]
 /// Information stored in "reloc.*" sections
@@ -17,12 +17,12 @@ pub struct Relocation {
 impl Relocation {
     pub(super) fn push_section(&mut self, reader: wasmparser::RelocSectionReader) -> Result<()> {
         self.relocs.insert(
-            reader.section_index() as SectionIndex,
+            reader.section_index() as SectionId,
             RelocationSection::read(reader.entries())?,
         );
         Ok(())
     }
-    pub fn get_section(&self, index: SectionIndex) -> Option<&RelocationSection> {
+    pub fn get_section(&self, index: SectionId) -> Option<&RelocationSection> {
         self.relocs.get(index)
     }
 }

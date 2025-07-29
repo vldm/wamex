@@ -8,12 +8,14 @@ use std::fmt::Debug;
 use std::ops::Range;
 
 use anyhow::{anyhow, bail, Context, Result};
-use vec_map::VecMap;
 use wasmparser::{Data, TypeRef};
 
 use crate::read::{self, linking::section::DataInSegment};
 
-use crate::index::{DataSegmentId, ImportId, InputFuncId, SymbolIndex};
+use crate::index::{
+    DataSegmentId, DataSymbolId, DefinedFuncId, ExportId, GlobalId, IdMap, IdVec, ImportId,
+    InputFuncId, SymbolId,
+};
 
 mod debug;
 pub mod dep_graph;
@@ -25,13 +27,13 @@ mod testing;
 pub struct ImportFuncsInfo {
     // List of imported functions
     pub imported_funcs: Vec<ImportId>,
-    pub imported_func_map: VecMap<InputFuncId>,
+    pub imported_func_map: IdMap<ImportId, InputFuncId>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DataSymbol<'a> {
     pub segment_index: DataSegmentId,
-    pub symbol_index: SymbolIndex,
+    pub symbol_index: DataSymbolId,
     pub data_in_segment: &'a DataInSegment<'a>,
     // Range relative to the start of the WebAssembly file.
     pub range: Range<usize>,
@@ -47,9 +49,9 @@ pub struct ModuleInfo<'a> {
     pub data_symbols: Vec<DataSymbol<'a>>,
 
     pub source: &'a read::InputModule<'a>,
-
-    pub export_map: HashMap<(isize, usize), (usize, &'a str)>,
+    pub export_map: HashMap<(isize, SymbolId), (ExportId, &'a str)>,
 }
+
 
 impl<'a> ModuleInfo<'a> {
     pub fn new(module: &'a read::InputModule<'a>) -> Result<ModuleInfo<'a>> {
@@ -57,19 +59,19 @@ impl<'a> ModuleInfo<'a> {
             module.data.section_payload.data_segments.as_slice(),
             &module.linking.linking_symbols.data_in_segments,
         )?;
+        //TODO: Maybe we should use `IdMap` here?
         let imported_funcs: Vec<ImportId> = module
             .imports
             .iter()
-            .enumerate()
             .filter_map(|(import_id, import)| match import.ty {
-                TypeRef::Func(_) => Some(import_id as ImportId),
+                TypeRef::Func(_) => Some(import_id),
                 _ => None,
             })
             .collect();
         let imported_func_map = imported_funcs
             .iter()
             .enumerate()
-            .map(|(func_id, &import_id)| (import_id, func_id))
+            .map(|(func_id, &import_id)| (import_id, InputFuncId::from_index(func_id)))
             .collect();
         let import_funcs_info = ImportFuncsInfo {
             imported_funcs,
@@ -78,10 +80,9 @@ impl<'a> ModuleInfo<'a> {
         let export_map = module
             .exports
             .iter()
-            .enumerate()
             .map(|(i, export)| {
                 (
-                    (export.kind as isize, export.index as usize),
+                    (export.kind as isize, export.index as SymbolId),
                     (i, export.name),
                 )
             })
@@ -94,15 +95,39 @@ impl<'a> ModuleInfo<'a> {
         })
     }
 
+    pub fn is_imported_function(&self, func_id: InputFuncId) -> bool {
+        func_id.as_raw_index() < self.import_funcs_info.imported_funcs.len()
+    }
+
+    pub fn as_defined_function_id(&self, func_id: InputFuncId) -> Option<DefinedFuncId> {
+        if self.is_imported_function(func_id) {
+            None
+        } else {
+            Some(DefinedFuncId::from_index(
+                func_id
+                    .as_raw_index()
+                    .checked_sub(self.import_funcs_info.imported_funcs.len())
+                    .expect("Function ID is out of bounds") as u32,
+            ))
+        }
+    }
+
+    pub fn get_function_import_id(&self, func_id: InputFuncId) -> Option<ImportId> {
+        self.import_funcs_info
+            .imported_funcs
+            .get(func_id.as_raw_index())
+            .copied()
+    }
+
     pub fn find_data_symbol_by_name(&self, name: &str) -> Option<&DataSymbol<'_>> {
         self.data_symbols
             .iter()
             .find(|data_symbol| data_symbol.data_in_segment.name == name)
     }
 
-    pub fn find_function_id_by_name(&self, name: &str) -> Option<usize> {
+    pub fn find_function_id_by_name(&self, name: &str) -> Option<InputFuncId> {
         let func = self.source.names.functions.iter().find(|f| *f.1 == name)?;
-        Some(func.0 + self.import_funcs_info.imported_funcs.len())
+        Some(func.0)
     }
 
     pub fn find_data_symbol_containing_range(
@@ -117,14 +142,16 @@ impl<'a> ModuleInfo<'a> {
         Ok(sym)
     }
 
-    pub fn find_function_id_containing_range(&self, range: Range<usize>) -> Result<usize> {
+    pub fn find_function_id_containing_range(&self, range: Range<usize>) -> Result<InputFuncId> {
         let func_index = Self::find_by_range(
-            &self.source.code.section_payload.defined_funcs,
+            &self.source.code.section_payload.defined_funcs.as_slice(),
             &range,
             |defined_func| defined_func.body.range(),
         )
         .with_context(|| format!("No match for function relocation range {range:?}"))?;
-        Ok(func_index + self.import_funcs_info.imported_funcs.len())
+        Ok(InputFuncId::from_index(
+            func_index + self.import_funcs_info.imported_funcs.len(),
+        ))
     }
 
     fn find_by_range<T: Debug, U: Debug + Ord, F: Fn(&T) -> Range<U>>(
@@ -165,18 +192,18 @@ impl<'a> ModuleInfo<'a> {
 
 fn get_data_symbols<'a>(
     data: &[Data],
-    symbols: &'a VecMap<Vec<DataInSegment<'a>>>,
+    symbols: &'a IdMap<DataSegmentId, IdVec<DataInSegment<'a>>>,
 ) -> Result<Vec<DataSymbol<'a>>> {
     let mut data_symbols = Vec::new();
     for (segment_id, symbols) in symbols.iter() {
-        for (symbol_index, symbol) in symbols.iter().enumerate() {
+        for (symbol_index, symbol) in symbols.iter() {
             if symbol.size == 0 {
                 log::warn!("Data segment has zero-size symbol: {:?}", symbol);
                 // Ignore zero-size symbols since they cannot be the target of a relocation.
                 continue;
             }
             let data_segment = data
-                .get(segment_id)
+                .get(segment_id.as_raw_index())
                 .ok_or_else(|| anyhow!("Invalid data segment index in symbol: {:?}", symbol))?;
             if symbol
                 .offset
@@ -203,12 +230,11 @@ fn get_data_symbols<'a>(
     data_symbols.sort_by_key(|symbol| symbol.range.start);
 
     // assert that segment is also sorted
-    let mut last_symbol = 0;
-
     if cfg!(debug_assertions) {
+        let mut last_symbol = 0;
         for symbol in &data_symbols {
-            assert!(symbol.segment_index >= last_symbol);
-            last_symbol = symbol.segment_index;
+            assert!(symbol.segment_index.as_raw_index() >= last_symbol);
+            last_symbol = symbol.segment_index.as_raw_index();
         }
     }
 

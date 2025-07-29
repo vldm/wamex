@@ -4,7 +4,7 @@ use vec_map::VecMap;
 use wasmparser::{Comdat, InitFunc, Segment};
 
 use super::CustomSectionReader;
-use crate::index::{DataSegmentId, SymbolIndex};
+use crate::index::{DataSegmentId, DataSymbolId, GlobalId, IdMap, IdVec, InputFuncId, SectionId};
 
 pub mod section {
     use std::ops::Range;
@@ -57,59 +57,60 @@ pub mod section {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-pub enum SymbolType {
-    Func,
-    DataDefined(DataSegmentId),
-    DataUndefined,
-    Global,
-    Section,
-    Event,
-    Table,
+pub enum SymbolIndex {
+    Func(InputFuncId),
+    DataDefined(DataSegmentId, DataSymbolId),
+    DataUndefined(usize),
+    Global(GlobalId),
+    Section(SectionId),
+    Event(usize),
+    Table(usize),
 }
 #[derive(Default, Debug)]
 pub struct LinkingSymbolsInfo<'a> {
-    pub globals: VecMap<section::SymInfo<'a>>,
-    pub funcs: VecMap<section::SymInfo<'a>>,
+    pub globals: IdMap<GlobalId, section::SymInfo<'a>>,
+    pub funcs: IdMap<InputFuncId, section::SymInfo<'a>>,
     pub events: VecMap<section::SymInfo<'a>>,
     pub sections: VecMap<section::Section>,
     pub tables: VecMap<section::SymInfo<'a>>,
     // indexed by segment of data
-    pub data_in_segments: VecMap<Vec<section::DataInSegment<'a>>>,
+    pub data_in_segments: IdMap<DataSegmentId, IdVec<section::DataInSegment<'a>>>,
     pub undefined_data: Vec<section::Data<'a>>,
 
     // Map from original flat vector to index in coresponding vector.
-    pub original_indexes: Vec<(usize, SymbolType)>,
+    pub original_indexes: Vec<SymbolIndex>,
 }
+
 impl<'a> LinkingSymbolsInfo<'a> {
     fn try_from_reader(map: wasmparser::SymbolInfoMap<'a>) -> Result<Self> {
         use wasmparser::SymbolInfo;
         let mut info = Self::default();
         for sym_info in map.into_iter() {
-            let (sym_type, idx) = match sym_info? {
+            let symbol_index = match sym_info? {
                 SymbolInfo::Global { name, flags, index } => {
-                    info.globals
-                        .insert(index as usize, section::SymInfo { name, flags });
-                    (SymbolType::Global, index as usize)
+                    let index = GlobalId::from_index(index);
+                    info.globals.insert(index, section::SymInfo { name, flags });
+                    SymbolIndex::Global(index)
                 }
                 SymbolInfo::Func { name, flags, index } => {
-                    info.funcs
-                        .insert(index as usize, section::SymInfo { name, flags });
-                    (SymbolType::Func, index as usize)
+                    let index = InputFuncId::from_index(index);
+                    info.funcs.insert(index, section::SymInfo { name, flags });
+                    SymbolIndex::Func(index)
                 }
                 SymbolInfo::Event { name, flags, index } => {
                     info.events
                         .insert(index as usize, section::SymInfo { name, flags });
-                    (SymbolType::Event, index as usize)
+                    SymbolIndex::Event(index as usize)
                 }
                 SymbolInfo::Section { flags, section } => {
                     info.sections
                         .insert(section as usize, section::Section { flags });
-                    (SymbolType::Section, section as usize)
+                    SymbolIndex::Section(section as usize)
                 }
                 SymbolInfo::Table { flags, index, name } => {
                     info.tables
                         .insert(index as usize, section::SymInfo { name, flags });
-                    (SymbolType::Table, index as usize)
+                    SymbolIndex::Table(index as usize)
                 }
                 SymbolInfo::Data {
                     name,
@@ -119,24 +120,23 @@ impl<'a> LinkingSymbolsInfo<'a> {
                     let sym = if let Some(symbol) = symbol {
                         let vec = info
                             .data_in_segments
-                            .entry(symbol.index as usize)
-                            .or_insert(Vec::new());
-                        vec.push(section::DataInSegment {
+                            .entry(DataSegmentId::from_index(symbol.index))
+                            .or_insert(IdVec::new());
+                        let id = vec.push(section::DataInSegment {
                             name,
                             flags,
                             offset: symbol.offset,
                             size: symbol.size,
                         });
-                        let idx = vec.len() - 1;
-                        (SymbolType::DataDefined(symbol.index as usize), idx)
+                        SymbolIndex::DataDefined(DataSegmentId::from_index(symbol.index), id)
                     } else {
                         info.undefined_data.push(section::Data { name, flags });
-                        (SymbolType::DataUndefined, info.undefined_data.len() - 1)
+                        SymbolIndex::DataUndefined(info.undefined_data.len() - 1)
                     };
                     sym
                 }
             };
-            info.original_indexes.push((idx, sym_type));
+            info.original_indexes.push(symbol_index);
         }
         Ok(info)
     }
@@ -155,12 +155,12 @@ impl<'a> LinkingInfo<'a> {
     pub fn get_data_in_segment(
         &self,
         segment_id: DataSegmentId,
-        idx: SymbolIndex,
+        idx: DataSymbolId,
     ) -> Option<&section::DataInSegment<'a>> {
         self.linking_symbols
             .data_in_segments
-            .get(segment_id as usize)
-            .and_then(|v| v.get(idx as usize))
+            .get(segment_id)
+            .and_then(|v| v.get(idx))
     }
 }
 

@@ -4,7 +4,7 @@ use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::index::{FuncTypeId, IndexedSection, InputFuncId};
+use crate::index::{DefinedFuncId, FuncTypeId, IdVec, IndexedSection, InputFuncId};
 
 pub mod code;
 pub mod data;
@@ -26,17 +26,17 @@ type Ind<T> = IndexedSection<T>;
 #[derive(Default)]
 pub struct InputModule<'a> {
     // parsed sections
-    pub types: Vec<FuncType>,
-    pub imports: Vec<Import<'a>>,
-    pub exports: Vec<Export<'a>>,
-    pub tables: Vec<Table<'a>>,
+    pub types: IdVec<FuncType>,
+    pub imports: IdVec<Import<'a>>,
+    pub exports: IdVec<Export<'a>>,
+    pub tables: IdVec<Table<'a>>,
     // elements is just a table initialisation
-    pub elements: Vec<Element<'a>>,
+    pub elements: IdVec<Element<'a>>,
     // tags are used for exceptions
-    pub tags: Vec<TagType>,
-    pub globals: Vec<Global<'a>>,
+    pub tags: IdVec<TagType>,
+    pub globals: IdVec<Global<'a>>,
     // Should be only one memory ?
-    pub memories: Vec<MemoryType>,
+    pub memories: IdVec<MemoryType>,
     // code and data is only interested section for relocation application
     pub code: Ind<CodeSection<'a>>,
     pub data: Ind<DataSection<'a>>,
@@ -56,6 +56,8 @@ pub struct InputModule<'a> {
     // pub data_symbols: Vec<DataSymbol>,
     // pub export_map: HashMap<(isize, usize), (usize, &'a str)>,
 }
+
+
 
 impl<'a> InputModule<'a> {
     pub fn parse(wasm: &'a [u8]) -> anyhow::Result<Self> {
@@ -80,37 +82,37 @@ impl<'a> InputModule<'a> {
                 Payload::TypeSection(reader) => {
                     module.types = reader
                         .into_iter_err_on_gc_types()
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::ImportSection(reader) => {
-                    module.imports = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                    module.imports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::TableSection(reader) => {
-                    module.tables = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                    module.tables = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::MemorySection(reader) => {
-                    module.memories = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                    module.memories = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::TagSection(reader) => {
-                    module.tags = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                    module.tags = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::GlobalSection(reader) => {
-                    module.globals = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                    module.globals = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::ElementSection(reader) => {
-                    module.elements = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                    module.elements = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::FunctionSection(reader) => {
                     function_types = reader
                         .into_iter()
-                        .map(|t| t.map(|id| id as FuncTypeId))
+                        .map(|t| t.map(|id| crate::index::Id::from_index(id)))
                         .collect::<Result<Vec<_>, _>>()?;
                 }
                 Payload::ExportSection(reader) => {
-                    module.exports = reader.into_iter().collect::<Result<Vec<_>, _>>()?;
+                    module.exports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::StartSection { func, .. } => {
-                    code_start = Some(func as usize);
+                    code_start = Some(crate::index::Id::from_index(func));
                 }
                 Payload::DataCountSection { count, .. } => {
                     data_count = Some(count as usize);
@@ -199,8 +201,8 @@ impl<'a> InputModule<'a> {
 
         Ok(module)
     }
-    pub fn defined_func_type_id(&self, id: InputFuncId) -> FuncTypeId {
-        self.code.section_payload.func_types[id as usize]
+    pub fn defined_func_type_id(&self, id: DefinedFuncId) -> FuncTypeId {
+        self.code.section_payload.func_types[id.as_raw_index()]
     }
 }
 

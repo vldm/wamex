@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::analysis::dep_graph::DepNode;
-use crate::index::{DataSegmentId, InputFuncId, SymbolId};
+use crate::index::{DataSegmentId, DataSymbolId, InputFuncId};
 use nom::branch::alt;
 use nom::bytes::{tag, take_while};
 use nom::character::{complete, multispace0};
@@ -42,7 +42,7 @@ fn parse_data_node(input: &str) -> IResult<&str, DepNode> {
     let (input, _) = (multispace0(), tag(","), multispace0()).parse(input)?;
 
     let (input, symbol) = map_res(take_while(|c: char| c.is_digit(10)), |s: &str| {
-        s.parse::<SymbolId>()
+        s.parse::<DataSymbolId>()
     })
     .parse(input)?;
     let (input, _) = (multispace0(), tag(")")).parse(input)?;
@@ -186,19 +186,27 @@ pub fn parse_list(input: &str) -> IResult<&str, Vec<DepNode>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
+    use crate::index::Id;
+
+    pub fn function(id: u32) -> super::DepNode {
+        super::DepNode::Function(Id::from_index(id))
+    }
+    pub fn data_symbol(segment: u32, symbol: u32) -> super::DepNode {
+        super::DepNode::DataSymbol(Id::from_index(segment), Id::from_index(symbol))
+    }
     #[test]
     fn test_parse_fn() {
         let input = "F(123)";
         let (remaining, dep_node) = super::parse_fn_node(input).unwrap();
         assert_eq!(remaining, "");
-        assert_eq!(dep_node, super::DepNode::Function(123));
+        assert_eq!(dep_node, function(123));
 
         let input = "F( 456 )";
         let (remaining, dep_node) = super::parse_fn_node(input).unwrap();
 
         assert_eq!(remaining, "");
-        assert_eq!(dep_node, super::DepNode::Function(456));
+        assert_eq!(dep_node, function(456));
     }
 
     #[test]
@@ -206,7 +214,7 @@ mod tests {
         let input = "D(789, 1011)";
         let (remaining, dep_node) = super::parse_data_node(input).unwrap();
         assert_eq!(remaining, "");
-        assert_eq!(dep_node, super::DepNode::DataSymbol(789, 1011));
+        assert_eq!(dep_node, data_symbol(789, 1011));
     }
 
     #[test]
@@ -216,10 +224,7 @@ mod tests {
         assert_eq!(remaining, "");
         assert_eq!(nodes, {
             let mut map = std::collections::HashMap::new();
-            map.insert(
-                super::DepNode::Function(1),
-                vec![super::DepNode::DataSymbol(2, 3)].into_iter().collect(),
-            );
+            map.insert(function(1), vec![data_symbol(2, 3)].into_iter().collect());
             map
         });
     }
@@ -236,18 +241,10 @@ mod tests {
         assert_eq!(nodes, {
             let mut map = std::collections::HashMap::new();
             map.insert(
-                super::DepNode::Function(1),
-                vec![
-                    super::DepNode::DataSymbol(2, 3),
-                    super::DepNode::Function(4),
-                ]
-                .into_iter()
-                .collect(),
+                function(1),
+                vec![data_symbol(2, 3), function(4)].into_iter().collect(),
             );
-            map.insert(
-                super::DepNode::Function(4),
-                vec![super::DepNode::DataSymbol(5, 6)].into_iter().collect(),
-            );
+            map.insert(function(4), vec![data_symbol(5, 6)].into_iter().collect());
             map
         });
     }
@@ -265,38 +262,21 @@ mod tests {
             let mut map = std::collections::HashMap::new();
 
             map.insert(
-                super::DepNode::Function(1),
-                vec![
-                    super::DepNode::DataSymbol(2, 3),
-                    super::DepNode::Function(4),
-                ]
-                .into_iter()
-                .collect(),
+                function(1),
+                vec![data_symbol(2, 3), function(4)].into_iter().collect(),
             );
             map.insert(
-                super::DepNode::Function(4),
-                vec![
-                    super::DepNode::DataSymbol(5, 6),
-                    super::DepNode::Function(7),
-                ]
-                .into_iter()
-                .collect(),
+                function(4),
+                vec![data_symbol(5, 6), function(7)].into_iter().collect(),
+            );
+            map.insert(function(7), vec![data_symbol(8, 9)].into_iter().collect());
+            map.insert(
+                function(10),
+                vec![data_symbol(11, 12)].into_iter().collect(),
             );
             map.insert(
-                super::DepNode::Function(7),
-                vec![super::DepNode::DataSymbol(8, 9)].into_iter().collect(),
-            );
-            map.insert(
-                super::DepNode::Function(10),
-                vec![super::DepNode::DataSymbol(11, 12)]
-                    .into_iter()
-                    .collect(),
-            );
-            map.insert(
-                super::DepNode::Function(13),
-                vec![super::DepNode::Function(1), super::DepNode::Function(4)]
-                    .into_iter()
-                    .collect(),
+                function(13),
+                vec![function(1), function(4)].into_iter().collect(),
             );
             map
         });
@@ -310,10 +290,10 @@ mod tests {
         assert_eq!(
             nodes,
             vec![
-                super::DepNode::Function(1),
-                super::DepNode::DataSymbol(2, 3),
-                super::DepNode::Function(4),
-                super::DepNode::DataSymbol(5, 6)
+                function(1),
+                data_symbol(2, 3),
+                function(4),
+                data_symbol(5, 6)
             ]
         );
     }

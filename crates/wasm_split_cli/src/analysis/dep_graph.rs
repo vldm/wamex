@@ -7,16 +7,21 @@ use std::{
 use anyhow::Context;
 use wasmparser::RelocationType;
 
-use crate::{analysis, helpers::ShiftRange, index::DataSegmentId, read::InputModule};
 use crate::{
-    index::{InputFuncId, SymbolIndex},
-    read::linking::SymbolType,
+    analysis,
+    helpers::ShiftRange,
+    index::{DataSegmentId, DataSymbolId},
+    read::InputModule,
+};
+use crate::{
+    index::{InputFuncId, SymbolId},
+    read::linking::SymbolIndex,
 };
 
 #[derive(Debug, PartialEq, Eq, Hash, Copy, PartialOrd, Ord, Clone)]
 pub enum DepNode {
     Function(InputFuncId),
-    DataSymbol(DataSegmentId, SymbolIndex),
+    DataSymbol(DataSegmentId, DataSymbolId),
 }
 
 impl DepNode {
@@ -26,7 +31,7 @@ impl DepNode {
             _ => None,
         }
     }
-    pub fn as_data_symbol(&self) -> Option<(DataSegmentId, SymbolIndex)> {
+    pub fn as_data_symbol(&self) -> Option<(DataSegmentId, DataSymbolId)> {
         match self {
             DepNode::DataSymbol(segment_id, symbol_index) => Some((*segment_id, *symbol_index)),
             _ => None,
@@ -69,21 +74,19 @@ pub struct SharedEntries<Id> {
 }
 
 pub trait SymbolTable {
-    fn get_symbol_dep_node(&self, symbol_index: SymbolIndex) -> Option<DepNode>;
+    fn get_symbol_dep_node(&self, symbol_index: SymbolId) -> Option<DepNode>;
 }
 
 impl<'a> SymbolTable for InputModule<'a> {
-    fn get_symbol_dep_node(&self, linking_index: SymbolIndex) -> Option<DepNode> {
-        let (idx, sym_type) = self.linking.linking_symbols.original_indexes[linking_index];
-        match sym_type {
-            SymbolType::Func => Some(DepNode::Function(idx as InputFuncId)),
-            SymbolType::DataDefined(segment_id) => {
-                Some(DepNode::DataSymbol(segment_id, idx as InputFuncId))
-            }
-            SymbolType::DataUndefined => {
+    fn get_symbol_dep_node(&self, linking_index: SymbolId) -> Option<DepNode> {
+        let symbol_index = self.linking.linking_symbols.original_indexes[linking_index];
+        match symbol_index {
+            SymbolIndex::Func(idx) => Some(DepNode::Function(idx)),
+            SymbolIndex::DataDefined(segment_id, idx) => Some(DepNode::DataSymbol(segment_id, idx)),
+            SymbolIndex::DataUndefined(undefined_idx) => {
                 log::error!(
-                    "{idx} {} is undefined data symbol, dont have any location in data segment, what can we do with it?",
-                    self.linking.linking_symbols.undefined_data[idx].name
+                    "{undefined_idx} {} is undefined data symbol, dont have any location in data segment, what can we do with it?",
+                    self.linking.linking_symbols.undefined_data[undefined_idx].name
                 );
                 None
             }
@@ -311,14 +314,14 @@ impl<Id> NamedGraph<Id> {
 fn find_function_containing_range(
     info: &analysis::ModuleInfo,
     range: Range<usize>,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<InputFuncId> {
     info.find_function_id_containing_range(range)
 }
 
 fn find_data_symbol_containing_range(
     info: &analysis::ModuleInfo,
     range: Range<usize>,
-) -> anyhow::Result<(usize, usize)> {
+) -> anyhow::Result<(DataSegmentId, DataSymbolId)> {
     let sym = &info.find_data_symbol_containing_range(range)?;
     Ok((sym.segment_index, sym.symbol_index))
 }
@@ -338,6 +341,8 @@ mod tests {
         read,
     };
 
+    use testing::tests::function;
+
     // checkout test-data/simple-graph crate at root (just keep wasm in case rustc changes)
     const WASM_FILE: &[u8] = include_bytes!("../../test-data/simple_graph.wasm");
 
@@ -353,8 +358,8 @@ mod tests {
                 format!("func[{index}] <{name:?}>")
             }
             DepNode::DataSymbol(segment, idx) => {
-                let symbol = module.linking.linking_symbols.data_in_segments[segment][*idx].name;
-                let segment = module.names.data_segments[segment];
+                let symbol = module.linking.linking_symbols.data_in_segments[*segment][*idx].name;
+                let segment = module.names.data_segments[*segment];
                 format!("data[{segment}:{idx}] <{symbol:?}>")
             }
         };
@@ -636,13 +641,13 @@ mod tests {
         );
 
         // this remove f(4) and child f(7), f(6) is still reachable by f(2)
-        reachability_graph.remove_node(&DepNode::Function(4), &graph);
+        reachability_graph.remove_node(&function(4), &graph);
 
         assert_eq!(
             reachability_graph.reachable,
             testing::uniq_nodes("F(1) & F(2) & F(3) & F(5) & F(6)").unwrap()
         );
-        reachability_graph.remove_node(&DepNode::Function(2), &graph);
+        reachability_graph.remove_node(&function(2), &graph);
         assert_eq!(
             reachability_graph.reachable,
             testing::uniq_nodes("F(1) & F(3)").unwrap()

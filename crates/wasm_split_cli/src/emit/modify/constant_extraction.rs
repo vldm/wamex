@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Result};
 use wasm_encoder::Encode;
-use wasmparser::{ RelocationType};
+use wasmparser::RelocationType;
 
 use std::ops::Range;
 
