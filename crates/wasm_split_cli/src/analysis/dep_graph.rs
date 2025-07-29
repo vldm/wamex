@@ -200,6 +200,7 @@ impl ReachabilityGraph {
         }
     }
 
+    #[cfg(test)]
     fn check_unreachable(&self, deps: &HashSet<DepNode>) -> bool {
         for dep in deps {
             if self.reachable.contains(dep) {

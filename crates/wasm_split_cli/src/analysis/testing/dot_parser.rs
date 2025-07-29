@@ -55,16 +55,6 @@ fn parse_any_node(input: &str) -> IResult<&str, DepNode> {
     Ok((input, dep_node))
 }
 
-fn parse_arrow(input: &str) -> IResult<&str, ()> {
-    let (input, _) = tag("->").parse(input)?;
-    Ok((input, ()))
-}
-
-fn parse_ampersand(input: &str) -> IResult<&str, ()> {
-    let (input, _) = tag("&").parse(input)?;
-    Ok((input, ()))
-}
-
 fn parse_operator(input: &str) -> IResult<&str, Operator> {
     let (input, (_space, op)) = (multispace0(), alt((tag("->"), tag("&")))).parse(input)?;
     let operator = match op {

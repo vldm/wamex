@@ -6,7 +6,9 @@ use wasmparser::{Comdat, InitFunc, Segment};
 use super::CustomSectionReader;
 use crate::index::{DataSegmentId, DataSymbolId, GlobalId, IdMap, IdVec, InputFuncId, SectionId};
 
+#[allow(dead_code)]
 pub mod section {
+
     use std::ops::Range;
 
     use wasmparser::SymbolFlags;

@@ -37,14 +37,6 @@ impl Default for GlobalVar {
 }
 
 impl ConstantExtractionEntry {
-    // Global get with 5 bytes argument
-    fn encode_global_get(global_index: u32) -> [u8; 6] {
-        let mut result = [0; 6];
-        result[0] = 0x23; // global.get opcode
-        result[1..].copy_from_slice(&leb128fmt::encode_fixed_u32(global_index).unwrap());
-        result
-    }
-
     // Simple replace of i32.const with global.get + i32.add
     // Retuns size of the replacement
     pub fn replace_const_get_with_global_get(&self, ctx: ModifyContext<'_>) -> Result<()> {

@@ -309,14 +309,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let func_relocs =
                     Self::get_relocations_for_range(&emit_info.all_relocations, &range);
 
-                let name = module_info
-                    .source
-                    .names
-                    .functions
-                    .get(func_id)
-                    .map(|name| name.to_string())
-                    .unwrap_or(format!("func_{func_id}"));
-
                 let modification_list = func_relocs
                     .iter()
                     .map(|entry| {
@@ -488,7 +480,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         // Additionally import memory + heap + stack globals.
 
         let mut section = wasm_encoder::ImportSection::new();
-        let original_imports = &self.info.import_funcs_info.imported_funcs;
 
         for (index, import_fn) in self.import_functions.iter().enumerate() {
             let ty = wasm_encoder::EntityType::Function(
@@ -752,7 +743,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
     fn generate_global_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         let mut section = wasm_encoder::GlobalSection::new();
-        for (id, global) in self.globals.iter().enumerate() {
+        for global in self.globals.iter() {
             match global {
                 Global::PlainCopy(global) => {
                     section.global(
@@ -969,18 +960,6 @@ impl EmitInfo {
             all_relocations,
             split_point_imports,
         })
-    }
-
-    fn get_relocations_for_range(&self, range: &Range<usize>) -> &[RelocationEntry] {
-        let start = self
-            .all_relocations
-            .binary_search_by_key(&range.start, |reloc| reloc.offset as usize)
-            .map_or_else(identity, identity);
-        let end = self
-            .all_relocations
-            .binary_search_by_key(&range.end, |reloc| reloc.offset as usize)
-            .map_or_else(identity, identity);
-        &self.all_relocations[start..end]
     }
 }
 

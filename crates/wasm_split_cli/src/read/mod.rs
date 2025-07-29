@@ -4,7 +4,7 @@ use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::index::{DefinedFuncId, FuncTypeId, IdVec, IndexedSection, InputFuncId};
+use crate::index::{DefinedFuncId, FuncTypeId, IdVec, IndexedSection};
 
 pub mod code;
 pub mod data;
@@ -56,8 +56,6 @@ pub struct InputModule<'a> {
     // pub data_symbols: Vec<DataSymbol>,
     // pub export_map: HashMap<(isize, usize), (usize, &'a str)>,
 }
-
-
 
 impl<'a> InputModule<'a> {
     pub fn parse(wasm: &'a [u8]) -> anyhow::Result<Self> {

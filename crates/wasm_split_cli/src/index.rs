@@ -102,12 +102,6 @@ impl<T: Default> Default for IndexedSection<T> {
     }
 }
 
-impl<T> IndexedSection<T> {
-    fn is_default(&self) -> bool {
-        self.starting_offset == 0 && self.section_index == usize::MAX
-    }
-}
-
 impl<Type, Idx> Default for IdVec<Type, Idx> {
     fn default() -> Self {
         IdVec {
@@ -189,6 +183,7 @@ impl<T, Idx> IdVec<T, Id<Idx>> {
 }
 
 impl<Type, Res> IdMap<Id<Type>, Res> {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             vecmap: VecMap::new(),

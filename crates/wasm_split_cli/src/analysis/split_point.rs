@@ -204,19 +204,6 @@ impl SplitProgramInfo {
         result
     }
 
-    fn collect_deps_module<'a>(
-        candidates: &mut HashMap<DepNode, Vec<String>>,
-        module_name: &'a str,
-        deps: impl IntoIterator<Item = &'a DepNode>,
-    ) {
-        for dep in deps.into_iter() {
-            candidates
-                .entry(*dep)
-                .or_default()
-                .push(module_name.to_string());
-        }
-    }
-
     pub fn compute_split_modules(
         info: &analysis::ModuleInfo,
         dep_graph: &DepGraph,
@@ -224,23 +211,12 @@ impl SplitProgramInfo {
     ) -> anyhow::Result<SplitProgramInfo> {
         let split_points_by_module = Self::merge_split_points_by_name(&split_points[..]);
 
-        // println!("deps graph={dep_graph:?}");
-        let split_import_to_export: HashMap<InputFuncId, InputFuncId> = split_points
-            .iter()
-            .map(|split_point| (split_point.import_func, split_point.export_func))
-            .collect();
-
         let main_roots = Self::get_main_module_roots(info, &split_points);
 
         // graph root -> dep -> dep
         let main_deps = ReachabilityGraph::find_reachable_deps(dep_graph, &main_roots);
 
         let mut named_modules = vec![NamedGraph::new(ModuleIdentifier::Main, main_deps.clone())];
-
-        // log::trace!("reachable_main={main_deps:?}");
-        // remove_ignored_deps(&mut main_deps.reachable);
-
-        // ModuleName -> ([Dep], (Dep -> Parent))
 
         // Determine reachable symbols (excluding main module symbols) for each
         // split module. Symbols may be reachable from more than one split module;
@@ -253,7 +229,6 @@ impl SplitProgramInfo {
 
             let split_functions = ReachabilityGraph::find_reachable_deps(dep_graph, &roots);
             split_functions.print(&format!("split_{module_name}"), info);
-            println!("reachable_subchain_splits={split_functions:?}");
             named_modules.push(NamedGraph::new(
                 ModuleIdentifier::Split(module_name.clone()),
                 split_functions,
@@ -314,12 +289,3 @@ impl SplitProgramInfo {
         })
     }
 }
-
-// struct ModuleOutput{
-//     pub fn_to_define: HashMap<InputFuncId, usize>,
-//     pub fn_to_link_indirect: HashMap<InputFuncId, usize>,
-
-//     pub data_to_include: HashSet<SymbolIndex>,
-//     pub data_to_reuse_main: HashSet<SymbolIndex>,
-
-// }

@@ -13,8 +13,8 @@ use wasmparser::{Data, TypeRef};
 use crate::read::{self, linking::section::DataInSegment};
 
 use crate::index::{
-    DataSegmentId, DataSymbolId, DefinedFuncId, ExportId, GlobalId, IdMap, IdVec, ImportId,
-    InputFuncId, SymbolId,
+    DataSegmentId, DataSymbolId, DefinedFuncId, ExportId, IdMap, IdVec, ImportId, InputFuncId,
+    SymbolId,
 };
 
 mod debug;
@@ -51,7 +51,6 @@ pub struct ModuleInfo<'a> {
     pub source: &'a read::InputModule<'a>,
     pub export_map: HashMap<(isize, SymbolId), (ExportId, &'a str)>,
 }
-
 
 impl<'a> ModuleInfo<'a> {
     pub fn new(module: &'a read::InputModule<'a>) -> Result<ModuleInfo<'a>> {

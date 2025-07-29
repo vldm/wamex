@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use crate::analysis;
-use crate::analysis::dep_graph::{DepNode, ReachabilityGraph};
+use crate::analysis::dep_graph::{DepGraph, DepNode, ReachabilityGraph};
 use crate::analysis::split_point::OutputModuleInfo;
 use crate::helpers::debug_fmt_mostly_filled;
 use crate::index::DefinedFuncId;
@@ -15,7 +15,7 @@ impl ReachabilityGraph {
         module_name: &str,
         info: &analysis::ModuleInfo,
         reachable: &HashSet<DepNode>,
-        parents: &HashMap<DepNode, HashSet<DepNode>>,
+        parents: &DepGraph,
     ) {
         let size_fn = |dep: &DepNode| match dep {
             DepNode::Function(index) => {
@@ -58,7 +58,13 @@ impl ReachabilityGraph {
         };
         let mut rev_tree = HashMap::new();
         for child in reachable.iter() {
-            for parent in parents.get(child).into_iter().flatten() {
+            for parent in parents
+                .get(child)
+                .into_iter()
+                .flatten()
+                .filter(|p| reachable.contains(p))
+            // important when parents is full tree
+            {
                 rev_tree.entry(parent).or_insert_with(Vec::new).push(child);
             }
         }
@@ -144,8 +150,9 @@ impl Debug for OutputModuleInfo {
     }
 }
 
-// impl OutputModuleInfo {
-//     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo) {
-//         ReachabilityGraph::print_deps_inner(module_name, info, &self.included_symbols, self.);
-//     }
-// }
+impl OutputModuleInfo {
+    pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo, graph: &DepGraph) {
+        let parents = crate::analysis::dep_graph::NamedGraph::<()>::reverse(graph);
+        ReachabilityGraph::print_deps_inner(module_name, info, &self.included_symbols, &parents);
+    }
+}

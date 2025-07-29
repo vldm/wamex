@@ -7,7 +7,7 @@ use crate::{
     analysis,
     emit::globals::DataSymbol,
     helpers::ShiftRange,
-    index::{DataSymbolId, IdMap, Indexed, SymbolId},
+    index::{DataSymbolId, Indexed},
 };
 
 #[derive(Clone)]
@@ -37,14 +37,11 @@ impl Debug for NamedData<'_> {
 pub struct DataSegment<'a> {
     data_parts: Vec<NamedData<'a>>,
     pub kind: DataKind<'a>,
-    // Map from original linking symbol id to index in `data_parts`.
-    linking_symbols_map: IdMap<DataSymbolId, SymbolId>,
 }
 
 impl<'a> DataSegment<'a> {
     pub fn new_inner(data: Data<'a>, symbols: &[analysis::DataSymbol<'a>]) -> Result<Self> {
         let mut data_parts = vec![];
-        let mut linking_symbols = IdMap::new();
         for sym in symbols {
             if sym.range.len() == 0 {
                 println!("Data segment has zero-size symbol: {:?}", sym);
@@ -57,7 +54,6 @@ impl<'a> DataSegment<'a> {
                 .shift_left(data.range.end - data.data.len())];
             let name = sym.data_in_segment.name;
 
-            linking_symbols.insert(sym.symbol_index, data_parts.len());
             data_parts.push(NamedData {
                 chunk,
                 name,
@@ -67,11 +63,7 @@ impl<'a> DataSegment<'a> {
         }
         let kind = data.kind.clone();
 
-        Ok(DataSegment {
-            data_parts,
-            kind,
-            linking_symbols_map: linking_symbols,
-        })
+        Ok(DataSegment { data_parts, kind })
     }
 
     // Keeps only symbols with id is in `indexes`.

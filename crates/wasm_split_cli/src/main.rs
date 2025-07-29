@@ -3,7 +3,6 @@ use std::path::Path;
 use analysis::split_point::SplitProgramInfo;
 use anyhow::Result;
 use clap::Parser;
-// use split_point::SplitModuleIdentifier;
 
 // todo: Refactor analysis and emit modules.
 mod analysis;
@@ -56,11 +55,11 @@ fn main() -> Result<()> {
         SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
 
     println!("split_program_info={split_program_info:?}");
-    // if args.verbose {
-    //     for (name, split_deps) in split_program_info.output_modules.iter() {
-    //         split_deps.print(format!("{:?}", name).as_str(), &info);
-    //     }
-    // }
+    if args.verbose {
+        for (name, split_deps) in split_program_info.output_modules.iter() {
+            split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
+        }
+    }
 
     crate::emit::emit_modules(&info, &split_program_info, &|output_module_index: usize,
                                                             data: &[u8]|
