@@ -1,4 +1,3 @@
-
 pub type SymbolIndex = usize;
 
 pub type SymbolId = usize;
@@ -12,9 +11,10 @@ pub type MemoryId = usize;
 pub type GlobalId = usize;
 pub type ElementId = usize;
 pub type DataSegmentId = usize;
+pub type DataSymbolId = usize;
+pub type DataId = (DataSegmentId, DataSymbolId);
 pub type TagId = usize;
 pub type SectionIndex = usize;
-
 
 /// Store additional information about section, to apply relocation
 #[derive(Debug)]

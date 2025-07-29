@@ -2,7 +2,6 @@ use anyhow::{bail, ensure, Result};
 
 pub use std::ops::Range;
 pub use wasmparser::FunctionBody;
-pub type InputRange = Range<usize>;
 
 use super::Ind;
 use crate::index::{FuncTypeId, InputFuncId};

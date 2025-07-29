@@ -144,6 +144,12 @@ impl SplitModuleIdentifier {
             }),
         }
     }
+    pub fn as_single(&self) -> Option<&ModuleIdentifier> {
+        match self {
+            Self::Single(name) => Some(name),
+            Self::Shared(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -232,10 +238,7 @@ impl SplitProgramInfo {
         // graph root -> dep -> dep
         let main_deps = ReachabilityGraph::find_reachable_deps(dep_graph, &main_roots);
 
-        let mut named_modules = vec![NamedGraph {
-            module: ModuleIdentifier::Main,
-            deps: main_deps.clone(),
-        }];
+        let mut named_modules = vec![NamedGraph::new(ModuleIdentifier::Main, main_deps.clone())];
 
         // log::trace!("reachable_main={main_deps:?}");
         // remove_ignored_deps(&mut main_deps.reachable);
@@ -252,11 +255,12 @@ impl SplitProgramInfo {
             }
 
             let split_functions = ReachabilityGraph::find_reachable_deps(dep_graph, &roots);
+            split_functions.print(&format!("split_{module_name}"), info);
             println!("reachable_subchain_splits={split_functions:?}");
-            named_modules.push(NamedGraph {
-                module: ModuleIdentifier::Split(module_name.clone()),
-                deps: split_functions,
-            });
+            named_modules.push(NamedGraph::new(
+                ModuleIdentifier::Split(module_name.clone()),
+                split_functions,
+            ));
         }
 
         // Calculate shared deps.
@@ -265,10 +269,12 @@ impl SplitProgramInfo {
         let mut split_module_contents = BTreeMap::<SplitModuleIdentifier, OutputModuleInfo>::new();
 
         split_module_contents.extend(named_modules.into_iter().map(|named_graph| {
+            let link_symbols = named_graph.linked_nodes().clone();
             (
                 SplitModuleIdentifier::Single(named_graph.module),
                 OutputModuleInfo {
                     included_symbols: named_graph.deps.reachable,
+                    link_symbols,
                     ..Default::default()
                 },
             )
@@ -281,18 +287,14 @@ impl SplitProgramInfo {
                 let split_module = split_module_contents
                     .get_mut(&SplitModuleIdentifier::Single(module.clone()))
                     .unwrap();
-
-                split_module
-                    .link_symbols
-                    .extend(shared.topmost_shared.iter().cloned());
+                all_links.extend(split_module.link_symbols.iter().cloned());
             }
 
-            all_links.extend(shared.topmost_shared.iter().cloned());
             split_module_contents.insert(
                 SplitModuleIdentifier::Shared(shared.module_names.clone()),
                 OutputModuleInfo {
                     included_symbols: shared.shared_deps,
-                    link_symbols: shared.topmost_shared,
+                    link_symbols: HashSet::new(),
                     split_points: vec![],
                 },
             );

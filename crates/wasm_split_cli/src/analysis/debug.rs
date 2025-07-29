@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use crate::analysis;
@@ -9,17 +9,36 @@ use crate::read::InputModule;
 
 impl ReachabilityGraph {
     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo) {
-        Self::print_deps_inner(module_name, info, &self.reachable);
+        Self::print_deps_inner(module_name, info, &self.reachable, &self.parents);
     }
     pub(crate) fn print_deps_inner(
         module_name: &str,
         info: &analysis::ModuleInfo,
         reachable: &HashSet<DepNode>,
+        parents: &HashMap<DepNode, HashSet<DepNode>>,
     ) {
+        let size_fn = |dep: &DepNode| match dep {
+            DepNode::Function(index) => {
+                let size = index
+                    .checked_sub(info.import_funcs_info.imported_funcs.len())
+                    .map(|defined_index| {
+                        info.source.code.section_payload.defined_funcs[defined_index]
+                            .body
+                            .range()
+                            .len()
+                    })
+                    .unwrap_or_default();
+                size
+            }
+            DepNode::DataSymbol(segment, idx) => {
+                info.source.linking.linking_symbols.data_in_segments[*segment][*idx].size as usize
+            }
+        };
+
         let format_dep = |dep: &DepNode| match dep {
             DepNode::Function(index) => {
                 let name = info.source.names.functions.get(*index);
-                format!("func[{index}] <{name:?}>")
+                format!("func[{index}] <{name:?}> (size={})", size_fn(dep))
             }
             DepNode::DataSymbol(segment, idx) => {
                 let symbol = info
@@ -29,35 +48,28 @@ impl ReachabilityGraph {
                     .expect("indexes should be valid")
                     .name;
                 let segment = info.source.names.data_segments[segment];
-                format!("data[{segment}:{idx}] <{symbol:?}>")
+                format!("data[{segment}:{idx}] <{symbol:?}> (size={})", size_fn(dep))
             }
         };
+        let mut rev_tree = HashMap::new();
+        for child in reachable.iter() {
+            for parent in parents.get(child).into_iter().flatten() {
+                rev_tree.entry(parent).or_insert_with(Vec::new).push(child);
+            }
+        }
 
         println!("SPLIT: ============== {module_name}");
+        for (parent, children) in rev_tree.iter() {
+            println!("{}", format_dep(parent));
+
+            for child in children {
+                println!("==>{}", format_dep(child));
+            }
+        }
+
         let mut total_size: usize = 0;
-        for dep in reachable.iter() {
-            let size = match dep {
-                DepNode::Function(index) => {
-                    let size = index
-                        .checked_sub(info.import_funcs_info.imported_funcs.len())
-                        .map(|defined_index| {
-                            info.source.code.section_payload.defined_funcs[defined_index]
-                                .body
-                                .range()
-                                .len()
-                        })
-                        .unwrap_or_default();
-                    size
-                }
-                DepNode::DataSymbol(segment, idx) => {
-                    info.source.linking.linking_symbols.data_in_segments[*segment][*idx].size
-                        as usize
-                }
-            };
-
-            total_size += size;
-
-            println!("   {} size={size:?}", format_dep(dep));
+        for r in reachable.iter() {
+            total_size += size_fn(r);
         }
         println!("SPLIT: ============== {module_name}  : total size: {total_size}");
     }
@@ -127,8 +139,8 @@ impl Debug for OutputModuleInfo {
     }
 }
 
-impl OutputModuleInfo {
-    pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo) {
-        ReachabilityGraph::print_deps_inner(module_name, info, &self.included_symbols);
-    }
-}
+// impl OutputModuleInfo {
+//     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo) {
+//         ReachabilityGraph::print_deps_inner(module_name, info, &self.included_symbols, self.);
+//     }
+// }

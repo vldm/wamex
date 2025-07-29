@@ -164,18 +164,18 @@ impl<'a> ModuleInfo<'a> {
 }
 
 fn get_data_symbols<'a>(
-    data_segments: &[Data],
+    data: &[Data],
     symbols: &'a VecMap<Vec<DataInSegment<'a>>>,
 ) -> Result<Vec<DataSymbol<'a>>> {
     let mut data_symbols = Vec::new();
     for (segment_id, symbols) in symbols.iter() {
         for (symbol_index, symbol) in symbols.iter().enumerate() {
             if symbol.size == 0 {
-                println!("Data segment has zero-size symbol: {:?}", symbol);
+                log::warn!("Data segment has zero-size symbol: {:?}", symbol);
                 // Ignore zero-size symbols since they cannot be the target of a relocation.
                 continue;
             }
-            let data_segment = data_segments
+            let data_segment = data
                 .get(segment_id)
                 .ok_or_else(|| anyhow!("Invalid data segment index in symbol: {:?}", symbol))?;
             if symbol

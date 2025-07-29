@@ -1,9 +1,11 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Debug,
     ops::Range,
 };
 
 use anyhow::Result;
+use nom::HexDisplay;
 use vec_map::VecMap;
 use wasm_encoder::GlobalType;
 use wasmparser::{Data, DataKind, SymbolFlags};
@@ -16,13 +18,27 @@ use crate::{
     read::linking::section::DataInSegment,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct NamedData<'a> {
     chunk: &'a [u8],
     // if no data symbol - emit anonymous symbol
     name: &'a str,
     symbol_index: SymbolIndex,
     flags: SymbolFlags,
+}
+
+impl Debug for NamedData<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Print in short form:
+        // ...<name>:symbol_index - flags
+        write!(
+            f,
+            "{} <{}>:{:?}",
+            hex::encode(&self.chunk),
+            self.name,
+            self.flags
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -67,9 +83,7 @@ impl<'a> DataSegment<'a> {
     }
 
     // Keeps only symbols with id is in `indexes`.
-    // Returns map from old index to new index.
-    pub fn retain_symbols(&mut self, indexes: &[SymbolIndex]) {
-        let indexes: HashSet<_> = indexes.iter().collect();
+    pub fn retain_symbols(&mut self, indexes: &HashSet<SymbolIndex>) {
         let mut result = vec![];
 
         for item in self.data_parts.drain(..) {
@@ -82,29 +96,24 @@ impl<'a> DataSegment<'a> {
         self.data_parts = result;
     }
 
-    // fn to_linking_symbols(&self) -> Vec<DataInSegment<'a>> {
-    //     let mut result = Vec::new();
-    //     let mut start = 0;
-    //     for symbol in &self.data_parts {
-    //         result.push(DataInSegment {
-    //             name: symbol.name,
-    //             flags: symbol.flags,
-    //             offset: start,
-    //             size: symbol.chunk.len() as u32,
-    //         });
-    //         start += symbol.chunk.len() as u32;
-    //     }
-    //     result
-    // }
-
-    pub fn to_lib_output(&self, lib_base_global_id: u32, segment_offset: i32) -> DataSegmentOutput {
+    pub fn to_lib_output(
+        &self,
+        lib_base_global_id: Option<u32>,
+        segment_offset: i32,
+    ) -> DataSegmentOutput {
         let mut data = Vec::new();
         let data_init = match self.kind {
             DataKind::Passive => None,
             DataKind::Active { .. } => {
-                let offset_expr = wasm_encoder::ConstExpr::global_get(lib_base_global_id)
-                    .with_i32_const(segment_offset)
-                    .with_i32_add();
+                let offset_expr = match lib_base_global_id {
+                    None => wasm_encoder::ConstExpr::i32_const(segment_offset),
+                    Some(lib_base_global_id) => {
+                        // submodules use lib_base_id
+                        wasm_encoder::ConstExpr::global_get(lib_base_global_id)
+                            .with_i32_const(segment_offset)
+                            .with_i32_add()
+                    }
+                };
                 Some(offset_expr)
             }
         };

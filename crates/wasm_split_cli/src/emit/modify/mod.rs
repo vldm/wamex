@@ -7,7 +7,7 @@
 //!
 
 mod constant_extraction;
-mod relocate_function;
+mod relocation;
 
 use std::{collections::HashMap, iter::Peekable, ops::Range};
 
@@ -24,7 +24,7 @@ use crate::{
 };
 use constant_extraction::ConstantExtractionEntry;
 pub use constant_extraction::GlobalVar;
-use relocate_function::{encode::encode_leb128_u32_5byte, RelocateFunctionInfo};
+use relocation::RelocateState;
 #[derive(Debug)]
 pub struct ModifyContext<'a> {
     pub function_name: &'a str,
@@ -35,7 +35,8 @@ pub struct ModifyContext<'a> {
 impl<'a> ModifyContext<'a> {
     pub fn emit_code_with_changes(
         module_emit: &ModuleEmitState<'a>,
-        num_new_global_imports: u32,
+        main_module: &ModuleEmitState<'a>,
+        num_new_global_imports: usize,
         defined_function_id: GlobalId,
         entries: &[ModifyEntry],
     ) -> Result<Vec<u8>> {
@@ -210,42 +211,20 @@ impl<'a> ModifyContext<'a> {
             entry = next_entry;
         }
 
-        let reloc_info = RelocateFunctionInfo {
+        let reloc_info = RelocateState {
             input_module: &module_emit.info.source,
             emit_info: &module_emit.emit_info,
+            main_module: &main_module,
             input_function_output_id: &module_emit.input_function_output_id,
+            global_id_mapper: |global_id| Some(global_id + num_new_global_imports), // currently just increase global_id
         };
 
-        log::debug!("result {:?}", result);
         // TODO: apply relocations
         for relocation in other_relocations {
             log::debug!(
                 "applying relocation {relocation:?} to function {function_name}",
                 function_name = function_name
             );
-            match relocation.ty {
-                RelocationType::MemoryAddrLeb
-                | RelocationType::MemoryAddrSleb
-                | RelocationType::MemoryAddrI32 => {
-                    bail!("Unsupported relocation type: {relocation:?}");
-                }
-                RelocationType::GlobalIndexLeb => {
-                    let val: [u8; 5] = dbg!(&result[relocation.relocation_range()])
-                        .try_into()
-                        .unwrap();
-                    let (val, _idx) = decode_u32(val)
-                        .ok_or_else(|| anyhow::anyhow!("Failed to decode global index"))?;
-                    encode_leb128_u32_5byte(
-                        val + num_new_global_imports,
-                        (&mut result[relocation.relocation_range()])
-                            .try_into()
-                            .unwrap(),
-                    );
-                    continue;
-                }
-
-                _ => {}
-            }
             reloc_info.apply_relocation(&mut result, 0, &relocation)?;
         }
         Ok(result)
@@ -313,6 +292,7 @@ impl ModifyEntry {
     pub fn from_relocation_entry(
         mut global_getter: impl FnMut(SymbolId) -> Result<GlobalVar>,
         entry: &wasmparser::RelocationEntry,
+        extract_const: bool,
         start_offset: usize,
     ) -> Result<ModifyEntry> {
         Ok(match entry.ty {
@@ -335,13 +315,22 @@ impl ModifyEntry {
 
             RelocationType::MemoryAddrLeb
             | RelocationType::MemoryAddrSleb
-            | RelocationType::MemoryAddrI32 => ModifyEntry::Data(ConstantExtractionEntry {
-                relocation_type: entry.ty,
-                global_index: global_getter(entry.index as SymbolId)?,
-                addend: entry.addend,
-                range: entry.relocation_range().shift_left(start_offset),
-            }),
-            RelocationType::EventIndexLeb
+            | RelocationType::MemoryAddrI32
+                if extract_const =>
+            {
+                ModifyEntry::Data(ConstantExtractionEntry {
+                    relocation_type: entry.ty,
+                    global_index: global_getter(entry.index as SymbolId)?,
+                    addend: entry.addend,
+                    range: entry.relocation_range().shift_left(start_offset),
+                })
+            }
+            // memory relocations while extract_const = false
+            RelocationType::MemoryAddrLeb
+            | RelocationType::MemoryAddrSleb
+            | RelocationType::MemoryAddrI32
+            // or any other relocations
+            | RelocationType::EventIndexLeb
             | RelocationType::TypeIndexLeb
             | RelocationType::TableIndexSleb
             | RelocationType::TableIndexI32

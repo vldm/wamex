@@ -103,3 +103,44 @@ impl Future for SplitLoaderFuture {
 unsafe extern "C" fn load_callback(loader: *const c_void, success: bool) {
     unsafe { Rc::from_raw(loader as *const SplitLoader) }.complete(success);
 }
+
+// pub enum LinkKind {
+//     Function,
+//     Global,
+// }
+// struct LinkEntry {
+//     module: String,
+//     name: String,
+//     kind: LinkKind,
+// }
+
+// pub struct WasmModule {
+//     module_file: String,
+//     exports: Vec<LinkEntry>,
+//     imports: Vec<LinkEntry>,
+// }
+
+// impl WasmModule {
+//     pub fn new() -> Self {
+//         Self {
+//             module_file: "__wasm_split".to_string(),
+//             exports: Vec::new(),
+//             imports: Vec::new(),
+//         }
+//     }
+
+//     pub fn init(&mut self, global_exports: Vec<LinkEntry>) {
+//         // check if global exports can fulfill imports
+//         for import in &self.imports {
+//             if !global_exports
+//                 .iter()
+//                 .any(|e| e.name == import.name && e.module == import.module)
+//             {
+//                 panic!(
+//                     "Import {} from module {} not found in global exports",
+//                     import.name, import.module
+//                 );
+//             }
+//         }
+//     }
+// }

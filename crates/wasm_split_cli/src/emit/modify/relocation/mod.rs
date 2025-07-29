@@ -5,19 +5,24 @@ use anyhow::{anyhow, bail, Result};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    emit::EmitInfo,
-    index::InputFuncId,
+    emit::{EmitInfo, ModuleEmitState},
+    index::{GlobalId, InputFuncId},
     read::{linking::SymbolType, InputModule},
 };
 
-pub struct RelocateFunctionInfo<'a> {
+pub struct RelocateState<'a, F> {
     pub input_module: &'a InputModule<'a>,
     pub emit_info: &'a EmitInfo,
+    pub main_module: &'a ModuleEmitState<'a>,
+    pub global_id_mapper: F,
     pub input_function_output_id: &'a HashMap<InputFuncId, usize>,
 }
 
-impl RelocateFunctionInfo<'_> {
-    fn get_relocation_input_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
+impl<F> RelocateState<'_, F>
+where
+    F: Fn(GlobalId) -> Option<GlobalId>,
+{
+    fn _get_relocation_input_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
         let Some((input_func_id, SymbolType::Func)) = self
             .input_module
             .linking
@@ -31,7 +36,7 @@ impl RelocateFunctionInfo<'_> {
     }
 
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let input_func_id = self.get_relocation_input_function_index(relocation)?;
+        let input_func_id = self._get_relocation_input_function_index(relocation)?;
         let Some(&output_func_id) = self.input_function_output_id.get(&input_func_id) else {
             bail!(
                 "Dependency analysis error: \
@@ -43,7 +48,7 @@ impl RelocateFunctionInfo<'_> {
     }
 
     fn get_relocated_function_table_index(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let input_func_id = self.get_relocation_input_function_index(relocation)?;
+        let input_func_id = self._get_relocation_input_function_index(relocation)?;
 
         let Some(&table_index) = self
             .emit_info
@@ -59,6 +64,58 @@ impl RelocateFunctionInfo<'_> {
             )
         };
         Ok(table_index)
+    }
+
+    fn _get_relocation_memory_symbol(
+        &self,
+        relocation: &RelocationEntry,
+    ) -> Result<(usize, usize)> {
+        let Some((data_index, SymbolType::DataDefined(segment_id))) = self
+            .input_module
+            .linking
+            .linking_symbols
+            .original_indexes
+            .get(relocation.index as usize)
+        else {
+            bail!("Relocation {relocation:?} does not refer to a valid memory");
+        };
+        Ok((*segment_id as usize, *data_index as usize))
+    }
+
+    fn get_relocated_memory_offset(&self, relocation: &RelocationEntry) -> Result<usize> {
+        let (segment_id, data_index) = self._get_relocation_memory_symbol(relocation)?;
+        let (segment_id, data_index) = self.main_module.input_data_to_output_id.get(&(segment_id, data_index))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Dependency analysis error: No output data segment for input segment {segment_id} and data {data_index} referenced by relocation {relocation:?}"
+                )
+            })?;
+        let Some(segment) = self.main_module.data.get(*segment_id) else {
+            bail!("No data segment with id {segment_id} for relocation {relocation:?}");
+        };
+        let Some(data) = segment.globals().get(*data_index) else {
+            bail!("No data with index {data_index} in segment {segment_id} for relocation {relocation:?}");
+        };
+        Ok(data.data_offset as usize)
+    }
+
+    fn get_global_id(&self, relocation: &RelocationEntry) -> Result<usize> {
+        let Some((original_global_id, SymbolType::Global)) = self
+            .input_module
+            .linking
+            .linking_symbols
+            .original_indexes
+            .get(relocation.index as usize)
+        else {
+            bail!("Relocation {relocation:?} does not refer to a valid global");
+        };
+        let global_id = (self.global_id_mapper)(*original_global_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Dependency analysis error: No output global for input global {original_global_id} referenced by relocation {relocation:?}"
+                )
+            })?;
+        Ok(global_id as usize)
     }
 
     pub fn apply_relocation(
@@ -106,6 +163,30 @@ impl RelocateFunctionInfo<'_> {
             FunctionIndexI32 => {
                 encode_u32(
                     self.get_relocated_function_index(relocation)? as u32,
+                    target.try_into().unwrap(),
+                );
+            }
+            MemoryAddrLeb => {
+                encode_leb128_u32_5byte(
+                    self.get_relocated_memory_offset(relocation)? as u32,
+                    target.try_into().unwrap(),
+                );
+            }
+            MemoryAddrSleb => {
+                encode_leb128_i32_5byte(
+                    self.get_relocated_memory_offset(relocation)? as i32,
+                    target.try_into().unwrap(),
+                );
+            }
+            MemoryAddrI32 => {
+                encode_u32(
+                    self.get_relocated_memory_offset(relocation)? as u32,
+                    target.try_into().unwrap(),
+                );
+            }
+            GlobalIndexLeb => {
+                encode_leb128_u32_5byte(
+                    self.get_global_id(relocation)? as u32,
                     target.try_into().unwrap(),
                 );
             }

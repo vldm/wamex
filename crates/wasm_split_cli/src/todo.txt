@@ -1,10 +1,7 @@
-Make all names unique by appending random string
-
-
-Map dependencies from original (pre-bindgen) wasm
-
-Apply dependencies to post-bindgen wasm (validate?)
-
-
-
-For now we will ignore non-function dependencies
+1. Remove globals from main
+2. Make two-phase generation:
+2.1 One generate globals
+2.2 when generate_code use globals + data from other modules
+3. Generate wasm_bindgen section
+4. recreate relocations
+5. generate linking + names + relocs sections
