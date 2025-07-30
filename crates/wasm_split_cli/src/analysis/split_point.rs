@@ -269,7 +269,7 @@ impl SplitProgramInfo {
                 SplitModuleIdentifier::Shared(shared.module_names.clone()),
                 OutputModuleInfo {
                     included_symbols: shared.shared_deps,
-                    link_symbols: HashSet::new(),
+                    link_symbols: shared.linked_nodes,
                     split_points: vec![],
                 },
             );

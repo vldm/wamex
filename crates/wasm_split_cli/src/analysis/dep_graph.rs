@@ -110,6 +110,8 @@ pub struct ReachabilityGraph {
 pub struct NamedGraph<Id> {
     pub module: Id,
     pub deps: ReachabilityGraph,
+
+    /// This field is hidden, because it is output parameter of `calculate_shared_modules`
     linked_nodes: HashSet<DepNode>,
 }
 
@@ -130,6 +132,7 @@ impl<Id> NamedGraph<Id> {
 pub struct SharedEntries<Id> {
     pub module_names: Vec<Id>,
     pub shared_deps: HashSet<DepNode>,
+    pub linked_nodes: HashSet<DepNode>,
 }
 
 pub trait SymbolTable {
@@ -285,6 +288,7 @@ impl<Id> NamedGraph<Id> {
     }
 
     /// Remove all entries which all parents are also in shared entries.
+    /// This will clean-up tree of shared entries and leave only top-most entries.
     pub fn reduce_shared_entries(
         shared_entries: HashSet<DepNode>,
         parents: &DepGraph,
@@ -351,18 +355,20 @@ impl<Id> NamedGraph<Id> {
 
         for (module_ids, shared_deps) in shared_entries {
             let mut module_names = Vec::new();
+            let mut shared_linked_points = HashSet::new();
             for module_id in module_ids {
                 let module = &mut modules[module_id];
                 let module_parents = &module.deps.parents;
-                module.linked_nodes.extend(Self::reduce_shared_entries(
-                    shared_deps.clone(),
-                    module_parents,
-                ));
+                let top_shared_deps =
+                    Self::reduce_shared_entries(shared_deps.clone(), module_parents);
+                module.linked_nodes.extend(top_shared_deps.clone());
+                shared_linked_points.extend(top_shared_deps);
                 module_names.push(module.module.clone());
             }
             result.push(SharedEntries {
                 module_names,
                 shared_deps,
+                linked_nodes: shared_linked_points,
             });
         }
 
@@ -772,20 +778,18 @@ mod tests {
         let graph = testing::parse_deps(
             r#"
             F(29) -> F(73) & D(2, 4) & F(662)
-            F(662) -> D(2, 4)
             F(64) -> D(0, 18) & F(29) & D(2, 0)
-            F(660) -> F(661) & F(654) & F(655)
-            F(29) -> D(2, 4) & F(73) & F(662)
-            D(0, 26) -> D(0, 97)
-            F(659) -> F(660)
-            F(662) -> D(2, 4)
-            D(0, 20) -> D(0, 95)
-            F(655) -> F(656) & D(2, 10) & D(2, 9) & D(2, 8)
-            F(66) -> F(77)
-            F(101) -> F(659)
-            F(77) -> D(0, 26) & F(78)
             F(65) -> D(0, 20) & F(66) & D(2, 0) & F(29) & D(0, 19)
+            F(66) -> F(77)
+            F(77) -> D(0, 26) & F(78)
             F(78) -> F(101)
+            F(101) -> F(659)
+            F(655) -> F(656) & D(2, 10) & D(2, 9) & D(2, 8)
+            F(659) -> F(660)
+            F(660) -> F(661) & F(654) & F(655)
+            F(662) -> D(2, 4)
+            D(0, 26) -> D(0, 97)
+            D(0, 20) -> D(0, 95)
             F(1000) -> D(2, 4) & D(0, 1000) & F(73)
             F(2000) -> F(1000)
             "#,
@@ -822,6 +826,41 @@ mod tests {
                 testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
             );
         }
+        dbg!(&shared_entries);
+
+        assert_eq!(shared_entries.len(), 2);
+        assert_eq!(
+            shared_entries[0].module_names,
+            vec!["split_static_str", "split_string_from_static"]
+        );
+
+        // F(29) -> F(73) & D(2, 4) & F(662)
+        // But F(73) and D(2, 4) are included into shared_entries[1]
+        // so we have only F(29) and F(662) from this tree
+        // D(2, 0) is separate dependency
+        assert_eq!(
+            shared_entries[0].shared_deps,
+            testing::uniq_nodes("D(2, 0) & F(29) & F(662)").unwrap()
+        );
+        assert_eq!(
+            shared_entries[0].linked_nodes,
+            testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
+        );
+
+        // For second chunk - all deps are exported
+        assert_eq!(
+            shared_entries[1].module_names,
+            vec!["split_static_str", "split_string_from_static", "main"]
+        );
+
+        assert_eq!(
+            shared_entries[1].shared_deps,
+            testing::uniq_nodes("F(73) & D(2, 4)").unwrap()
+        );
+        assert_eq!(
+            shared_entries[1].linked_nodes,
+            testing::uniq_nodes("F(73) & D(2, 4)").unwrap()
+        );
 
         // top-most shared entries should be only F(29) and D(2, 0)
         assert_eq!(

@@ -13,6 +13,8 @@ mod read;
 
 use read::InputModule;
 
+use crate::emit::EmitStrategy;
+
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
 struct Cli {
@@ -61,16 +63,19 @@ fn main() -> Result<()> {
         }
     }
 
-    crate::emit::emit_modules(&info, &split_program_info, &|output_module_index: usize,
-                                                            data: &[u8]|
-     -> Result<()> {
-        let identifier = &split_program_info.output_modules[output_module_index].0;
-        let output_filename = identifier.name() + ".wasm";
-        let output_path = args.output.join(output_filename);
-        std::fs::create_dir_all(&args.output)?;
-        std::fs::write(output_path, data)?;
-        Ok(())
-    })?;
+    crate::emit::emit_modules(
+        &info,
+        &split_program_info,
+        EmitStrategy::default(),
+        &|output_module_index: usize, data: &[u8]| -> Result<()> {
+            let identifier = &split_program_info.output_modules[output_module_index].0;
+            let output_filename = identifier.name() + ".wasm";
+            let output_path = args.output.join(output_filename);
+            std::fs::create_dir_all(&args.output)?;
+            std::fs::write(output_path, data)?;
+            Ok(())
+        },
+    )?;
 
     //     let mut javascript = String::new();
     //     javascript.push_str(

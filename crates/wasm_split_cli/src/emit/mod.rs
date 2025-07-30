@@ -952,12 +952,61 @@ impl EmitInfo {
     }
 }
 
+#[derive(Debug)]
+pub enum EmitMemoryMode {
+    /// Memory layout remain the same as in the original module.
+    /// Data segments are cutted into pieces - places for sub modules memory are reserved.
+    /// This is usefull in production, when only one thing you need is to load needed chunks on demand.
+    StaticSpace,
+
+    /// Main module memory are compacted, all references to that chunks are updated using relocation table.
+    /// Sub modules memory are also compacted, but data segments are allocated at dynamic offsets
+    /// therefore all references are replaced with global.get $lib_memory_base + $offset.
+    /// This is usefull in development, when you want to reload part of the code on demand.
+    /// Checkout `emit::modify::constant_extraction` for implementation details.
+    DynAsGlobal,
+}
+
+#[derive(Debug)]
+pub enum EmitStructure {
+    /// Embed all chunks into main module.
+    BigMainModule,
+    /// Emit shared chunks as submodule.
+    EmitSharedModules,
+}
+
+#[derive(Debug)]
+pub struct EmitStrategy {
+    /// Memory mode to use.
+    pub memory_mode: EmitMemoryMode,
+    /// How to emit shared modules.
+    pub structure: EmitStructure,
+}
+impl Default for EmitStrategy {
+    fn default() -> Self {
+        Self {
+            memory_mode: EmitMemoryMode::DynAsGlobal,
+            structure: EmitStructure::BigMainModule,
+        }
+    }
+}
+
 pub fn emit_modules<'a>(
     module: &'a analysis::ModuleInfo<'a>,
     program_info: &SplitProgramInfo,
+    emit_strategy: EmitStrategy,
     emit_fn: &dyn Fn(usize, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     // For now we will ignore data symbols because that simplifies things quite a bit.
+
+    assert!(
+        matches!(emit_strategy.memory_mode, EmitMemoryMode::DynAsGlobal),
+        "Only DynAsGlobal memory mode is supported for now, but {emit_strategy:?} was requested"
+    );
+    assert!(
+        matches!(emit_strategy.structure, EmitStructure::BigMainModule),
+        "Only BigMainModule structure is supported for now, but {emit_strategy:?} was requested"
+    );
 
     let emit_info = EmitInfo::new(&module.source, program_info)?;
     let modules_ids_iter = program_info.output_modules.iter().enumerate().filter_map(
