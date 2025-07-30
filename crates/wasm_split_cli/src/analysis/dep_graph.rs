@@ -18,10 +18,20 @@ use crate::{
     read::linking::SymbolIndex,
 };
 
-#[derive(Debug, PartialEq, Eq, Hash, Copy, PartialOrd, Ord, Clone)]
+#[derive(PartialEq, Eq, Hash, Copy, PartialOrd, Ord, Clone)]
 pub enum DepNode {
     Function(InputFuncId),
     DataSymbol(DataSegmentId, DataSymbolId),
+}
+impl Debug for DepNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DepNode::Function(id) => write!(f, "F({id})"),
+            DepNode::DataSymbol(segment_id, symbol_index) => {
+                write!(f, "D({segment_id}, {symbol_index})")
+            }
+        }
+    }
 }
 
 impl DepNode {
@@ -39,11 +49,60 @@ impl DepNode {
     }
 }
 
-pub type DepGraph = HashMap<DepNode, HashSet<DepNode>>;
+pub type DepList = HashSet<DepNode>;
+#[derive(Clone, Default)]
+pub struct DepGraph {
+    deps: HashMap<DepNode, DepList>,
+}
+impl DepGraph {
+    pub fn new() -> Self {
+        Self {
+            deps: HashMap::new(),
+        }
+    }
+    pub fn entry(&mut self, key: DepNode) -> &mut DepList {
+        self.deps.entry(key).or_default()
+    }
+    pub fn get(&self, key: &DepNode) -> Option<&DepList> {
+        self.deps.get(key)
+    }
+    pub fn get_mut(&mut self, key: &DepNode) -> Option<&mut DepList> {
+        self.deps.get_mut(key)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&DepNode, &DepList)> {
+        self.deps.iter()
+    }
+}
+impl From<HashMap<DepNode, DepList>> for DepGraph {
+    fn from(deps: HashMap<DepNode, DepList>) -> Self {
+        Self { deps }
+    }
+}
+impl Debug for DepGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (node, deps) in self.iter() {
+            if deps.is_empty() {
+                writeln!(f, "{node:?} -> <no deps>")?;
+                continue;
+            }
+            write!(f, "{node:?} -> ")?;
+            let mut deps = deps.iter();
+            if let Some(dep) = deps.next() {
+                write!(f, "{dep:?}")?;
+            }
+
+            for dep in deps {
+                write!(f, " & {dep:?}")?;
+            }
+            writeln!(f)?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct ReachabilityGraph {
-    pub reachable: HashSet<DepNode>,
+    pub reachable: DepList,
     pub parents: DepGraph,
 }
 
@@ -106,7 +165,7 @@ pub fn get_dependencies(
     let mut add_dep = |a: DepNode, linking_index: u32| {
         if let Some(target) = module.get_symbol_dep_node(linking_index as usize) {
             log::trace!("Adding dirrect deps {a:?} -> {target:?}");
-            deps.entry(a).or_default().insert(target);
+            deps.entry(a).insert(target);
         };
     };
 
@@ -165,7 +224,7 @@ impl ReachabilityGraph {
                 if seen.contains(&child) {
                     continue;
                 }
-                parents.entry(*child).or_default().insert(node);
+                parents.entry(*child).insert(node);
                 queue.push_back(*child);
             }
         }
@@ -250,7 +309,7 @@ impl<Id> NamedGraph<Id> {
         let mut reversed = DepGraph::new();
         for (node, deps) in graph.iter() {
             for dep in deps {
-                reversed.entry(*dep).or_default().insert(*node);
+                reversed.entry(*dep).insert(*node);
             }
         }
         reversed

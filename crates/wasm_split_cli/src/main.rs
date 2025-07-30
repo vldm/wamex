@@ -30,10 +30,10 @@ struct Cli {
 //The flow of the program is simple:
 // 1. Parse the input wasm file.
 // 2. Analyze the wasm module to gather information about its structural dependencies. And indetify split points.
-// 3. Modify module:
+// 3. Emit processed modules to the output directory.
+// 3.1 Modify module:
 //    - Relocate functions.
 //    - Patch data lookups. (e.g. const.get -> global.get)
-// 4. Emit processed modules to the output directory.
 // Also there should be a routine that can compare and reload changed chunks.
 
 fn main() -> Result<()> {
@@ -47,14 +47,14 @@ fn main() -> Result<()> {
     let info = analysis::ModuleInfo::new(&module)?;
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
-    println!("dep_graph={dep_graph:?}");
+    log::info!("dep_graph={dep_graph:?}");
     let split_points = analysis::split_point::find_split_points(&module, &info)?;
 
-    println!("split_points={split_points:?}");
+    log::info!("split_points={split_points:?}");
     let split_program_info =
         SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
 
-    println!("split_program_info={split_program_info:?}");
+    log::info!("split_program_info={split_program_info:?}");
     if args.verbose {
         for (name, split_deps) in split_program_info.output_modules.iter() {
             split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);

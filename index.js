@@ -8,7 +8,7 @@ form.addEventListener("submit", async (event) => {
   try {
     await initializeWasm();
     const urlValue = url.value;
-    const decoded = await main.decode(urlValue);
+    const decoded = await main.print_lazy_loaded_string(urlValue);
     result.textContent = decoded;
   } catch (e) {
     result.textContent = "Error: " + e.toString();

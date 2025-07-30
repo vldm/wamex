@@ -274,7 +274,7 @@ impl<Type> Ord for Id<Type> {
 impl<Type> Copy for Id<Type> {}
 impl<Type> std::fmt::Debug for Id<Type> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Id({})", self.id)
+        write!(f, "{}", self.id)
     }
 }
 impl<Type> std::fmt::Display for Id<Type> {

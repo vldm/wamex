@@ -10,6 +10,8 @@ use anyhow::{anyhow, bail};
 use lazy_static::lazy_static;
 use regex::Regex;
 
+// TODO: impl merge and use it in emit_modules as one of strategies to emit modules.
+// The other possible is to emit it as separate chunk and allow linkage.
 #[derive(Default)]
 pub struct OutputModuleInfo {
     pub included_symbols: HashSet<DepNode>,
@@ -17,6 +19,7 @@ pub struct OutputModuleInfo {
     pub link_symbols: HashSet<DepNode>,
     pub split_points: Vec<SplitPoint>,
 }
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SplitPoint {
     // Name of split function that will be moved to the submodule.

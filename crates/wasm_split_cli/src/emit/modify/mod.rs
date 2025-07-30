@@ -52,7 +52,6 @@ impl<'a> ModifyContext<'a> {
                 .get(func_id)
                 .copied()
                 .unwrap_or_else(|| "__undefined_function");
-            println!("original func_range: {:?}", defined_func.body.range());
             (name, defined_func.body.clone())
         };
         log::debug!(
@@ -60,7 +59,7 @@ impl<'a> ModifyContext<'a> {
             range = src_body.range()
         );
 
-        log::debug!("start_body {:?}", src_body.as_bytes());
+        log::trace!("start_body {:?}", src_body.as_bytes());
         // recreate binary reader to use function related offset rather than module related.
         let func_body = FunctionBody::new(BinaryReader::new(src_body.as_bytes(), 0));
         let mut locals = vec![];
@@ -97,7 +96,7 @@ impl<'a> ModifyContext<'a> {
         let mut entries_iter = entries.iter().peekable();
         let Some(mut entry) = entries_iter.next() else {
             // no modifications, just copy the original function body
-            log::debug!("no modifications, copying original function body");
+            log::trace!("no modifications, copying original function body");
             result.extend_from_slice(func_body.as_bytes());
             return Ok(result);
         };
@@ -202,7 +201,7 @@ impl<'a> ModifyContext<'a> {
 
             let Some(next_entry) = entries_iter.next() else {
                 // no more entries, just copy the rest of the function body
-                log::debug!("no more entries, copying rest of the function body");
+                log::trace!("no more entries, copying rest of the function body");
 
                 result.extend_from_slice(&source[instr_range.end..]);
                 break 'instr;
@@ -224,7 +223,7 @@ impl<'a> ModifyContext<'a> {
 
         // TODO: apply relocations
         for relocation in other_relocations {
-            log::debug!(
+            log::trace!(
                 "applying relocation {relocation:?} to function {function_name}",
                 function_name = function_name
             );

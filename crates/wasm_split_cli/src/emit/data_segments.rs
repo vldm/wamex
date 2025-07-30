@@ -33,10 +33,40 @@ impl Debug for NamedData<'_> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DataSegment<'a> {
     data_parts: Vec<NamedData<'a>>,
     pub kind: DataKind<'a>,
+}
+
+impl Debug for DataSegment<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match &self.kind {
+            DataKind::Passive => format!("Passive"),
+            DataKind::Active {
+                offset_expr,
+                memory_index,
+            } => {
+                let offset_expr = offset_expr.get_operators_reader().into_iter().fold(
+                    String::new(),
+                    |mut val, op| {
+                        let operator = op.expect("Expected operator in offset expression");
+                        if !val.is_empty() {
+                            val.push(' ');
+                        }
+                        val.push_str(&format!("{:?}", operator));
+                        val
+                    },
+                );
+                format!("Active(memory:{memory_index}, offset:{})", offset_expr)
+            }
+        };
+        write!(
+            f,
+            "DataSegment {{ data_parts: {:?}, kind: {} }}",
+            self.data_parts, kind
+        )
+    }
 }
 
 impl<'a> DataSegment<'a> {

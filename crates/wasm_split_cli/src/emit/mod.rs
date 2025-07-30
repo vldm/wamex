@@ -228,25 +228,14 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         for i in output_module_info
             .included_symbols
             .iter()
-            .filter_map(|dep| match dep {
-                DepNode::DataSymbol(data_segment, data_id) => Some((*data_segment, *data_id)),
-                _ => None,
-            })
+            // Include all shared data segments also.
+            .chain(iter_if(main_module, shared_imports.clone()))
+            .filter_map(DepNode::as_data_symbol)
         {
             data_to_define
                 .entry(i.0)
                 .or_insert_with(HashSet::new)
                 .insert(i.1);
-        }
-
-        // Include all shared data segments also.
-        if main_module {
-            for i in shared_imports.filter_map(DepNode::as_data_symbol) {
-                data_to_define
-                    .entry(i.0)
-                    .or_insert_with(HashSet::new)
-                    .insert(i.1);
-            }
         }
 
         // filter only used entries
@@ -1001,6 +990,14 @@ pub fn emit_modules<'a>(
         })
         .collect::<Result<IdVec<_>>>()?;
     log::debug!("Data segments with symbols: {:#?}", data_segments);
+
+    for (id, output_module) in program_info.output_modules.iter() {
+        let SplitModuleIdentifier::Shared(_) = id else {
+            continue;
+        };
+
+        log::debug!("Shared_modules_info {id:?}: {output_module:?}");
+    }
 
     let output_modules = modules_ids_iter
         .clone()
