@@ -82,7 +82,7 @@ impl ReachabilityGraph {
         for r in reachable.iter() {
             total_size += size_fn(r);
         }
-        println!("SPLIT: ============== {module_name}  : total size: {total_size}");
+        println!("SPLIT: ============== {module_name} : total size: {total_size}");
     }
 }
 
@@ -152,7 +152,7 @@ impl Debug for OutputModuleInfo {
 
 impl OutputModuleInfo {
     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo, graph: &DepGraph) {
-        let parents = crate::analysis::dep_graph::NamedGraph::<()>::reverse(graph);
+        let parents = graph.reverse();
         ReachabilityGraph::print_deps_inner(module_name, info, &self.included_symbols, &parents);
     }
 }

@@ -72,6 +72,19 @@ impl DepGraph {
     pub fn iter(&self) -> impl Iterator<Item = (&DepNode, &DepList)> {
         self.deps.iter()
     }
+    /// Build a reverse graph from the given dep graph.
+    /// parent -> child becomes child -> parent
+    ///
+    /// This is usefull for finding all parents of a given node.
+    pub fn reverse(&self) -> DepGraph {
+        let mut reversed = DepGraph::new();
+        for (node, deps) in self.iter() {
+            for dep in deps {
+                reversed.entry(*dep).insert(*node);
+            }
+        }
+        reversed
+    }
 }
 impl From<HashMap<DepNode, DepList>> for DepGraph {
     fn from(deps: HashMap<DepNode, DepList>) -> Self {
@@ -303,20 +316,6 @@ impl<Id> NamedGraph<Id> {
             reduced.insert(*dep);
         }
         reduced
-    }
-
-    /// Build a reverse graph from the given dep graph.
-    /// parent -> child becomes child -> parent
-    ///
-    /// This is usefull for finding all parents of a given node.
-    pub fn reverse(graph: &DepGraph) -> DepGraph {
-        let mut reversed = DepGraph::new();
-        for (node, deps) in graph.iter() {
-            for dep in deps {
-                reversed.entry(*dep).insert(*node);
-            }
-        }
-        reversed
     }
 
     /// Calculate shared entries between modules.

@@ -10,6 +10,8 @@ use wasmparser::RelocationType;
 
 use std::ops::Range;
 
+use crate::{emit::modify::CustomModify, helpers::ShiftRange, index::SymbolId};
+
 use super::{ModifyContext, StoreType};
 
 // Represents a data relocation entry with additional information about global variable.
@@ -26,7 +28,7 @@ pub struct ConstantExtractionEntry {
 pub enum GlobalVar {
     /// Data segment extracted to global variable
     Extract(u32),
-    /// Keep original constant value untoucked
+    /// Keep original constant value untouched
     Untouched,
 }
 
@@ -205,6 +207,81 @@ impl ConstantExtractionEntry {
             range = self.range,
         );
 
+        Ok(())
+    }
+
+    // Check that relocation entry is supported
+    fn check_whitelisted_code_relocation(entry: &wasmparser::RelocationEntry) -> Result<()> {
+        match entry.ty {
+            RelocationType::MemoryAddrLeb64
+            | RelocationType::MemoryAddrSleb64
+            | RelocationType::MemoryAddrI64
+            | RelocationType::MemoryAddrRelSleb64
+            | RelocationType::MemoryAddrTlsSleb64
+            | RelocationType::TableIndexSleb64
+            | RelocationType::TableIndexI64
+            | RelocationType::FunctionOffsetI64
+            | RelocationType::TableIndexRelSleb64 => {
+                bail!("U64 memory pointers is currently not supported")
+            }
+            RelocationType::MemoryAddrTlsSleb
+            | RelocationType::MemoryAddrRelSleb
+            | RelocationType::MemoryAddrLocrelI32 => {
+                bail!("Relocation memory pointers is currently not supported")
+            }
+            // Function offsets are not supported yet
+            RelocationType::FunctionOffsetI32
+            | RelocationType::SectionOffsetI32
+            | RelocationType::TableIndexRelSleb => {
+                bail!("Unsupported relocation type {entry:?}");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl CustomModify for ConstantExtractionEntry {
+    type Context<'any, 'src>
+        = ModifyContext<'any>
+    where
+        'src: 'any;
+    fn try_from_entry(
+        mut global_getter: impl FnMut(SymbolId) -> Result<GlobalVar>,
+        entry: &wasmparser::RelocationEntry,
+        extract_const: bool,
+        start_offset: usize,
+    ) -> Result<Option<Self>> {
+        Self::check_whitelisted_code_relocation(entry)?;
+        Ok(match entry.ty {
+            RelocationType::MemoryAddrLeb
+            | RelocationType::MemoryAddrSleb
+            | RelocationType::MemoryAddrI32 // not sure how to process MemoryAddrI32?
+                if extract_const =>
+            {
+                Some(Self {
+                    relocation_type: entry.ty,
+                    global_index: global_getter(entry.index as SymbolId)?,
+                    addend: entry.addend,
+                    range: entry.relocation_range().shift_left(start_offset),
+                })
+            }
+            _ => return Ok(None),
+        })
+    }
+
+    fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    fn try_apply(&self, ctx: ModifyContext<'_>) -> Result<()> {
+        match self.relocation_type {
+            RelocationType::MemoryAddrLeb => self.replace_memory_offset_with_global_get(ctx)?,
+            RelocationType::MemoryAddrSleb => self.replace_const_get_with_global_get(ctx)?,
+            _ => {
+                bail!("Unsupported relocation type")
+            }
+        };
         Ok(())
     }
 }

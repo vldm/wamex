@@ -4,13 +4,17 @@ use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::index::{DefinedFuncId, FuncTypeId, IdVec, IndexedSection};
+use crate::{
+    index::{DefinedFuncId, FuncTypeId, IdVec, IndexedSection},
+    read::target_features::TargetFeatures,
+};
 
 pub mod code;
 pub mod data;
 pub mod linking;
 pub mod names;
 pub mod relocs;
+mod target_features;
 
 use code::CodeSection;
 use data::DataSection;
@@ -48,13 +52,10 @@ pub struct InputModule<'a> {
     pub linking: LinkingInfo<'a>,
     // sections "reloc.*"
     pub relocs: Relocation,
+    // Activated features
+    pub target_features: TargetFeatures,
     // other sections
     pub custom_sections: Vec<Ind<CustomSection<'a>>>,
-    // post-processed fields
-    // pub imported_funcs: Vec<ImportId>,
-    // pub imported_func_map: HashMap<ImportId, InputFuncId>,
-    // pub data_symbols: Vec<DataSymbol>,
-    // pub export_map: HashMap<(isize, usize), (usize, &'a str)>,
 }
 
 impl<'a> InputModule<'a> {
@@ -150,6 +151,11 @@ impl<'a> InputModule<'a> {
                             reader.data_offset(),
                         ))?;
                         module.relocs.push_section(reloc_reader)?;
+                    } else if name == "target_features" {
+                        module.target_features = TargetFeatures::read(BinaryReader::new(
+                            reader.data(),
+                            reader.data_offset(),
+                        ))?;
                     } else {
                         let custom_section = CustomSection {
                             name: reader.name().into(),

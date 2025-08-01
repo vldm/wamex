@@ -1,18 +1,21 @@
+use core::num;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::identity;
 use std::ops::Range;
 
 use anyhow::{anyhow, bail, Context, Result};
 use globals::GlobalConstructor;
+use nom::lib;
 use wasm_encoder::GlobalType;
-use wasmparser::{RelocationEntry, RelocationType, TypeRef};
+use wasmparser::{RefType, RelocationEntry, RelocationType, Table, TypeRef};
 
 use crate::analysis;
 use crate::analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier};
+use crate::emit::modify::{RelocateState, StartFnGen};
 use crate::helpers::iter_if;
 use crate::index::{
-    DataId, DataSegmentId, FuncTypeId, GlobalId, IdVec, MemoryId, OutputFuncId, OutputGlobalId,
-    OutputSymbolDataId,
+    DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, MemoryId, OutputFuncId,
+    OutputGlobalId, OutputSymbolDataId, TableId,
 };
 use crate::read::linking::SymbolIndex;
 use modify::{init_each_store_var, ModifyContext, StoreType};
@@ -36,7 +39,7 @@ struct DefinedFunction {
     input_func_id: InputFuncId,
     export: bool,
     // List of modifications that should be applied to this function.
-    modification_list: Vec<modify::ModifyEntry>,
+    modification_list: Vec<modify::CodeModifyEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,11 +53,13 @@ enum ImportFunctionKind<'a> {
     // use existing import function
     Existing {
         module_name: &'a str,
+        import_function_name: &'a str,
     },
     // Add new import function from another module (e.g. main module).
     New {
         link_module: usize,
         output_function_index: usize,
+        mangled_function_name: &'a str,
     },
 }
 
@@ -71,8 +76,21 @@ impl ImportedFunction<'_> {
             }
         }
     }
+    pub fn function_name(&self) -> &str {
+        match self.kind {
+            ImportFunctionKind::Existing {
+                import_function_name,
+                ..
+            } => import_function_name,
+            ImportFunctionKind::New {
+                mangled_function_name,
+                ..
+            } => mangled_function_name,
+        }
+    }
 }
 
+#[derive(Debug)]
 enum Global<'a> {
     PlainCopy(wasmparser::Global<'a>),
     WithConstructor(GlobalConstructor),
@@ -113,20 +131,23 @@ pub struct ModuleEmitState<'any, 'src> {
     // extra imports that should be emitted for lib
     // Not available for main module.
     lib_base_import: Option<ExtraImportGlobal>,
+    start_fn: Option<StartFnGen>,
 
     // Data Section
     data: IdVec<data_segments::DataSegmentOutput>,
+    data_relocations: IdMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
 
-    pub emit_info: &'any EmitInfo,
     // src module
     pub info: &'any analysis::ModuleInfo<'src>,
     // Generated fields:
     // Fields that calculated from other fields, and should be updated after any change.
     pub input_function_output_id: HashMap<InputFuncId, usize>,
     pub input_data_to_output_id: HashMap<DataId, (DataSegmentId, OutputSymbolDataId)>,
-    pub indirect_function_table_range: Range<usize>,
+    // Indirect function table Functions from original table that are used in this module.
+    pub indirect_functions: IndirectFunctionEmitInfo,
 }
 
+const MEMORY_INDEX: u32 = 0; //TODO: Support multiple memories
 impl<'any, 'src> ModuleEmitState<'any, 'src> {
     pub fn produce_state(
         module_info: &'any analysis::ModuleInfo<'src>,
@@ -168,14 +189,24 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             }
             used_funcs.insert(func_id);
             if let Some(import_id) = module_info.get_function_import_id(func_id) {
+                let import_fn = module_info.source.imports[import_id];
                 import_functions.push(ImportedFunction {
                     input_func_id: func_id,
                     kind: ImportFunctionKind::Existing {
-                        module_name: module_info.source.imports[import_id].module,
+                        module_name: import_fn.module,
+                        import_function_name: import_fn.name,
                     },
                 });
             } else {
-                funcs_to_define.insert((func_id, false));
+                let need_export = program_info
+                    .output_modules
+                    .iter()
+                    .any(|(_, output_module)| {
+                        output_module
+                            .link_symbols
+                            .contains(&DepNode::Function(func_id))
+                    });
+                funcs_to_define.insert((func_id, need_export));
             }
         }
 
@@ -191,6 +222,12 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         kind: ImportFunctionKind::New {
                             link_module: 0,
                             output_function_index: 0,
+                            mangled_function_name: module_info
+                                .source
+                                .names
+                                .functions
+                                .get(func_id)
+                                .expect("Function name should be defined"),
                         },
                     }),
             );
@@ -200,15 +237,23 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .source
             .globals
             .iter()
+            .filter(|(_id, global)| {
+                // Skip mutable globals in sub modules
+                // They are imported from main module.
+                main_module || !global.ty.mutable
+            })
             .map(|(_id, global)| Global::PlainCopy(global.clone()))
             .collect();
+
+        let num_main_module_imports = module_info.source.globals.len() - globals.len();
 
         let mut num_global_imports = module_info
             .source
             .imports
             .iter()
             .filter(|(_id, v)| matches!(v.ty, wasmparser::TypeRef::Global(_)))
-            .count();
+            .count()
+            + num_main_module_imports;
         let lib_base_id = num_global_imports as u32;
         let lib_base_import = if !main_module {
             num_global_imports += 1; // for lib_base_id
@@ -254,7 +299,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         if !main_module {
             for (store_type, val_type) in init_each_store_var() {
                 let global_id = globals.len() + num_global_imports;
-                global_tmp_store.insert(store_type, global_id);
+                global_tmp_store.insert(store_type, global_id as OutputGlobalId);
                 globals.push(Global::WithConstructor(GlobalConstructor::TempStore(
                     GlobalType {
                         val_type,
@@ -287,6 +332,46 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             }
             data_segment_outputs.push(out);
         }
+        // for (i, g) in globals.iter().enumerate() {
+        //     log::info!("Global {i}: {g:?}");
+        // }
+        // dbg!(&globals_map);
+        let global_getter = |id, entry: &_| {
+            let SymbolIndex::DataDefined(segment_id, data_id) =
+                module_info.source.linking.linking_symbols.original_indexes[id]
+            else {
+                bail!("Relocation {entry:?} does not refer to a valid data symbol");
+            };
+            Ok(globals_map
+                .get(&(segment_id, data_id))
+                .copied()
+                .map(GlobalVar::Extract)
+                .unwrap_or_default())
+        };
+        let mut data_relocations = IdMap::new();
+
+        for (segment_id, data_segment) in data_segments.iter() {
+            let range = data_segment.original_range.clone();
+            let data_relocs = Self::get_relocations_for_range(&emit_info.all_relocations, &range);
+            let data_relocs = data_segment.shift_relocation_entries(data_relocs);
+            log::trace!(
+                "Data segment {segment_id}: {data_segment:?} relocations: {data_relocs:#?}"
+            );
+            let segment_relocs = data_relocs
+                .into_iter()
+                .map(|entry| {
+                    modify::DataModifyEntry::from_relocation_entry(
+                        |id| global_getter(id, &entry),
+                        &entry,
+                        !main_module,
+                        data_segment.data_offset,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+
+            data_relocations.insert(segment_id, segment_relocs);
+        }
 
         let mut defined_functions: Vec<_> = funcs_to_define
             .iter()
@@ -301,22 +386,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let modification_list = func_relocs
                     .iter()
                     .map(|entry| {
-                        // TODO: Filter shared symbols - don't relocate them
-                        modify::ModifyEntry::from_relocation_entry(
-                            |id| {
-                                let SymbolIndex::DataDefined(segment_id, data_id) =
-                                    module_info.source.linking.linking_symbols.original_indexes[id]
-                                else {
-                                    bail!(
-                                        "Relocation {entry:?} does not refer to a valid data symbol"
-                                    );
-                                };
-                                Ok(globals_map
-                                    .get(&(segment_id, data_id))
-                                    .copied()
-                                    .map(GlobalVar::Extract)
-                                    .unwrap_or_default())
-                            },
+                        modify::CodeModifyEntry::from_relocation_entry(
+                            |id| global_getter(id, entry),
                             entry,
                             !main_module, // extract const only on sub modules
                             range.start,
@@ -381,21 +452,39 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             }
         }
 
-        let indirect_function_table_range =
-            emit_info.indirect_functions.table_range_for_output_module[output_module_index].clone();
+        let indirect_function_table = module_info
+            .indirect_function_list
+            .iter()
+            .filter(|indirect_func_id| input_function_output_id.contains_key(&indirect_func_id))
+            .copied()
+            .collect();
+        let indirect_functions = IndirectFunctionEmitInfo::new(indirect_function_table);
 
+        let start_fn = if let Some(lib_base) = &lib_base_import {
+            StartFnGen::new(
+                MEMORY_INDEX,
+                lib_base.global_id as OutputGlobalId,
+                data_relocations
+                    .iter()
+                    .flat_map(|(_, entries)| entries.iter()),
+            )
+            .ok()
+        } else {
+            None
+        };
         Self {
             import_functions,
             defined_functions,
             info: module_info,
             data: data_segment_outputs,
+            data_relocations,
             globals,
-            emit_info,
             input_function_output_id,
-            indirect_function_table_range,
             lib_base_import,
             global_tmp_store,
             input_data_to_output_id,
+            indirect_functions,
+            start_fn,
         }
     }
 
@@ -425,24 +514,24 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         self.generate_type_section(output_module)?;
         self.generate_import_section(output_module);
         self.generate_function_section(output_module);
+        self.generate_table_element_sections(output_module)?;
         if self.is_main() {
-            self.generate_table_element_sections(output_module)?;
             self.generate_memory_section(output_module);
         }
         self.generate_global_section(output_module)?;
         self.generate_export_section(output_module);
-        if self.is_main() {
-            self.generate_element_section(output_module)?;
-        }
+        self.generate_start_function_section(output_module)?;
+        self.generate_element_section(output_module)?;
+
         self.generate_code_section(main_module, output_module)?;
-        self.generate_data_section(output_module)?;
-        // self.generate_custom_sections(output_module)?;
+        self.generate_data_section(main_module, output_module)?;
 
         // self.generate_wasm_bindgen_sections(output_module);
         // Names + Linking + Relocations
         // self.generate_compiler_tools_sections(output_module)?;
         // self.generate_name_section(output_module)?;
-        // self.generate_target_features_section(output_module);
+        self.generate_target_features_section(output_module)?;
+        self.generate_custom_sections(output_module)?;
         Ok(())
     }
 
@@ -474,7 +563,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             let ty = wasm_encoder::EntityType::Function(
                 self.get_function_type(index).as_raw_index() as u32,
             );
-            let fn_name = self.get_function_name(index);
+            let fn_name = import_fn.function_name();
             let module_name = import_fn.module_name();
             section.import(&module_name, &fn_name, ty);
         }
@@ -530,6 +619,10 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             let defined_func_id = index - self.import_functions.len();
             self.defined_functions[defined_func_id].input_func_id
         }
+    }
+
+    fn _get_output_func_id(&self, input_func_id: InputFuncId) -> Option<OutputFuncId> {
+        self.input_function_output_id.get(&input_func_id).copied()
     }
 
     // Get type of output function by index.
@@ -600,7 +693,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     }
     fn get_indirect_function_table_type(&self) -> wasm_encoder::TableType {
         // + 1 due to empty entry at index 0
-        let indirect_table_size = self.emit_info.indirect_functions.table_entries.len() + 1;
+        let indirect_table_size = self.indirect_functions.table_entries.len() + 1;
         wasm_encoder::TableType {
             element_type: wasm_encoder::RefType::FUNCREF,
             minimum: indirect_table_size as u64,
@@ -616,10 +709,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         for (_id, export) in self.info.source.exports.iter() {
             let mut index = export.index;
             if export.kind == wasmparser::ExternalKind::Func {
-                let Some(&func_id) = self
-                    .input_function_output_id
-                    .get(&(InputFuncId::from_index(index)))
-                else {
+                let Some(func_id) = self._get_output_func_id(InputFuncId::from_index(index)) else {
                     continue;
                 };
                 index = func_id as u32;
@@ -664,11 +754,24 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         output_module.section(&section);
     }
 
+    fn find_void_type(&self) -> FuncTypeId {
+        for (fn_id, fn_type) in self.info.source.types.iter() {
+            if fn_type.params().is_empty() && fn_type.results().is_empty() {
+                return fn_id;
+            }
+        }
+
+        panic!("Void type not found in type section");
+    }
     fn generate_function_section(&self, output_module: &mut wasm_encoder::Module) {
         let mut section: wasm_encoder::FunctionSection = wasm_encoder::FunctionSection::new();
         for (index, _func) in self.defined_functions.iter().enumerate() {
             let func_type = self.get_function_type(index + self.import_functions.len());
             section.function(func_type.as_raw_index() as u32);
+        }
+        // add start function
+        if let Some(_start_fn) = &self.start_fn {
+            section.function(self.find_void_type().as_raw_index() as u32);
         }
 
         output_module.section(&section);
@@ -686,32 +789,22 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     }
 
     fn generate_element_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
-        let indirect_range = self.indirect_function_table_range.clone();
-        if indirect_range.is_empty() {
-            panic!("No indirect range");
-            return Ok(());
-        }
         let mut section = wasm_encoder::ElementSection::new();
-        let func_ids: Vec<u32> = indirect_range
-            .clone()
-            .map(|table_index| -> Result<u32> {
-                let input_func_id =
-                    self.emit_info.indirect_functions.table_entries[table_index - 1];
-                let output_func_id = *self
-                    .input_function_output_id
-                    .get(&input_func_id)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "No output function corresponding to input function {input_func_id:?}"
-                        )
-                    })?;
+        let func_ids: Vec<u32> = self
+            .indirect_functions
+            .table_entries
+            .iter()
+            .map(|input_func_id| -> Result<u32> {
+                let output_func_id = self._get_output_func_id(*input_func_id).ok_or_else(|| {
+                    anyhow!("No output function corresponding to input function {input_func_id:?}")
+                })?;
                 Ok(output_func_id as u32)
             })
             .collect::<Result<Vec<_>>>()?;
         section.segment(wasm_encoder::ElementSegment {
             mode: wasm_encoder::ElementMode::Active {
                 table: Some(0),
-                offset: &wasm_encoder::ConstExpr::i32_const(indirect_range.start as i32),
+                offset: &wasm_encoder::ConstExpr::i32_const(1 as i32),
             },
             elements: wasm_encoder::Elements::Functions(std::borrow::Cow::Borrowed(&func_ids)),
         });
@@ -753,6 +846,20 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         Ok(())
     }
 
+    fn generate_start_function_section(
+        &'any self,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<()> {
+        if self.start_fn.is_some() {
+            let start = wasm_encoder::StartSection {
+                function_index: self.defined_functions.len() as u32
+                    + self.import_functions.len() as u32,
+            };
+            output_module.section(&start);
+        }
+        Ok(())
+    }
+
     fn generate_code_section(
         &'any self,
         main_module: &'any ModuleEmitState<'any, 'src>,
@@ -776,134 +883,143 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             )?;
             section.raw(&result);
         }
+
+        if let Some(start_fn) = &self.start_fn {
+            section.function(&start_fn.generate_fn());
+        }
         output_module.section(&section);
+
         Ok(())
     }
-    fn generate_data_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
-        const MEMORY_INDEX: u32 = 0; //TODO: Support multiple memories
+    fn generate_data_section(
+        &'any self,
+        main_module: &'any ModuleEmitState<'any, 'src>,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<()> {
+        let num_new_global_imports = if self.lib_base_import.is_some() {
+            1 // for lib_base_id
+        } else {
+            0
+        };
         let mut section = wasm_encoder::DataSection::new();
 
-        for (_id, out) in self.data.iter() {
-            section.segment(out.data_segment(MEMORY_INDEX));
+        for (id, out) in self.data.iter() {
+            let mut data = out.data_segment(MEMORY_INDEX);
+            let relocs = self.data_relocations.get(id).unwrap();
+
+            for entry in relocs.iter() {
+                let state = modify::StartFnModifyContext {
+                    data_segment: &mut data.data,
+                    start_offset: 0,
+                    relocate: RelocateState {
+                        input_module: self.info.source,
+                        main_module: main_module,
+                        emit_module: self,
+                        global_id_mapper: Box::new(move |global_id: GlobalId| {
+                            Some(
+                                (global_id.as_raw_index() + num_new_global_imports)
+                                    as OutputGlobalId, // currently just increase global_id
+                            )
+                        }),
+                    },
+                };
+                state.apply_relocation(entry)?;
+            }
+            section.segment(data);
         }
 
         output_module.section(&section);
         Ok(())
     }
-
+    fn generate_target_features_section(
+        &self,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<()> {
+        let mut features = self.info.source.target_features.clone();
+        features.features.extended_const = true;
+        output_module.section(&features.encode_custom_section());
+        Ok(())
+    }
     // linking| names | wasm-bindgen
     // other whitelisted
     fn generate_custom_sections(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
-        todo!("Not supported")
-    }
-}
-
-fn is_indirect_function_reloc(ty: RelocationType) -> bool {
-    use RelocationType::*;
-    match ty {
-        TableIndexSleb | TableIndexI32 | TableIndexRelSleb | TableIndexSleb64 | TableIndexI64
-        | TableIndexRelSleb64 => true,
-        _ => false,
-    }
-}
-
-fn get_indirect_functions(module: &InputModule) -> Result<HashSet<InputFuncId>> {
-    let mut funcs = HashSet::new();
-
-    for relocs in [module.code.section_index, module.data.section_index]
-        .iter()
-        .filter_map(|section_index| module.relocs.relocs.get(*section_index))
-    {
-        for entry in relocs.entries.iter() {
-            if is_indirect_function_reloc(entry.ty) {
-                let sym_index =
-                    &module.linking.linking_symbols.original_indexes[entry.index as usize];
-                let SymbolIndex::Func(index) = sym_index else {
-                    bail!("Invalid symbol {sym_index:?} referenced by relocation {entry:?}");
-                };
-                funcs.insert(*index);
-            }
+        for custom in &self.info.source.custom_sections {
+            match &*custom.name {
+                "__wasm_bindgen_unstable" => {
+                    if !self.is_main() {
+                        continue; // print only on main module
+                    }
+                }
+                _ => {
+                    log::error!(
+                        "Skipping unsuported custom section during emit: {}",
+                        custom.name
+                    );
+                    continue;
+                }
+            };
+            let section = wasm_encoder::CustomSection {
+                name: (&*custom.name).into(),
+                data: (&*custom.data).into(),
+            };
+            output_module.section(&section);
         }
+        Ok(())
     }
-
-    Ok(funcs)
 }
 
 #[derive(Debug, Default)]
 pub struct IndirectFunctionEmitInfo {
     pub table_entries: Vec<InputFuncId>,
     pub function_table_index: HashMap<InputFuncId, usize>,
-    pub table_range_for_output_module: Vec<Range<usize>>,
 }
 
 impl IndirectFunctionEmitInfo {
-    fn new(module: &InputModule, program_info: &SplitProgramInfo) -> Result<Self> {
-        let mut indirect_functions = get_indirect_functions(module)?;
-
-        indirect_functions.extend(
-            program_info
-                .shared_nodes
-                .iter()
-                .filter_map(|dep| match dep {
-                    DepNode::Function(func_id) => Some(*func_id),
-                    _ => None,
-                }),
-        );
-
-        // Remove all split point imports. These are placeholders. Any
-        // references to these functions will be replaced by a reference to the
-        // corresponding `SplitPoint::export_func`.
-        for (_, output_module) in program_info.output_modules.iter() {
-            for split_point in output_module.split_points.iter() {
-                indirect_functions.remove(&split_point.import_func);
-            }
-        }
-
-        let mut table_entries: Vec<_> = indirect_functions.into_iter().collect();
-        table_entries.sort_by_key(|&func_id| {
-            (
-                program_info
-                    .symbol_output_module
-                    .get(&DepNode::Function(func_id)),
-                func_id,
-            )
-        });
+    fn new(table_entries: Vec<InputFuncId>) -> Self {
         let function_table_index: HashMap<_, _> = table_entries
             .iter()
             .enumerate()
             .map(|(i, func_id)| (*func_id, i + 1))
             .collect();
 
-        let mut table_range_for_output_module: Vec<Range<usize>> = program_info
-            .output_modules
-            .iter()
-            .map(|_| Range {
-                start: usize::MAX,
-                end: 0,
-            })
-            .collect();
-
-        for (&func, &table_index) in function_table_index.iter() {
-            if let Some(&output_module_index) = program_info
-                .symbol_output_module
-                .get(&DepNode::Function(func))
-            {
-                let range = &mut table_range_for_output_module[output_module_index];
-                range.start = range.start.min(table_index);
-                range.end = range.end.max(table_index + 1);
-            }
-        }
-
-        Ok(Self {
+        Self {
             table_entries,
             function_table_index,
-            table_range_for_output_module,
-        })
+        }
+    }
+
+    fn is_indirect_function_reloc(ty: RelocationType) -> bool {
+        use RelocationType::*;
+        match ty {
+            TableIndexSleb | TableIndexI32 | TableIndexRelSleb | TableIndexSleb64
+            | TableIndexI64 | TableIndexRelSleb64 => true,
+            _ => false,
+        }
+    }
+
+    fn get_indirect_functions(module: &InputModule) -> Result<HashSet<InputFuncId>> {
+        let mut funcs = HashSet::new();
+
+        for relocs in [module.code.section_index, module.data.section_index]
+            .iter()
+            .filter_map(|section_index| module.relocs.relocs.get(*section_index))
+        {
+            for entry in relocs.entries.iter() {
+                if Self::is_indirect_function_reloc(entry.ty) {
+                    let sym_index =
+                        &module.linking.linking_symbols.original_indexes[entry.index as usize];
+                    let SymbolIndex::Func(index) = sym_index else {
+                        bail!("Invalid symbol {sym_index:?} referenced by relocation {entry:?}");
+                    };
+                    funcs.insert(*index);
+                }
+            }
+        }
+        Ok(funcs)
     }
 }
 #[derive(Debug)]
 pub struct EmitInfo {
-    pub indirect_functions: IndirectFunctionEmitInfo,
     // All relocations, ordered by offset, which are relative to the start of
     // the file rather than the start of the section.
     pub all_relocations: Vec<RelocationEntry>,
@@ -914,7 +1030,6 @@ pub struct EmitInfo {
 
 impl EmitInfo {
     fn new(module: &InputModule<'_>, program_info: &SplitProgramInfo) -> Result<Self> {
-        let indirect_functions = IndirectFunctionEmitInfo::new(module, program_info)?;
         let mut all_relocations = Vec::<RelocationEntry>::new();
         for (section_index, section_offset) in [
             (module.code.section_index, module.code.starting_offset),
@@ -945,7 +1060,6 @@ impl EmitInfo {
             }
         }
         Ok(EmitInfo {
-            indirect_functions,
             all_relocations,
             split_point_imports,
         })
@@ -1067,7 +1181,7 @@ pub fn emit_modules<'a>(
         .map(|(output_module_index, _)| output_module_index)
         .expect("Main module not found");
 
-    for (output_module_index, _) in modules_ids_iter.clone() {
+    for (output_module_index, _) in modules_ids_iter {
         let state = &output_modules[output_module_index];
         let identifier = &program_info.output_modules[output_module_index].0;
         let mut encoder = wasm_encoder::Module::new();

@@ -8,20 +8,23 @@
 
 mod constant_extraction;
 mod relocation;
+mod start_fn_gen;
 
 use std::{collections::HashMap, ops::Range};
 
 use anyhow::{bail, Result};
-use wasmparser::{BinaryReader, FunctionBody, RelocationType};
+use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     emit::ModuleEmitState,
-    helpers::ShiftRange,
     index::{DefinedFuncId, GlobalId, InputFuncId, OutputGlobalId, SymbolId},
+    read::relocs::Relocation,
 };
 use constant_extraction::ConstantExtractionEntry;
 pub use constant_extraction::GlobalVar;
-use relocation::RelocateState;
+pub use relocation::RelocateState;
+pub use start_fn_gen::StartFnGen;
+pub use start_fn_gen::StartFnModifyContext;
 #[derive(Debug)]
 pub struct ModifyContext<'a> {
     pub function_name: &'a str,
@@ -35,7 +38,7 @@ impl<'a> ModifyContext<'a> {
         main_module: &'a ModuleEmitState<'a, 'src>,
         num_new_global_imports: usize,
         defined_function_id: DefinedFuncId,
-        entries: &[ModifyEntry],
+        entries: &[CodeModifyEntry],
     ) -> Result<Vec<u8>> {
         let (function_name, src_body) = {
             let func_id = InputFuncId::from_index(
@@ -60,6 +63,12 @@ impl<'a> ModifyContext<'a> {
         );
 
         log::trace!("start_body {:?}", src_body.as_bytes());
+        let mut entries_iter = entries.iter().peekable();
+        let Some(mut entry) = entries_iter.next() else {
+            // no modifications, just copy the original function body
+            log::trace!("no modifications, copying original function body");
+            return Ok(src_body.as_bytes().to_vec());
+        };
         // recreate binary reader to use function related offset rather than module related.
         let func_body = FunctionBody::new(BinaryReader::new(src_body.as_bytes(), 0));
         let mut locals = vec![];
@@ -93,13 +102,8 @@ impl<'a> ModifyContext<'a> {
         }
         let mut result = wasm_encoder::Function::new(locals).into_raw_body();
 
-        let mut entries_iter = entries.iter().peekable();
-        let Some(mut entry) = entries_iter.next() else {
-            // no modifications, just copy the original function body
-            log::trace!("no modifications, copying original function body");
-            result.extend_from_slice(func_body.as_bytes());
-            return Ok(result);
-        };
+        log::trace!("result: {:?}", result);
+
         let source = func_body.as_bytes();
 
         let mut other_relocations = vec![];
@@ -162,17 +166,7 @@ impl<'a> ModifyContext<'a> {
             //    → do your replacement here
 
             match entry {
-                ModifyEntry::Data(data) => match data.relocation_type {
-                    RelocationType::MemoryAddrLeb => {
-                        data.replace_memory_offset_with_global_get(ctx)?
-                    }
-                    RelocationType::MemoryAddrSleb => {
-                        data.replace_const_get_with_global_get(ctx)?
-                    }
-                    _ => {
-                        bail!("Unsupported relocation type")
-                    }
-                },
+                ModifyEntry::Custom(data) => data.try_apply(ctx)?,
                 ModifyEntry::Other(other) => {
                     log::trace!("skiping modify entry {other:?} ");
                     other_relocations.push(wasmparser::RelocationEntry {
@@ -211,16 +205,14 @@ impl<'a> ModifyContext<'a> {
 
         let reloc_info = RelocateState {
             input_module: &module_emit.info.source,
-            emit_info: &module_emit.emit_info,
             main_module: main_module,
-            input_function_output_id: &module_emit.input_function_output_id,
+            emit_module: module_emit,
             global_id_mapper: |global_id: GlobalId| {
                 Some(
-                    GlobalId::from_index(global_id.as_raw_index() + num_new_global_imports), // currently just increase global_id
+                    (global_id.as_raw_index() + num_new_global_imports) as OutputGlobalId, // currently just increase global_id
                 )
             },
         };
-
         // TODO: apply relocations
         for relocation in other_relocations {
             log::trace!(
@@ -237,7 +229,7 @@ impl<'a> ModifyContext<'a> {
         module_emit: &ModuleEmitState<'a, 'src>,
         num_new_global_imports: u32,
         defined_function_id: GlobalId,
-        entries: &[ModifyEntry],
+        entries: &[CodeModifyEntry],
     ) -> Result<Vec<u8>> {
         todo!()
         // let mut last_range = 0..0;
@@ -277,86 +269,64 @@ impl<'a> ModifyContext<'a> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModifyEntry<C> {
+    Custom(C),
+    Other(wasmparser::RelocationEntry),
+}
+
+pub type CodeModifyEntry = ModifyEntry<ConstantExtractionEntry>;
+pub type DataModifyEntry = ModifyEntry<start_fn_gen::DataEntry>;
+
+pub trait CustomModify {
+    type Context<'any, 'src>
+    where
+        'src: 'any;
+    fn try_from_entry(
+        global_getter: impl FnMut(SymbolId) -> Result<GlobalVar>,
+        entry: &wasmparser::RelocationEntry,
+        extract_const: bool,
+        start_offset: usize,
+    ) -> Result<Option<Self>>
+    where
+        Self: Sized;
+
+    fn range(&self) -> Range<usize>;
+
+    fn try_apply(&self, ctx: Self::Context<'_, '_>) -> Result<()>;
+}
+
+impl<C: CustomModify> ModifyEntry<C> {
+    pub fn from_relocation_entry(
+        global_getter: impl Fn(SymbolId) -> Result<GlobalVar>,
+        entry: &wasmparser::RelocationEntry,
+        extract_const: bool,
+        start_offset: usize,
+    ) -> Result<Self> {
+        C::try_from_entry(global_getter, entry, extract_const, start_offset).map(|opt| match opt {
+            Some(custom_entry) => ModifyEntry::Custom(custom_entry),
+            None => ModifyEntry::Other(wasmparser::RelocationEntry {
+                ty: entry.ty,
+                index: entry.index,
+                addend: entry.addend,
+                offset: entry.offset.checked_sub(start_offset as u32).unwrap(),
+            }),
+        })
+    }
+    fn range(&self) -> Range<usize> {
+        match self {
+            ModifyEntry::Custom(data) => data.range(),
+            ModifyEntry::Other(other) => other.relocation_range(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub enum StoreType {
     I32Store,
     I64Store,
     F32Store,
     F64Store,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModifyEntry {
-    Data(ConstantExtractionEntry),
-    Other(wasmparser::RelocationEntry),
-}
-
-impl ModifyEntry {
-    pub fn from_relocation_entry(
-        mut global_getter: impl FnMut(SymbolId) -> Result<GlobalVar>,
-        entry: &wasmparser::RelocationEntry,
-        extract_const: bool,
-        start_offset: usize,
-    ) -> Result<ModifyEntry> {
-        Ok(match entry.ty {
-            RelocationType::MemoryAddrLeb64
-            | RelocationType::MemoryAddrSleb64
-            | RelocationType::MemoryAddrI64
-            | RelocationType::MemoryAddrRelSleb64
-            | RelocationType::MemoryAddrTlsSleb64
-            | RelocationType::TableIndexSleb64
-            | RelocationType::TableIndexI64
-            | RelocationType::FunctionOffsetI64
-            | RelocationType::TableIndexRelSleb64 => {
-                bail!("U64 memory pointers is currently not supported")
-            }
-            RelocationType::MemoryAddrTlsSleb
-            | RelocationType::MemoryAddrRelSleb
-            | RelocationType::MemoryAddrLocrelI32 => {
-                bail!("Relocation memory pointers is currently not supported")
-            }
-
-            RelocationType::MemoryAddrLeb
-            | RelocationType::MemoryAddrSleb
-            | RelocationType::MemoryAddrI32
-                if extract_const =>
-            {
-                ModifyEntry::Data(ConstantExtractionEntry {
-                    relocation_type: entry.ty,
-                    global_index: global_getter(entry.index as SymbolId)?,
-                    addend: entry.addend,
-                    range: entry.relocation_range().shift_left(start_offset),
-                })
-            }
-            // memory relocations while extract_const = false
-            RelocationType::MemoryAddrLeb
-            | RelocationType::MemoryAddrSleb
-            | RelocationType::MemoryAddrI32
-            // or any other relocations
-            | RelocationType::EventIndexLeb
-            | RelocationType::TypeIndexLeb
-            | RelocationType::TableIndexSleb
-            | RelocationType::TableIndexI32
-            | RelocationType::TableNumberLeb
-            | RelocationType::FunctionIndexLeb
-            | RelocationType::FunctionIndexI32
-            | RelocationType::FunctionOffsetI32
-            | RelocationType::TableIndexRelSleb
-            | RelocationType::GlobalIndexLeb
-            | RelocationType::GlobalIndexI32
-            | RelocationType::SectionOffsetI32 => ModifyEntry::Other(wasmparser::RelocationEntry {
-                ty: entry.ty,
-                index: entry.index,
-                addend: entry.addend,
-                offset: entry.offset - start_offset as u32,
-            }),
-        })
-    }
-    fn range(&self) -> Range<usize> {
-        match self {
-            ModifyEntry::Data(data) => data.range.clone(),
-            ModifyEntry::Other(other) => other.relocation_range(),
-        }
-    }
 }
 
 pub fn init_each_store_var() -> Vec<(StoreType, wasm_encoder::ValType)> {

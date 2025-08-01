@@ -1,26 +1,26 @@
 pub mod encode;
-use std::collections::HashMap;
 
 use anyhow::{anyhow, bail, Result};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    emit::{EmitInfo, ModuleEmitState},
-    index::{DataSegmentId, DataSymbolId, GlobalId, InputFuncId},
+    emit::ModuleEmitState,
+    helpers::ShiftRange,
+    index::{DataSegmentId, DataSymbolId, GlobalId, InputFuncId, OutputGlobalId},
     read::{linking::SymbolIndex, InputModule},
 };
 
+#[derive(Clone)]
 pub struct RelocateState<'any, 'src, F> {
     pub input_module: &'any InputModule<'src>,
-    pub emit_info: &'any EmitInfo,
     pub main_module: &'any ModuleEmitState<'any, 'src>,
     pub global_id_mapper: F,
-    pub input_function_output_id: &'any HashMap<InputFuncId, usize>,
+    pub emit_module: &'any ModuleEmitState<'any, 'src>,
 }
 
 impl<F> RelocateState<'_, '_, F>
 where
-    F: Fn(GlobalId) -> Option<GlobalId>,
+    F: Fn(GlobalId) -> Option<OutputGlobalId>,
 {
     fn _get_relocation_input_function_index(
         &self,
@@ -40,7 +40,11 @@ where
 
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
         let input_func_id = self._get_relocation_input_function_index(relocation)?;
-        let Some(&output_func_id) = self.input_function_output_id.get(&input_func_id) else {
+        let Some(&output_func_id) = self
+            .emit_module
+            .input_function_output_id
+            .get(&input_func_id)
+        else {
             bail!(
                 "Dependency analysis error: \
                  No output function for input function {input_func_id} \
@@ -54,7 +58,7 @@ where
         let input_func_id = self._get_relocation_input_function_index(relocation)?;
 
         let Some(&table_index) = self
-            .emit_info
+            .emit_module
             .indirect_functions
             .function_table_index
             .get(&input_func_id)
@@ -105,7 +109,7 @@ where
         Ok(data.data_offset as usize)
     }
 
-    fn get_global_id(&self, relocation: &RelocationEntry) -> Result<usize> {
+    fn get_global_id(&self, relocation: &RelocationEntry) -> Result<OutputGlobalId> {
         let Some(SymbolIndex::Global(original_global_id)) = self
             .input_module
             .linking
@@ -121,7 +125,7 @@ where
                     "Dependency analysis error: No output global for input global {original_global_id} referenced by relocation {relocation:?}"
                 )
             })?;
-        Ok(global_id.as_raw_index())
+        Ok(global_id)
     }
 
     pub fn apply_relocation(
@@ -130,9 +134,8 @@ where
         data_offset: usize,
         relocation: &RelocationEntry,
     ) -> Result<()> {
-        let relocation_range = relocation.relocation_range();
-        let target =
-            &mut data[(relocation_range.start - data_offset)..(relocation_range.end - data_offset)];
+        let relocation_range = relocation.relocation_range().shift_right(data_offset);
+        let target = &mut data[relocation_range];
         use encode::*;
         use wasmparser::RelocationType::*;
         match relocation.ty {
@@ -148,24 +151,32 @@ where
                     target.try_into().unwrap(),
                 );
             }
+            TypeIndexLeb => {
+                // we keep types from input module, so we can ignore this relocation for now
+                // TODO: Implement relocation.
+            }
+            TableNumberLeb => {
+                // Table number also is only 1 <indirect function table>
+            }
             TableIndexI32 => {
                 encode_u32(
                     self.get_relocated_function_table_index(relocation)? as u32,
                     target.try_into().unwrap(),
                 );
             }
-            TableIndexSleb64 => {
-                encode_leb128_i64_10byte(
-                    self.get_relocated_function_table_index(relocation)? as i64,
-                    target.try_into().unwrap(),
-                );
-            }
-            TableIndexI64 => {
-                encode_u64(
-                    self.get_relocated_function_table_index(relocation)? as u64,
-                    target.try_into().unwrap(),
-                );
-            }
+            // 64-bit wasm disabled for now
+            // TableIndexSleb64 => {
+            //     encode_leb128_i64_10byte(
+            //         self.get_relocated_function_table_index(relocation)? as i64,
+            //         target.try_into().unwrap(),
+            //     );
+            // }
+            // TableIndexI64 => {
+            //     encode_u64(
+            //         self.get_relocated_function_table_index(relocation)? as u64,
+            //         target.try_into().unwrap(),
+            //     );
+            // }
             FunctionIndexI32 => {
                 encode_u32(
                     self.get_relocated_function_index(relocation)? as u32,
@@ -196,11 +207,10 @@ where
                     target.try_into().unwrap(),
                 );
             }
-            FunctionOffsetI32 | SectionOffsetI32 | TableIndexRelSleb | FunctionOffsetI64
-            | TableIndexRelSleb64 => {
-                bail!("Unsupported relocation type {relocation:?}");
+
+            _ => {
+                panic!("Unsupported relocation type {relocation:?}");
             }
-            _ => {}
         }
 
         Ok(())

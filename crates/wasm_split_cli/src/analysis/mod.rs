@@ -7,14 +7,14 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Range;
 
-use anyhow::{anyhow, bail, Context, Result};
-use wasmparser::{Data, TypeRef};
+use anyhow::{anyhow, bail, ensure, Context, Result};
+use wasmparser::{Data, ElementItems, ElementKind, TypeRef};
 
 use crate::read::{self, linking::section::DataInSegment};
 
 use crate::index::{
-    DataSegmentId, DataSymbolId, DefinedFuncId, ExportId, IdMap, IdVec, ImportId, InputFuncId,
-    SymbolId,
+    DataSegmentId, DataSymbolId, DefinedFuncId, ElementId, ExportId, IdMap, IdVec, ImportId,
+    InputFuncId, SymbolId, TableId,
 };
 
 mod debug;
@@ -50,6 +50,9 @@ pub struct ModuleInfo<'a> {
 
     pub source: &'a read::InputModule<'a>,
     pub export_map: HashMap<(isize, SymbolId), (ExportId, &'a str)>,
+
+    pub indirect_function_table_id: (TableId, ElementId),
+    pub indirect_function_list: Vec<InputFuncId>,
 }
 
 impl<'a> ModuleInfo<'a> {
@@ -86,12 +89,86 @@ impl<'a> ModuleInfo<'a> {
                 )
             })
             .collect();
+
+        let (_table_name, table_id) = module
+            .tables
+            .iter()
+            .filter_map(|(id, _)| module.names.tables.get(id).map(|name| (*name, id)))
+            .find(|(name, _)| *name == "__indirect_function_table")
+            .unwrap_or_else(|| {
+                assert!(
+                    module.tables.len() == 1,
+                    "No named __indirect_function_table was found, and there is not one table in the module."
+                );
+                (
+                    "__indirect_function_table",
+                    module.tables.iter().next().unwrap().0,
+                )
+            });
+
+        let mut indirect_element = None;
+        for (id, element) in module.elements.iter() {
+            let ElementKind::Active {
+                table_index,
+                offset_expr,
+            } = &element.kind
+            else {
+                continue;
+            };
+
+            if !table_index.is_none()  // None for first index.
+               && table_index.unwrap() == table_id.as_raw_index() as u32
+            {
+                continue;
+            }
+
+            let offset = Self::read_const_expr(offset_expr)
+                .with_context(|| format!("Failed to read offset expression for element {id:?}"))?;
+
+            ensure!(
+                offset == 1,
+                "Element segment {id:?} should be inited with 1 offset, but got {offset}, which is not supported"
+            );
+
+            let ElementItems::Functions(functions) = &element.items else {
+                bail!("Only function elements are supported, but got constant instead");
+            };
+
+            let mut function_list = Vec::with_capacity(functions.count() as usize);
+            for function_id in functions.clone().into_iter() {
+                let raw_function_id = function_id
+                    .with_context(|| format!("Failed to read function ID from element {id:?}"))?
+                    as u32;
+                function_list.push(InputFuncId::from_index(raw_function_id));
+            }
+            indirect_element = Some((id, function_list));
+            break;
+        }
+        let (indirect_element_id, indirect_function_list) = indirect_element
+            .ok_or_else(|| anyhow!("No element segment with __indirect_function_table found"))?;
+
         Ok(ModuleInfo {
             import_funcs_info,
             data_symbols,
             source: module,
             export_map,
+            indirect_function_list,
+            indirect_function_table_id: (table_id, indirect_element_id),
         })
+    }
+
+    fn read_const_expr(offset_expr: &wasmparser::ConstExpr<'a>) -> Result<i32> {
+        let mut reader = offset_expr.get_operators_reader();
+
+        let val = match reader.read()? {
+            wasmparser::Operator::I32Const { value } => Ok(value),
+            op => bail!("Expected only I32.const operator, found: {:?}", op),
+        };
+        match reader.read()? {
+            wasmparser::Operator::End => {}
+            op => bail!("Expected End after I32.const: {:?}", op),
+        }
+        return val;
     }
 
     pub fn is_imported_function(&self, func_id: InputFuncId) -> bool {

@@ -17,7 +17,7 @@ pub type SymbolId = usize;
 pub type SectionId = usize;
 pub type OutputFuncId = usize;
 pub type OutputSymbolDataId = usize;
-pub type OutputGlobalId = usize;
+pub type OutputGlobalId = u32;
 
 pub type FuncTypeId = Id<FuncType>;
 pub type InputFuncId = Id<InputFunction<'static>>;
@@ -177,6 +177,9 @@ impl<T, Idx> IdVec<T, Id<Idx>> {
     pub fn as_slice(&self) -> &[T] {
         &self.types
     }
+    pub fn len(&self) -> usize {
+        self.types.len()
+    }
     pub fn is_empty(&self) -> bool {
         self.types.is_empty()
     }
@@ -282,7 +285,7 @@ impl<Type> std::fmt::Display for Id<Type> {
         write!(f, "{}", self.id)
     }
 }
-macro_rules! impl_as_static_type {
+macro_rules! impl_indexed_type {
     (@lf $($ty:ident),*) => {
         $(
             impl<'a> Indexed for $ty<'a> {
@@ -299,6 +302,21 @@ macro_rules! impl_as_static_type {
     };
 }
 
-impl_as_static_type!(@lf InputFunction, FunctionWithBody, Import, Export, Table, Global, Element, Data, DataInSegment);
+impl_indexed_type!(@lf InputFunction, FunctionWithBody, Import, Export, Table, Global, Element, Data, DataInSegment);
 
-impl_as_static_type!(MemoryType, FuncType, TagType);
+impl_indexed_type!(MemoryType, FuncType, TagType);
+
+// TODO: replace with macro_metavar_expr_concat
+// Currently need explicitly define private type for each index
+macro_rules! impl_standalone_index {
+    ( $($ty:ident($priv:ident)),* ) => {
+        $(
+            enum $priv {}
+            type $ty = Id<$priv>;
+        )*
+    };
+}
+
+impl_standalone_index! {
+    Foo(_Foo)
+}

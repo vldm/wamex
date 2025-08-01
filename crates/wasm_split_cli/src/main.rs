@@ -40,7 +40,7 @@ struct Cli {
 
 fn main() -> Result<()> {
     let _ = env_logger::Builder::new()
-        .parse_filters("debug")
+        .parse_filters("info")
         .parse_default_env()
         .init();
     let args = Cli::parse();
@@ -52,11 +52,11 @@ fn main() -> Result<()> {
     log::info!("dep_graph={dep_graph:?}");
     let split_points = analysis::split_point::find_split_points(&module, &info)?;
 
-    log::info!("split_points={split_points:?}");
+    log::debug!("split_points={split_points:?}");
     let split_program_info =
         SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
 
-    log::info!("split_program_info={split_program_info:?}");
+    log::debug!("split_program_info={split_program_info:?}");
     if args.verbose {
         for (name, split_deps) in split_program_info.output_modules.iter() {
             split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
