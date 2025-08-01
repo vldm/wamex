@@ -78,7 +78,10 @@ impl<'a> CustomSectionReader<'a> for Names<'a> {
 
 fn convert_name_map<'a, T>(
     name_map: wasmparser::NameMap<'a>,
-) -> Result<IdMap<crate::index::Id<T>, &'a str>> {
+) -> Result<IdMap<crate::index::Id<T>, &'a str>>
+where
+    crate::index::Id<T>: 'static,
+{
     name_map
         .into_iter()
         .map(|r| {

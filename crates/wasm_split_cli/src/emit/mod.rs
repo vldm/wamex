@@ -1,21 +1,19 @@
-use core::num;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::identity;
 use std::ops::Range;
 
 use anyhow::{anyhow, bail, Context, Result};
 use globals::GlobalConstructor;
-use nom::lib;
 use wasm_encoder::GlobalType;
-use wasmparser::{RefType, RelocationEntry, RelocationType, Table, TypeRef};
+use wasmparser::{RelocationEntry, RelocationType, TypeRef};
 
 use crate::analysis;
 use crate::analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier};
 use crate::emit::modify::{RelocateState, StartFnGen};
 use crate::helpers::iter_if;
 use crate::index::{
-    DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, MemoryId, OutputFuncId,
-    OutputGlobalId, OutputSymbolDataId, TableId,
+    DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, Indexed, MemoryId, OutputGlobalId,
+    OutputSymbolDataId, WithOriginalIndex,
 };
 use crate::read::linking::SymbolIndex;
 use modify::{init_each_store_var, ModifyContext, StoreType};
@@ -27,11 +25,13 @@ use crate::{
     read::InputModule,
 };
 pub use data_segments::{DataSegment, DataSegmentOutput};
+use index_safety::OutputFuncId;
 use modify::GlobalVar;
 
 mod data_segments;
 mod globals;
 
+mod index_safety;
 mod modify;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,9 +118,7 @@ impl PartialOrd for DefinedFunction {
 
 // 'any are used because associated types are invariant, and used in default impls for Indexed Vec/Map impls.
 pub struct ModuleEmitState<'any, 'src> {
-    // Function section
-    import_functions: Vec<ImportedFunction<'src>>,
-    defined_functions: Vec<DefinedFunction>,
+    functions: WithOriginalIndex<'src, DefinedFunction>,
     // Global variables:
     // - lib_base_id for library base address (import)
     // - existing globals from src module
@@ -141,7 +139,6 @@ pub struct ModuleEmitState<'any, 'src> {
     pub info: &'any analysis::ModuleInfo<'src>,
     // Generated fields:
     // Fields that calculated from other fields, and should be updated after any change.
-    pub input_function_output_id: HashMap<InputFuncId, usize>,
     pub input_data_to_output_id: HashMap<DataId, (DataSegmentId, OutputSymbolDataId)>,
     // Indirect function table Functions from original table that are used in this module.
     pub indirect_functions: IndirectFunctionEmitInfo,
@@ -409,20 +406,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         log::trace!("import_functions: {:#?}", import_functions);
         log::trace!("defined_functions: {:#?}", defined_functions);
-        let mut input_function_output_id: HashMap<_, _> = {
-            let import_fns = import_functions
-                .iter()
-                .map(|import_func| import_func.input_func_id());
-            let defined_fns = defined_functions
-                .iter()
-                .map(|DefinedFunction { input_func_id, .. }| *input_func_id);
-
-            import_fns
-                .chain(defined_fns)
-                .enumerate()
-                .map(|(output_func_id, input_func_id)| (input_func_id, output_func_id))
-                .collect()
-        };
 
         let input_data_to_output_id: HashMap<DataId, (DataSegmentId, usize)> = data_segment_outputs
             .iter()
@@ -439,24 +422,12 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     })
             })
             .collect();
-        // Map references to `import_func` to `export_func`.
-        for (_, output_module) in program_info.output_modules.iter() {
-            for split_point in output_module.split_points.iter() {
-                if let Some(&output_func_id) =
-                    input_function_output_id.get(&split_point.export_func)
-                {
-                    log::trace!("Mapping split point {split_point:?} -> {output_func_id}");
-                    input_function_output_id.insert(split_point.import_func, output_func_id);
-                } else {
-                    log::trace!("Split point {split_point:?} export function not found");
-                }
-            }
-        }
 
+        let funcs = crate::index::ImportsOrDefined::new(import_functions, defined_functions).lock();
         let indirect_function_table = module_info
             .indirect_function_list
             .iter()
-            .filter(|indirect_func_id| input_function_output_id.contains_key(&indirect_func_id))
+            .filter(|indirect_func_id| funcs.get_output_id(**indirect_func_id).is_some())
             .copied()
             .collect();
         let indirect_functions = IndirectFunctionEmitInfo::new(indirect_function_table);
@@ -473,19 +444,18 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         } else {
             None
         };
+
         Self {
-            import_functions,
-            defined_functions,
             info: module_info,
             data: data_segment_outputs,
             data_relocations,
             globals,
-            input_function_output_id,
             lib_base_import,
             global_tmp_store,
             input_data_to_output_id,
             indirect_functions,
             start_fn,
+            functions: funcs,
         }
     }
 
@@ -560,7 +530,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let mut section = wasm_encoder::ImportSection::new();
 
-        for (index, import_fn) in self.import_functions.iter().enumerate() {
+        for (index, import_fn) in self.functions.imports() {
             let ty = wasm_encoder::EntityType::Function(
                 self.get_function_type(index).as_raw_index() as u32,
             );
@@ -614,16 +584,13 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     }
 
     fn _get_input_func_id(&self, index: OutputFuncId) -> InputFuncId {
-        if index < self.import_functions.len() {
-            self.import_functions[index].input_func_id()
-        } else {
-            let defined_func_id = index - self.import_functions.len();
-            self.defined_functions[defined_func_id].input_func_id
-        }
+        self.functions
+            .get_input_id(index)
+            .expect("Output function index should be valid")
     }
 
     fn _get_output_func_id(&self, input_func_id: InputFuncId) -> Option<OutputFuncId> {
-        self.input_function_output_id.get(&input_func_id).copied()
+        self.functions.get_output_id(input_func_id)
     }
 
     // Get type of output function by index.
@@ -713,17 +680,16 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let Some(func_id) = self._get_output_func_id(InputFuncId::from_index(index)) else {
                     continue;
                 };
-                index = func_id as u32;
+                index = func_id.as_raw_index() as u32;
             }
             section.export(export.name, export.kind.try_into().unwrap(), index);
             existing_exports.insert(export.name);
         }
 
-        for (func_id, func) in self.defined_functions.iter().enumerate() {
+        for (func_id, func) in self.functions.defined() {
             if !func.export {
                 continue;
             }
-            let func_id = func_id + self.import_functions.len();
             let name = self.get_function_name(func_id);
             if existing_exports.contains(name.as_str()) {
                 continue;
@@ -731,7 +697,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             section.export(
                 name.as_str(),
                 wasm_encoder::ExportKind::Func,
-                func_id as u32,
+                func_id.as_raw_index() as u32,
             );
         }
 
@@ -766,8 +732,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     }
     fn generate_function_section(&self, output_module: &mut wasm_encoder::Module) {
         let mut section: wasm_encoder::FunctionSection = wasm_encoder::FunctionSection::new();
-        for (index, _func) in self.defined_functions.iter().enumerate() {
-            let func_type = self.get_function_type(index + self.import_functions.len());
+        for (index, _func) in self.functions.defined() {
+            let func_type = self.get_function_type(index);
             section.function(func_type.as_raw_index() as u32);
         }
         // add start function
@@ -799,7 +765,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let output_func_id = self._get_output_func_id(*input_func_id).ok_or_else(|| {
                     anyhow!("No output function corresponding to input function {input_func_id:?}")
                 })?;
-                Ok(output_func_id as u32)
+                Ok(output_func_id.as_raw_index() as u32)
             })
             .collect::<Result<Vec<_>>>()?;
         section.segment(wasm_encoder::ElementSegment {
@@ -853,8 +819,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     ) -> Result<()> {
         if self.start_fn.is_some() {
             let start = wasm_encoder::StartSection {
-                function_index: self.defined_functions.len() as u32
-                    + self.import_functions.len() as u32,
+                function_index: self.functions.len() as u32,
             };
             output_module.section(&start);
         }
@@ -867,7 +832,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         output_module: &mut wasm_encoder::Module,
     ) -> Result<()> {
         let mut section = wasm_encoder::CodeSection::new();
-        for output_func in self.defined_functions.iter() {
+        for (_id, output_func) in self.functions.defined() {
             let defined_id = self
                 .info
                 .as_defined_function_id(output_func.input_func_id)

@@ -267,9 +267,11 @@ impl DataSegmentOutput {
 }
 
 impl<'a> Indexed for crate::emit::DataSegment<'a> {
-    type StaticIndexType = Data<'static>;
+    type StaticTypeTagForIndex = Data<'static>;
+    type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
 }
 
 impl Indexed for crate::emit::DataSegmentOutput {
-    type StaticIndexType = Data<'static>;
+    type StaticTypeTagForIndex = Data<'static>;
+    type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
 }

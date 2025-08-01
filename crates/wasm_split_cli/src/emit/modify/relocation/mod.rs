@@ -39,18 +39,14 @@ where
 
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
         let input_func_id = self._get_relocation_input_function_index(relocation)?;
-        let Some(&output_func_id) = self
-            .emit_module
-            .input_function_output_id
-            .get(&input_func_id)
-        else {
+        let Some(output_func_id) = self.emit_module.functions.get_output_id(input_func_id) else {
             bail!(
                 "Dependency analysis error: \
                  No output function for input function {input_func_id} \
                  referenced by relocation {relocation:?}"
             );
         };
-        Ok(output_func_id)
+        Ok(output_func_id.as_raw_index() as usize)
     }
 
     fn get_relocated_function_table_index(&self, relocation: &RelocationEntry) -> Result<usize> {

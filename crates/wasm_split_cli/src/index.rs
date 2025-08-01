@@ -35,12 +35,12 @@ pub type TagId = Id<TagType>;
 // TODO: Maybe replace Vecs with id_arena?
 // Currently the only difference is that we also use
 
-pub struct Id<Type> {
+pub struct Id<TypeTag> {
     id: usize,
-    _ty: PhantomData<fn() -> Type>,
+    _ty: PhantomData<fn() -> TypeTag>,
 }
 // TODO: Remove this functions later
-impl<Type> Id<Type> {
+impl<TypeTag> Id<TypeTag> {
     pub fn from_index<T>(id: T) -> Self
     where
         T: TryInto<usize>,
@@ -62,19 +62,24 @@ impl<Type> Id<Type> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IdMap<Idx: 'static, Res> {
+pub struct IdMap<Idx, Res> {
     vecmap: VecMap<Res>,
     _res: PhantomData<Idx>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IdVec<Type, Idx = Id<<Type as Indexed>::StaticIndexType>> {
+pub struct IdVec<
+    Type,
+    // Allow customization of index type, in case where you have sub-collection for some data Type
+    Idx = <Type as Indexed>::IndexType,
+> {
     types: Vec<Type>,
     _idx: PhantomData<Idx>,
 }
 
 pub trait Indexed {
-    type StaticIndexType;
+    type StaticTypeTagForIndex: 'static;
+    type IndexType: 'static;
 }
 
 /// Store additional information about section, to apply relocation
@@ -129,10 +134,7 @@ impl<Type, Idx> FromIterator<Type> for IdVec<Type, Idx> {
         }
     }
 }
-impl<Type, Res> FromIterator<(Id<Type>, Res)> for IdMap<Id<Type>, Res>
-where
-    Type: 'static,
-{
+impl<Type, Res> FromIterator<(Id<Type>, Res)> for IdMap<Id<Type>, Res> {
     fn from_iter<T: IntoIterator<Item = (Id<Type>, Res)>>(iter: T) -> Self {
         let vecmap = VecMap::from_iter(iter.into_iter().map(|(id, res)| (id.id, res)));
         IdMap {
@@ -222,10 +224,10 @@ impl<T: Indexed> Index<Id<T>> for IdVec<T> {
         &self.types[id.id]
     }
 }
-impl<T: Indexed, Res> Index<Id<T::StaticIndexType>> for IdMap<Id<T>, Res> {
+impl<T: Indexed, Res> Index<Id<T::StaticTypeTagForIndex>> for IdMap<Id<T>, Res> {
     type Output = Res;
 
-    fn index(&self, id: Id<T::StaticIndexType>) -> &Self::Output {
+    fn index(&self, id: Id<T::StaticTypeTagForIndex>) -> &Self::Output {
         self.vecmap.index(id.id)
     }
 }
@@ -289,14 +291,16 @@ macro_rules! impl_indexed_type {
     (@lf $($ty:ident),*) => {
         $(
             impl<'a> Indexed for $ty<'a> {
-                type StaticIndexType = $ty<'static>;
+                type StaticTypeTagForIndex = $ty<'static>;
+                type IndexType = Id<$ty<'static>>;
             }
         )*
     };
     ($($ty:ident),*) => {
         $(
             impl Indexed for $ty {
-                type StaticIndexType = $ty;
+                type StaticTypeTagForIndex = $ty;
+                type IndexType = Id<$ty>;
             }
         )*
     };
@@ -319,4 +323,125 @@ macro_rules! impl_standalone_index {
 
 impl_standalone_index! {
     Foo(_Foo)
+}
+
+// Type that maybe defined or imported.
+// In WASM a lot of objects can be either defined or imported,
+// and all imports are stored before defined, so index for defined is always shifted by imports count.
+// Currently Defined or Import can be: function, global, table, memory, ..etc.
+pub trait Defined<'src>: Indexed {
+    type Import;
+}
+
+pub trait OutputType<'src> {
+    type InputType: Indexed + 'src;
+    // to use InputType::IndexType we need rtn
+    fn get_input_index(&self) -> Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>;
+}
+
+/// One place for storing imports and defined items,
+/// so we can use
+pub struct ImportsOrDefined<'src, D: Defined<'src>> {
+    pub imports: Vec<D::Import>,
+    pub defined: Vec<D>,
+}
+
+impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
+    pub fn new(imports: Vec<D::Import>, defined: Vec<D>) -> Self {
+        Self { imports, defined }
+    }
+    pub fn imports(&self) -> &[D::Import] {
+        &self.imports
+    }
+    pub fn defined(&self) -> &[D] {
+        &self.defined
+    }
+
+    /// After locking, no modification is allowed.
+    #[allow(private_bounds)]
+    pub fn lock(self) -> WithOriginalIndex<'src, D>
+    where
+        D: OutputType<'src>,
+        D::Import: OutputType<'src, InputType = D::InputType>,
+    {
+        WithOriginalIndex::new(self)
+    }
+}
+
+/// After building this collection, no modification is allowed.
+pub struct WithOriginalIndex<'src, T>
+where
+    T: OutputType<'src> + Defined<'src>,
+{
+    collection: ImportsOrDefined<'src, T>,
+    map: IdMap<
+        Id<<T::InputType as Indexed>::StaticTypeTagForIndex>,
+        Id<<T as Indexed>::StaticTypeTagForIndex>,
+    >,
+}
+
+#[allow(private_bounds)]
+impl<'src, T> WithOriginalIndex<'src, T>
+where
+    T: OutputType<'src> + Defined<'src>,
+    T::Import: OutputType<'src, InputType = T::InputType>,
+{
+    pub fn new(collection: ImportsOrDefined<'src, T>) -> Self {
+        let imports = collection.imports().iter().map(OutputType::get_input_index);
+        let defined = collection.defined().iter().map(OutputType::get_input_index);
+        let map = imports
+            .chain(defined)
+            .enumerate()
+            .map(|(i, input_id)| (input_id, Id::from_index(i)))
+            .collect();
+        WithOriginalIndex { collection, map }
+    }
+
+    pub fn get_output_id(
+        &self,
+        input_id: Id<<T::InputType as Indexed>::StaticTypeTagForIndex>,
+    ) -> Option<Id<<T as Indexed>::StaticTypeTagForIndex>> {
+        self.map.get(input_id).cloned()
+    }
+    pub fn get_input_id(
+        &self,
+        output_id: Id<<T as Indexed>::StaticTypeTagForIndex>,
+    ) -> Option<Id<<T::InputType as Indexed>::StaticTypeTagForIndex>> {
+        let raw_output_id = output_id.as_raw_index();
+        if raw_output_id < self.collection.imports().len() {
+            // If output_id is less than imports count, then it is import
+            self.collection
+                .imports()
+                .get(raw_output_id)
+                .map(OutputType::get_input_index)
+        } else {
+            // Otherwise it is defined
+            let defined_index = raw_output_id - self.collection.imports().len();
+            self.collection
+                .defined()
+                .get(defined_index)
+                .map(OutputType::get_input_index)
+        }
+    }
+
+    pub fn imports(
+        &self,
+    ) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T::Import)> {
+        self.collection
+            .imports()
+            .iter()
+            .enumerate()
+            .map(|(id, import)| (Id::from_index(id), import))
+    }
+    pub fn defined(&self) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T)> {
+        let num_imports = self.collection.imports().len();
+        self.collection
+            .defined()
+            .iter()
+            .enumerate()
+            .map(move |(id, defined)| (Id::from_index(id + num_imports), defined))
+    }
+    pub fn len(&self) -> usize {
+        self.collection.imports().len() + self.collection.defined().len()
+    }
 }
