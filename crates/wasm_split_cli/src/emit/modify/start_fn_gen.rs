@@ -5,16 +5,15 @@
 use std::ops::Range;
 
 use anyhow::{bail, Result};
-use wasm_encoder::{Encode, InstructionSink, MemArg};
+use wasm_encoder::{InstructionSink, MemArg};
 use wasmparser::RelocationType;
 
 use crate::{
-    analysis,
     emit::modify::{
         relocation::{self, encode},
         CustomModify, DataModifyEntry, GlobalVar, ModifyEntry,
     },
-    helpers::ShiftRange,
+    helpers::RangeExt,
     index::{GlobalId, InputFuncId, OutputGlobalId, SymbolId},
     read::linking::SymbolIndex,
 };
@@ -112,8 +111,8 @@ type RelocateState<'any, 'src> =
     relocation::RelocateState<'any, 'src, Box<dyn Fn(GlobalId) -> Option<OutputGlobalId>>>;
 
 pub struct StartFnModifyContext<'any, 'src> {
-    pub data_segment: &'any mut Vec<u8>,
-    pub start_offset: usize,
+    // Sink of buffer where data segment is already stored
+    pub data_segment: &'any mut [u8],
     pub relocate: RelocateState<'any, 'src>,
 }
 
@@ -152,7 +151,7 @@ impl CustomModify for DataEntry {
         }
     }
     fn try_apply(&self, ctx: Self::Context<'_, '_>) -> Result<()> {
-        let relocation_range = self.range().shift_right(ctx.start_offset);
+        let relocation_range = self.range();
         let target = &mut ctx.data_segment[relocation_range];
         match self {
             Self::DataOffsetCalculator { .. } => {
@@ -238,11 +237,8 @@ impl<'any> StartFnModifyContext<'any, '_> {
             DataModifyEntry::Custom(entry) => entry.try_apply(self)?,
             DataModifyEntry::Other(reloc_entry) => {
                 log::debug!("Applying relocation entry: {reloc_entry:?}");
-                self.relocate.apply_relocation(
-                    self.data_segment,
-                    self.start_offset,
-                    reloc_entry,
-                )?;
+                self.relocate
+                    .apply_relocation(self.data_segment, reloc_entry)?;
             }
         }
         Ok(())

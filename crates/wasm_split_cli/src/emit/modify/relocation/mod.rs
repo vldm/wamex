@@ -5,7 +5,6 @@ use wasmparser::RelocationEntry;
 
 use crate::{
     emit::ModuleEmitState,
-    helpers::ShiftRange,
     index::{DataSegmentId, DataSymbolId, GlobalId, InputFuncId, OutputGlobalId},
     read::{linking::SymbolIndex, InputModule},
 };
@@ -128,13 +127,8 @@ where
         Ok(global_id)
     }
 
-    pub fn apply_relocation(
-        &self,
-        data: &mut [u8],
-        data_offset: usize,
-        relocation: &RelocationEntry,
-    ) -> Result<()> {
-        let relocation_range = relocation.relocation_range().shift_right(data_offset);
+    pub fn apply_relocation(&self, data: &mut [u8], relocation: &RelocationEntry) -> Result<()> {
+        let relocation_range = relocation.relocation_range();
         let target = &mut data[relocation_range];
         use encode::*;
         use wasmparser::RelocationType::*;

@@ -350,6 +350,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         };
         let mut data_relocations = IdMap::new();
 
+        // TODO: move shift in previous (segment_id, segment) in data_segments.iter()
         for (segment_id, data_segment) in data_segments.iter() {
             let range = data_segment.original_range.clone();
             let data_relocs = Self::get_relocations_for_range(&emit_info.all_relocations, &range);
@@ -364,7 +365,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         |id| global_getter(id, &entry),
                         &entry,
                         !main_module,
-                        data_segment.data_offset,
+                        data_segment.segment_offset,
                     )
                 })
                 .collect::<Result<Vec<_>>>()
@@ -910,7 +911,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             for entry in relocs.iter() {
                 let state = modify::StartFnModifyContext {
                     data_segment: &mut data.data,
-                    start_offset: 0,
                     relocate: RelocateState {
                         input_module: self.info.source,
                         main_module: main_module,

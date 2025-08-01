@@ -10,7 +10,7 @@ use wasmparser::RelocationType;
 
 use std::ops::Range;
 
-use crate::{emit::modify::CustomModify, helpers::ShiftRange, index::SymbolId};
+use crate::{emit::modify::CustomModify, helpers::RangeExt, index::SymbolId};
 
 use super::{ModifyContext, StoreType};
 

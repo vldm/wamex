@@ -206,7 +206,7 @@ impl<'a> InputModule<'a> {
         Ok(module)
     }
     pub fn defined_func_type_id(&self, id: DefinedFuncId) -> FuncTypeId {
-        self.code.section_payload.func_types[id.as_raw_index()]
+        self.code.section_payload.defined_funcs[id].type_id
     }
 }
 

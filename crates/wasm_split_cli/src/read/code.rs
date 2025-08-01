@@ -21,8 +21,6 @@ pub struct CodeSection<'a> {
     pub start_func: Option<InputFuncId>,
     // function (CodeSectionEntry)
     pub defined_funcs: IdVec<FunctionWithBody<'a>>,
-
-    pub(super) func_types: Vec<FuncTypeId>,
 }
 impl<'a> CodeSection<'a> {
     pub fn new(
@@ -56,7 +54,6 @@ impl<'a> CodeSection<'a> {
                     .zip(&func_types)
                     .map(|(body, ty)| FunctionWithBody { type_id: *ty, body })
                     .collect(),
-                func_types,
             },
         })
     }

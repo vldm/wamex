@@ -9,7 +9,7 @@ use wasmparser::RelocationType;
 
 use crate::{
     analysis,
-    helpers::ShiftRange,
+    helpers::RangeExt,
     index::{DataSegmentId, DataSymbolId},
     read::InputModule,
 };

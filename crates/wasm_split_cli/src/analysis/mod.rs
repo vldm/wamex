@@ -10,6 +10,7 @@ use std::ops::Range;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use wasmparser::{Data, ElementItems, ElementKind, TypeRef};
 
+use crate::read::data;
 use crate::read::{self, linking::section::DataInSegment};
 
 use crate::index::{
@@ -272,15 +273,17 @@ fn get_data_symbols<'a>(
 ) -> Result<Vec<DataSymbol<'a>>> {
     let mut data_symbols = Vec::new();
     for (segment_id, symbols) in symbols.iter() {
+        let data_segment = data
+            .get(segment_id.as_raw_index())
+            .ok_or_else(|| anyhow!("No data found for data segment: {:?}", segment_id))?;
+
+        let data_segment_start = data_segment.range.end - data_segment.data.len();
         for (symbol_index, symbol) in symbols.iter() {
             if symbol.size == 0 {
                 log::warn!("Data segment has zero-size symbol: {:?}", symbol);
                 // Ignore zero-size symbols since they cannot be the target of a relocation.
                 continue;
             }
-            let data_segment = data
-                .get(segment_id.as_raw_index())
-                .ok_or_else(|| anyhow!("Invalid data segment index in symbol: {:?}", symbol))?;
             if symbol
                 .offset
                 .checked_add(symbol.size)
@@ -292,8 +295,8 @@ fn get_data_symbols<'a>(
                     data_segment.data.len()
                 );
             }
-            let offset =
-                data_segment.range.end - data_segment.data.len() + (symbol.offset as usize);
+
+            let offset = data_segment_start + (symbol.offset as usize);
             let range = offset..(offset + symbol.size as usize);
             data_symbols.push(DataSymbol {
                 segment_index: segment_id,

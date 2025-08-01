@@ -18,7 +18,6 @@ use wasmparser::{BinaryReader, FunctionBody};
 use crate::{
     emit::ModuleEmitState,
     index::{DefinedFuncId, GlobalId, InputFuncId, OutputGlobalId, SymbolId},
-    read::relocs::Relocation,
 };
 use constant_extraction::ConstantExtractionEntry;
 pub use constant_extraction::GlobalVar;
@@ -219,7 +218,7 @@ impl<'a> ModifyContext<'a> {
                 "applying relocation {relocation:?} to function {function_name}",
                 function_name = function_name
             );
-            reloc_info.apply_relocation(&mut result, 0, &relocation)?;
+            reloc_info.apply_relocation(&mut result, &relocation)?;
         }
         Ok(result)
     }

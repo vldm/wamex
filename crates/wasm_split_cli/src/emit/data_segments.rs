@@ -6,7 +6,7 @@ use wasmparser::{Data, DataKind, SymbolFlags};
 use crate::{
     analysis,
     emit::globals::DataSymbol,
-    helpers::ShiftRange,
+    helpers::{RangeComp, RangeExt},
     index::{DataSymbolId, Indexed},
 };
 
@@ -40,7 +40,7 @@ pub struct DataSegment<'a> {
     data_parts: Vec<NamedData<'a>>,
     // Full range of original data segment, including header
     pub original_range: Range<usize>,
-    pub data_offset: usize,
+    pub segment_offset: usize,
     pub kind: DataKind<'a>,
 }
 
@@ -83,7 +83,7 @@ impl<'a> DataSegment<'a> {
 
         for sym in symbols {
             if sym.range.len() == 0 {
-                println!("Data segment has zero-size symbol: {:?}", sym);
+                log::error!("Data segment has zero-size symbol: {:?}", sym);
                 // Ignore zero-size symbols since they cannot be the target of a relocation.
                 continue;
             }
@@ -110,7 +110,7 @@ impl<'a> DataSegment<'a> {
             data_parts,
             kind,
             original_range,
-            data_offset: data_start,
+            segment_offset: data_start,
         })
     }
 
@@ -128,14 +128,20 @@ impl<'a> DataSegment<'a> {
         self.data_parts = result;
     }
 
-    // Get relocations related to module start
-    // Return relocations with shifted offsets (if some data parts are removed)
+    /// Shifts relocation entries to account for removed or reordered data parts in the segment.
+    ///
+    /// # Parameters
+    /// - `entries`: A slice of `wasmparser::RelocationEntry` representing the original relocation entries.
+    ///
+    /// # Returns
+    /// A `Vec<wasmparser::RelocationEntry>` containing the relocation entries with updated offsets
+    /// relative to the current data segment layout.
     pub fn shift_relocation_entries(
         &self,
         entries: &[wasmparser::RelocationEntry],
     ) -> Vec<wasmparser::RelocationEntry> {
-        let mut data_len = 0;
-        let segment_offset = self.data_offset as usize;
+        let mut kept_data_len = 0;
+        let segment_offset = self.segment_offset as usize;
 
         let mut result = Vec::with_capacity(entries.len());
 
@@ -149,33 +155,44 @@ impl<'a> DataSegment<'a> {
 
             log::trace!("Entry range: {:?}", entry_range);
             log::trace!("Part range: {:?}", part.original_range);
-            // skip parts that is after current entry
-            // or not exist
-            while &part.original_range.end < &entry_range.end {
-                log::trace!("Skipping part {:?} before entry {:?}", part, entry);
-                data_len += part.chunk.len();
-                let Some(new_part) = parts_iter.next() else {
-                    log::debug!("No more data parts for entry {:?}", entry);
-                    break 'outer;
-                };
-                part = new_part;
-            }
-            if part.original_range.start > entry_range.start as usize {
-                log::trace!("Skipping relocation entry {:?}", entry);
-                continue;
-            }
-            debug_assert!(
-                part.original_range.start <= entry_range.start as usize,
-                "Data segment should start before relocation entry start"
-            );
-            log::debug!("Processing part {:?} for entry {:?}", part, entry);
 
-            log::trace!("Part range after skip: {:?}", part.original_range);
-            // calculate shift using current part and
-            let shift = part.original_range.start.saturating_sub(data_len + 1); // +1 because it is inclusive range
-            let mut shifted_entry = entry.clone(); // Shift relocation entry
-            shifted_entry.offset =
-                (entry_range.start.checked_sub(shift).unwrap() + segment_offset) as u32;
+            'no_reloc: loop {
+                match part.original_range.cmp_range(&entry_range) {
+                    RangeComp::Left => {
+                        log::trace!("Skipping entry {:?} after part {:?}", entry, part);
+                        // This means that entry is after part, so we can skip it
+
+                        kept_data_len += part.chunk.len();
+                        let Some(new_part) = parts_iter.next() else {
+                            log::debug!("No more data parts for entry {:?}", entry);
+                            break 'outer;
+                        };
+                        part = new_part;
+                        continue 'no_reloc;
+                    }
+                    RangeComp::OverlapOrEqual => {
+                        break 'no_reloc;
+                    }
+                    RangeComp::Right => {
+                        log::trace!("Skipping entry {:?} before part {:?}", entry, part);
+                        continue 'outer;
+                    }
+                    RangeComp::NonComparable => {
+                        panic!(
+                            "Data segment has intersecting parts: {:?} and {:?}",
+                            part, entry
+                        );
+                    }
+                }
+            }
+            // Compute new offset: sum of all kept bytes before this part + offset within this part
+            let rel_in_part = (entry_range.start as usize)
+                .checked_sub(part.original_range.start)
+                .unwrap();
+            let new_offset = kept_data_len + rel_in_part;
+
+            let mut shifted_entry = entry.clone();
+            shifted_entry.offset = u32::try_from(segment_offset + new_offset).unwrap();
 
             result.push(shifted_entry);
         }
