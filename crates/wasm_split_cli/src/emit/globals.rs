@@ -40,8 +40,8 @@ impl GlobalConstructor {
         match val_type {
             wasm_encoder::ValType::I32 => wasm_encoder::ConstExpr::i32_const(0),
             wasm_encoder::ValType::I64 => wasm_encoder::ConstExpr::i64_const(0),
-            wasm_encoder::ValType::F32 => wasm_encoder::ConstExpr::f32_const(0.0),
-            wasm_encoder::ValType::F64 => wasm_encoder::ConstExpr::f64_const(0.0),
+            wasm_encoder::ValType::F32 => wasm_encoder::ConstExpr::f32_const(0.0.into()),
+            wasm_encoder::ValType::F64 => wasm_encoder::ConstExpr::f64_const(0.0.into()),
             _ => panic!("Unsupported global type for tmp init"),
         }
     }

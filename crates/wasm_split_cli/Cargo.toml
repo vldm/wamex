@@ -8,8 +8,8 @@ anyhow = { version = "1.0.82", features = ["backtrace"] }
 clap = { version = "4.5.4", features = ["derive"] }
 lazy_static = "1.4.0"
 regex = "1.10.4"
-wasm-encoder = { version = "0.227.0", features = ["wasmparser"] }
-wasmparser = "0.227.0"
+wasm-encoder = { version = "0.236.0", features = ["wasmparser"] }
+wasmparser = "0.236.0"
 vec_map = "0.8.2"
 either = "1.9.0"
 log = "0.4.20"
@@ -17,3 +17,5 @@ env_logger = "0.11.0"
 leb128fmt = "0.1.0"
 nom = { version = "8.0.0", features = ["std"] }
 hex = "0.4.3"
+similar = { version = "2", features = ["inline"] }
+colored = "3"

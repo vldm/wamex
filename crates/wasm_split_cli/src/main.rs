@@ -1,14 +1,17 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use analysis::split_point::SplitProgramInfo;
 use anyhow::Result;
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 
 // todo: Refactor analysis and emit modules.
 mod analysis;
 mod emit;
 mod helpers;
 mod index;
+
+mod diff;
+// mod js_glue;
 mod read;
 
 use read::InputModule;
@@ -18,6 +21,12 @@ use crate::emit::EmitStrategy;
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
 struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+#[derive(Debug, Args)]
+#[command(name = "wasm-split")]
+struct Split {
     /// Input .wasm file.
     input: Box<Path>,
 
@@ -27,6 +36,21 @@ struct Cli {
     /// Print verbose split information.
     #[arg(short, long)]
     verbose: bool,
+}
+
+#[derive(Debug, Args)]
+struct Diff {
+    left: PathBuf,
+    right: PathBuf,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Split wasm module into multiple parts.
+    Split(Split),
+
+    /// Compare two wasm modules.
+    Diff(Diff),
 }
 
 //The flow of the program is simple:
@@ -44,38 +68,10 @@ fn main() -> Result<()> {
         .parse_default_env()
         .init();
     let args = Cli::parse();
-    let input_wasm = std::fs::read(&args.input)?;
-    let module = InputModule::parse(&input_wasm)?;
-    let info = analysis::ModuleInfo::new(&module)?;
-    //     // println!("names: {:#?}", module.names);
-    let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
-    log::info!("dep_graph={dep_graph:?}");
-    let split_points = analysis::split_point::find_split_points(&module, &info)?;
-
-    log::debug!("split_points={split_points:?}");
-    let split_program_info =
-        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
-
-    log::debug!("split_program_info={split_program_info:?}");
-    if args.verbose {
-        for (name, split_deps) in split_program_info.output_modules.iter() {
-            split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
-        }
-    }
-
-    crate::emit::emit_modules(
-        &info,
-        &split_program_info,
-        EmitStrategy::default(),
-        &|output_module_index: usize, data: &[u8]| -> Result<()> {
-            let identifier = &split_program_info.output_modules[output_module_index].0;
-            let output_filename = identifier.name() + ".wasm";
-            let output_path = args.output.join(output_filename);
-            std::fs::create_dir_all(&args.output)?;
-            std::fs::write(output_path, data)?;
-            Ok(())
-        },
-    )?;
+    match args.command {
+        Command::Split(args) => split(args)?,
+        Command::Diff(args) => diff(args)?,
+    };
 
     //     let mut javascript = String::new();
     //     javascript.push_str(
@@ -159,5 +155,54 @@ fn main() -> Result<()> {
     //     }
 
     //     std::fs::write(args.output.join("__wasm_split.js"), javascript)?;
+    Ok(())
+}
+
+fn split(args: Split) -> Result<()> {
+    let input_wasm = std::fs::read(&args.input)?;
+    let module = InputModule::parse(&input_wasm)?;
+    let info = analysis::ModuleInfo::new(&module)?;
+    //     // println!("names: {:#?}", module.names);
+    let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
+    log::info!("dep_graph={dep_graph:?}");
+    let split_points = analysis::split_point::find_split_points(&module, &info)?;
+
+    log::debug!("split_points={split_points:?}");
+    let split_program_info =
+        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
+
+    log::debug!("split_program_info={split_program_info:?}");
+    if args.verbose {
+        for (name, split_deps) in split_program_info.output_modules.iter() {
+            split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
+        }
+    }
+
+    crate::emit::emit_modules(
+        &info,
+        &split_program_info,
+        EmitStrategy::default(),
+        &|output_module_index: usize, data: &[u8]| -> Result<()> {
+            let identifier = &split_program_info.output_modules[output_module_index].0;
+            let output_filename = identifier.name() + ".wasm";
+            let output_path = args.output.join(output_filename);
+            std::fs::create_dir_all(&args.output)?;
+            std::fs::write(output_path, data)?;
+            Ok(())
+        },
+    )?;
+
+    Ok(())
+}
+
+fn diff(args: Diff) -> Result<()> {
+    let left = std::fs::read(&args.left)?;
+    let right = std::fs::read(&args.right)?;
+    let left_module = InputModule::parse(&left)?;
+    let right_module = InputModule::parse(&right)?;
+
+    let diff = diff::Compare::new(&left_module, &right_module);
+    diff.print_diff()?;
+
     Ok(())
 }

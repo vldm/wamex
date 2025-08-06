@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     hash::Hash,
     marker::PhantomData,
     ops::{Deref, Index},
@@ -61,13 +62,21 @@ impl<TypeTag> Id<TypeTag> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct IdMap<Idx, Res> {
     vecmap: VecMap<Res>,
     _res: PhantomData<Idx>,
 }
+impl<Idx, Res> Debug for IdMap<Idx, Res>
+where
+    Res: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.vecmap.fmt(f)
+    }
+}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct IdVec<
     Type,
     // Allow customization of index type, in case where you have sub-collection for some data Type
@@ -75,6 +84,14 @@ pub struct IdVec<
 > {
     types: Vec<Type>,
     _idx: PhantomData<Idx>,
+}
+impl<Type, Idx> Debug for IdVec<Type, Idx>
+where
+    Type: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.types.fmt(f)
+    }
 }
 
 pub trait Indexed {
@@ -426,20 +443,30 @@ where
 
     pub fn imports(
         &self,
-    ) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T::Import)> {
+    ) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T::Import)> + ExactSizeIterator
+    {
         self.collection
             .imports()
             .iter()
             .enumerate()
             .map(|(id, import)| (Id::from_index(id), import))
     }
-    pub fn defined(&self) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T)> {
+    pub fn defined(
+        &self,
+    ) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T)> + ExactSizeIterator
+    {
         let num_imports = self.collection.imports().len();
         self.collection
             .defined()
             .iter()
             .enumerate()
             .map(move |(id, defined)| (Id::from_index(id + num_imports), defined))
+    }
+
+    pub fn iter_all_ids<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = Id<<T as Indexed>::StaticTypeTagForIndex>> {
+        (0..self.len()).map(Id::from_index)
     }
     pub fn len(&self) -> usize {
         self.collection.imports().len() + self.collection.defined().len()

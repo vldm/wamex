@@ -10,7 +10,7 @@ pub enum InputFunction<'a> {
     Import {},
     Defined(FunctionBody<'a>),
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FunctionWithBody<'a> {
     pub type_id: FuncTypeId,
     pub body: FunctionBody<'a>,

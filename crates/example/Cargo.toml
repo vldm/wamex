@@ -20,6 +20,7 @@ wasm-streams = "0.4.0"
 wasm_split = { path = "../wasm_split", optional = true }
 
 [features]
+default = ["split"]
 split = ["dep:wasm_split"]
 gzip = ["async-compression/gzip"]
 brotli = ["async-compression/brotli"]

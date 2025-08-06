@@ -38,7 +38,7 @@ impl<'a> ModifyContext<'a> {
         num_new_global_imports: usize,
         defined_function_id: DefinedFuncId,
         entries: &[CodeModifyEntry],
-    ) -> Result<Vec<u8>> {
+    ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let (function_name, src_body) = {
             let func_id = InputFuncId::from_index(
                 defined_function_id.as_raw_index()
@@ -66,7 +66,7 @@ impl<'a> ModifyContext<'a> {
         let Some(mut entry) = entries_iter.next() else {
             // no modifications, just copy the original function body
             log::trace!("no modifications, copying original function body");
-            return Ok(src_body.as_bytes().to_vec());
+            return Ok((src_body.as_bytes().to_vec(), Vec::new()));
         };
         // recreate binary reader to use function related offset rather than module related.
         let func_body = FunctionBody::new(BinaryReader::new(src_body.as_bytes(), 0));
@@ -213,14 +213,14 @@ impl<'a> ModifyContext<'a> {
             },
         };
         // TODO: apply relocations
-        for relocation in other_relocations {
+        for relocation in &other_relocations {
             log::trace!(
                 "applying relocation {relocation:?} to function {function_name}",
                 function_name = function_name
             );
             reloc_info.apply_relocation(&mut result, &relocation)?;
         }
-        Ok(result)
+        Ok((result, other_relocations))
     }
 
     // Same as emit_code_with_changes, but avoid deserializing.

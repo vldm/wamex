@@ -4,13 +4,13 @@ use std::ops::Range;
 
 use anyhow::{anyhow, bail, Context, Result};
 use globals::GlobalConstructor;
-use wasm_encoder::GlobalType;
-use wasmparser::{RelocationEntry, RelocationType, TypeRef};
+use wasm_encoder::{Encode, GlobalType};
+use wasmparser::{DataKind, RelocationEntry, RelocationType, TypeRef};
 
-use crate::analysis;
 use crate::analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier};
+use crate::analysis::{self, ModuleInfo};
 use crate::emit::modify::{RelocateState, StartFnGen};
-use crate::helpers::iter_if;
+use crate::helpers::{encoding_size, iter_if};
 use crate::index::{
     DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, Indexed, MemoryId, OutputGlobalId,
     OutputSymbolDataId, WithOriginalIndex,
@@ -33,6 +33,7 @@ mod globals;
 
 mod index_safety;
 mod modify;
+mod names;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DefinedFunction {
@@ -162,6 +163,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let main_module = output_module_index == 0;
 
+        let retain_gaps = main_module; // TODO: make configurable
+
         let shared_imports = program_info
             .output_modules
             .iter()
@@ -287,7 +290,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let empty = HashSet::new();
                 let entries = data_to_define.get(&data_segment_id).unwrap_or(&empty);
                 let mut data_segment = data.clone();
-                data_segment.retain_symbols(entries);
+                data_segment.retain_symbols(entries, retain_gaps);
                 data_segment
             })
             .collect::<IdVec<_>>();
@@ -309,13 +312,38 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let mut globals_map = BTreeMap::new();
         let mut data_segment_outputs = IdVec::new();
-        let mut offset = 0;
+        let first_data_offset = data_segments
+            .iter()
+            .map(|(_, segment)| match segment.kind {
+                DataKind::Active {
+                    ref offset_expr, ..
+                } => Some(offset_expr.clone()),
+                DataKind::Passive => None,
+            })
+            .next()
+            .expect("There should be at least one data segment")
+            .expect("First data segment should be active");
+        // Start of data in memory.
+        let mem_start = ModuleInfo::read_const_expr(&first_data_offset).unwrap();
+        // offset of current segment.
+        let mut segment_offset = 0;
 
         log::debug!("Data segments for module: {:#?}", data_segments);
         for (segment_id, segment) in data_segments.iter() {
-            let out = segment.to_lib_output((!main_module).then_some(lib_base_id), offset as i32);
+            let lib_base_global_id = (!main_module).then_some(lib_base_id);
+            let header_len = dbg!(segment.header_len(
+                MEMORY_INDEX,
+                lib_base_global_id,
+                mem_start,
+                segment_offset,
+                retain_gaps
+            )) as i32;
+            let out =
+                segment.to_lib_output(lib_base_global_id, mem_start, segment_offset, retain_gaps);
             // TODO: apply relocations to data segment
-            offset += out.as_raw().len();
+            if out.is_active() {
+                segment_offset += out.as_raw().len() as i32;
+            }
             if !main_module {
                 for constructor in out.globals() {
                     globals_map.insert(
@@ -494,13 +522,12 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         self.generate_start_function_section(output_module)?;
         self.generate_element_section(output_module)?;
 
-        self.generate_code_section(main_module, output_module)?;
-        self.generate_data_section(main_module, output_module)?;
+        let code_relocs = self.generate_code_section(main_module, output_module)?;
+        let data_relocs = self.generate_data_section(main_module, output_module)?;
 
         // self.generate_wasm_bindgen_sections(output_module);
         // Names + Linking + Relocations
-        // self.generate_compiler_tools_sections(output_module)?;
-        // self.generate_name_section(output_module)?;
+        self.generate_compiler_tools_sections(output_module, code_relocs, vec![])?;
         self.generate_target_features_section(output_module)?;
         self.generate_custom_sections(output_module)?;
         Ok(())
@@ -548,14 +575,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             section.import(import.module, import.name, ty);
         }
 
-        if let Some(lib_base_import) = &self.lib_base_import {
-            section.import(
-                "__wasm_split",
-                "lib_base_id",
-                lib_base_import.global_type.clone(),
-            );
-        }
-
         if !self.is_main() {
             // Import all globals defined by the input module.
             for (global_index, global) in self.info.source.globals.iter() {
@@ -570,6 +589,14 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 );
             }
 
+            if let Some(lib_base_import) = &self.lib_base_import {
+                section.import(
+                    "__wasm_split",
+                    "lib_base_id",
+                    lib_base_import.global_type.clone(),
+                );
+            }
+
             // Import all memories defined by the input module.
             for (memory_index, memory) in self.info.source.memories.iter() {
                 let ty: wasm_encoder::MemoryType = memory.clone().try_into().unwrap();
@@ -580,6 +607,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 );
             }
         }
+
         output_module.section(&section);
     }
 
@@ -718,6 +746,14 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 global_index.as_raw_index() as u32 + num_extra_globals,
             );
         }
+
+        if !existing_exports.contains("__indirect_function_table") {
+            section.export(
+                "__indirect_function_table",
+                wasm_encoder::ExportKind::Table,
+                0,
+            );
+        }
         output_module.section(&section);
     }
 
@@ -830,9 +866,18 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         &'any self,
         main_module: &'any ModuleEmitState<'any, 'src>,
         output_module: &mut wasm_encoder::Module,
-    ) -> Result<()> {
+    ) -> Result<Vec<RelocationEntry>> {
+        let defined_functions_count = self.functions.defined().len() as u32
+            + if self.start_fn.is_some() {
+                1 // start function
+            } else {
+                0
+            };
+
         let mut section = wasm_encoder::CodeSection::new();
+        let mut code_relocs = Vec::new();
         for (_id, output_func) in self.functions.defined() {
+            let function_start_offset = encoding_size(defined_functions_count) + section.byte_len();
             let defined_id = self
                 .info
                 .as_defined_function_id(output_func.input_func_id)
@@ -840,13 +885,17 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
             // TODO: collect relocations.
 
-            let result = ModifyContext::emit_code_with_changes(
+            let (result, modified_relocs) = ModifyContext::emit_code_with_changes(
                 self,
                 main_module,
                 if self.lib_base_import.is_some() { 1 } else { 0 },
                 defined_id,
                 &output_func.modification_list,
             )?;
+            for mut reloc in modified_relocs {
+                reloc.offset += function_start_offset as u32;
+                code_relocs.push(reloc);
+            }
             section.raw(&result);
         }
 
@@ -855,7 +904,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         }
         output_module.section(&section);
 
-        Ok(())
+        Ok(code_relocs)
     }
     fn generate_data_section(
         &'any self,
@@ -905,7 +954,47 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         output_module.section(&features.encode_custom_section());
         Ok(())
     }
-    // linking| names | wasm-bindgen
+    // linking| names
+
+    fn generate_compiler_tools_sections(
+        &self,
+        output_module: &mut wasm_encoder::Module,
+        shifted_code_relocs: Vec<RelocationEntry>,
+        shifted_data_relocs: Vec<RelocationEntry>,
+    ) -> Result<()> {
+        // let names = wasm_encoder::CustomSection{
+        //     name: "name".into(),
+        //     data: self.info.source.names.encode().into(),
+
+        let mut functions = wasm_encoder::NameMap::new();
+        for output_id in self.functions.iter_all_ids() {
+            let input_id = self._get_input_func_id(output_id);
+            let name = self.info.source.names.functions.get(input_id).cloned();
+            let tmp;
+            let name = match name {
+                Some(name) => name,
+                None => {
+                    tmp = format!("func_{output_id}");
+                    &tmp
+                }
+            };
+
+            functions.append(output_id.as_raw_index() as u32, name);
+        }
+
+        let mut names = wasm_encoder::NameSection::new();
+        names.functions(&functions);
+        output_module.section(&names.as_custom());
+
+        // let mut section = wasm_encoder::CustomSection::new("linking");
+        // section.data(&self.info.source.linking);
+        // output_module.section(&section);
+        // dbg!(&self.info.source.names);
+        // dbg!(&self.info.source.linking);
+        // dbg!(&self.info.source.relocs);
+        Ok(())
+    }
+    // wasm-bindgen
     // other whitelisted
     fn generate_custom_sections(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         for custom in &self.info.source.custom_sections {

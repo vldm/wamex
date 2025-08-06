@@ -104,6 +104,7 @@ unsafe extern "C" fn load_callback(loader: *const c_void, success: bool) {
     unsafe { Rc::from_raw(loader as *const SplitLoader) }.complete(success);
 }
 
+
 // pub enum LinkKind {
 //     Function,
 //     Global,

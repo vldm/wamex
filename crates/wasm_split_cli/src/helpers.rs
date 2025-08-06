@@ -19,7 +19,7 @@ pub enum RangeComp {
 pub trait RangeExt {
     fn shift_left(&self, offset: usize) -> Self;
     fn shift_right(&self, offset: usize) -> Self;
-    fn cmp_range(&self, other: impl Borrow<Self>) -> RangeComp;
+    fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp;
 }
 
 impl RangeExt for Range<usize> {
@@ -44,7 +44,7 @@ impl RangeExt for Range<usize> {
     /// 2. If self ends at or before other's start, self is fully to the left.
     /// 3. If self fully contains other (starts before or at other's start and ends after or at other's end), it's OverlapOrEqual.
     /// 4. Otherwise, ranges partially intersect (NonComparable).
-    fn cmp_range(&self, other: impl Borrow<Self>) -> RangeComp {
+    fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp {
         let other = other.borrow();
         {
             if self.start >= other.end {
@@ -57,6 +57,26 @@ impl RangeExt for Range<usize> {
                 RangeComp::NonComparable
             }
         }
+    }
+}
+
+impl RangeExt for wasmparser::RelocationEntry {
+    fn shift_left(&self, offset: usize) -> Self {
+        Self {
+            offset: self.offset.checked_sub(offset as u32).unwrap(),
+            ..*self
+        }
+    }
+
+    fn shift_right(&self, offset: usize) -> Self {
+        Self {
+            offset: self.offset + offset as u32,
+            ..*self
+        }
+    }
+
+    fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp {
+        self.relocation_range().cmp_range(other)
     }
 }
 
@@ -111,6 +131,11 @@ pub fn debug_fmt_mostly_filled<T: Debug>(
 /// Returns an iterator if the condition is true, otherwise returns an empty iterator.
 pub fn iter_if<T>(condition: bool, iter: impl Iterator<Item = T>) -> impl Iterator<Item = T> {
     condition.then_some(iter).into_iter().flatten()
+}
+
+pub fn encoding_size(n: u32) -> usize {
+    let (_value, pos) = leb128fmt::encode_u32(n).unwrap();
+    pos
 }
 
 #[cfg(test)]

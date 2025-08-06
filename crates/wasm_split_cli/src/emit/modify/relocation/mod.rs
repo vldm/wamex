@@ -101,7 +101,11 @@ where
         let Some(data) = segment.globals().get(*data_index) else {
             bail!("No data with index {data_index} in segment {segment_id} for relocation {relocation:?}");
         };
-        Ok(data.data_offset as usize)
+        if !segment.is_active() {
+            bail!("Relocation {relocation:?} refers to passive data segment {segment_id}");
+        }
+
+        Ok((segment.memory_offset() + data.data_offset + relocation.addend as i32) as usize)
     }
 
     fn get_global_id(&self, relocation: &RelocationEntry) -> Result<OutputGlobalId> {

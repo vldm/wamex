@@ -36,6 +36,10 @@ impl TargetFeatures {
         push_feature!(sign_extension, "sign-ext");
         push_feature!(extended_const, "extended-const");
         push_feature!(reference_types, "reference-types");
+        push_feature!(saturating_float_to_int, "nontrapping-fptoint");
+        push_feature!(bulk_memory, "bulk-memory");
+        push_feature!(bulk_memory_opt, "bulk-memory-opt");
+        push_feature!(call_indirect_overlong, "call-indirect-overlong");
 
         let mut result = Vec::new();
         (count as u32).encode(&mut result);
@@ -61,6 +65,11 @@ impl Clone for TargetFeatures {
         new.features.extended_const = self.features.extended_const;
         new.features.reference_types = self.features.reference_types;
 
+        new.features.saturating_float_to_int = self.features.saturating_float_to_int;
+        new.features.bulk_memory = self.features.bulk_memory;
+        new.features.bulk_memory_opt = self.features.bulk_memory_opt;
+        new.features.call_indirect_overlong = self.features.call_indirect_overlong;
+
         new
     }
 }
@@ -81,6 +90,10 @@ impl<'a> CustomSectionReader<'a> for TargetFeatures {
                 "sign-ext" => this.features.sign_extension = sym,
                 "extended-const" => this.features.extended_const = sym,
                 "reference-types" => this.features.reference_types = sym,
+                "bulk-memory" => this.features.bulk_memory = sym,
+                "bulk-memory-opt" => this.features.bulk_memory_opt = sym,
+                "call-indirect-overlong" => this.features.call_indirect_overlong = sym,
+                "nontrapping-fptoint" => this.features.saturating_float_to_int = sym,
                 // I haven't found convention of feature names.
                 // So only used ones that produce cargo
                 rest => bail!("Unknown target feature: {} = {}", rest, sym),

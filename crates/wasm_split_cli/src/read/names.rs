@@ -7,7 +7,7 @@ use anyhow::{bail, Result};
 use vec_map::VecMap;
 
 // Custom sections
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Names<'a> {
     pub module: Option<&'a str>,
     pub functions: IdMap<InputFuncId, &'a str>,

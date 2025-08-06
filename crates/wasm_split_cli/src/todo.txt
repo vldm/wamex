@@ -1,3 +1,4 @@
+0. remove ex imports from main. 
 1. Implement a strategy outside `ModuleEmitState::produce_state` to allow different modes
 2. Extract the CLI routine into a separate crate
 3. Add "Unnamed" data segments and "gaps" that was in the original wasm (align, etc.)
@@ -5,4 +6,4 @@
 5. Generate the linking, names, and relocations sections
 6. Reimplement js glue code
 7. implement "streaming" emit, without instructions parsing
-8. Recreate indirect function table
+8. process only relocation entry specific for section

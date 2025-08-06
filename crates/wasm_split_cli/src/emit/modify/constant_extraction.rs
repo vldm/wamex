@@ -93,7 +93,11 @@ impl ConstantExtractionEntry {
         use wasm_encoder::Instruction;
         use wasmparser::Operator;
         let fix_offset = |memarg: wasmparser::MemArg| -> wasm_encoder::MemArg {
-            let mut memargs: wasm_encoder::MemArg = memarg.into();
+            let mut memargs = wasm_encoder::MemArg {
+                align: memarg.align as u32,
+                offset: self.addend as u64,
+                memory_index: memarg.memory,
+            };
             memargs.offset = self.addend as u64;
             memargs
         };

@@ -158,7 +158,7 @@ impl<'a> ModuleInfo<'a> {
         })
     }
 
-    fn read_const_expr(offset_expr: &wasmparser::ConstExpr<'a>) -> Result<i32> {
+    pub(crate) fn read_const_expr(offset_expr: &wasmparser::ConstExpr<'a>) -> Result<i32> {
         let mut reader = offset_expr.get_operators_reader();
 
         let val = match reader.read()? {
