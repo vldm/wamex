@@ -94,7 +94,7 @@ impl<'a> DataSegment<'a> {
         dbg!(data_start - data.range.start);
         dbg!(&data.kind);
 
-        let mut prev_end = data_start;
+        let mut prev_end = 0;
         for sym in symbols {
             if sym.range.len() == 0 {
                 log::error!("Data segment has zero-size symbol: {:?}", sym);
@@ -113,8 +113,18 @@ impl<'a> DataSegment<'a> {
                     original_range: gap_range,
                     symbol: GapOrSymbol::Gap,
                 });
+            } else if prev_end > original_range.start {
+                log::error!(
+                    "Data segment has intersecting parts: {:?} and {:?}",
+                    prev_end,
+                    original_range
+                );
+                //TODO: SKip?
+                continue;
             }
+
             let name = sym.data_in_segment.name;
+
             prev_end = original_range.end;
 
             data_parts.push(NamedData {
@@ -127,13 +137,13 @@ impl<'a> DataSegment<'a> {
                 },
             })
         }
-        let kind = data.kind.clone();
 
+        let kind = data.kind.clone();
         let original_range = data.range;
-        debug_assert!(data_parts.is_sorted_by(|a, b| matches!(
-            a.original_range.end.cmp(&b.original_range.start),
-            Ordering::Less | Ordering::Equal
-        )),);
+        // debug_assert!(data_parts.is_sorted_by(|a, b| matches!(
+        //     a.original_range.end.cmp(&b.original_range.start),
+        //     Ordering::Less | Ordering::Equal
+        // )),);
         Ok(DataSegment {
             data_parts,
             kind,

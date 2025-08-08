@@ -44,6 +44,11 @@ struct Diff {
     right: PathBuf,
 }
 
+#[derive(Debug, Args)]
+struct Roundtrip {
+    input: PathBuf,
+    output: PathBuf,
+}
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Split wasm module into multiple parts.
@@ -51,6 +56,8 @@ enum Command {
 
     /// Compare two wasm modules.
     Diff(Diff),
+    /// Roundtrip wasm module.
+    Roundtrip(Roundtrip),
 }
 
 //The flow of the program is simple:
@@ -71,6 +78,7 @@ fn main() -> Result<()> {
     match args.command {
         Command::Split(args) => split(args)?,
         Command::Diff(args) => diff(args)?,
+        Command::Roundtrip(args) => roundtrip(args)?,
     };
 
     //     let mut javascript = String::new();
@@ -157,7 +165,32 @@ fn main() -> Result<()> {
     //     std::fs::write(args.output.join("__wasm_split.js"), javascript)?;
     Ok(())
 }
+fn roundtrip(args: Roundtrip) -> Result<()> {
+    let input_wasm = std::fs::read(&args.input)?;
+    let module = InputModule::parse(&input_wasm)?;
+    // dbg!(&module.linking);
+    let info = analysis::ModuleInfo::new(&module)?;
+    //     // println!("names: {:#?}", module.names);
+    let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
 
+    let split_program_info = SplitProgramInfo::compute_split_modules(&info, &dep_graph, &[])?;
+
+    assert!(
+        split_program_info.output_modules.len() == 1,
+        "Roundtrip should produce single module",
+    );
+    crate::emit::emit_modules(
+        &info,
+        &split_program_info,
+        EmitStrategy::default(),
+        &|_: usize, data: &[u8]| -> Result<()> {
+            std::fs::write(&args.output, data)?;
+            Ok(())
+        },
+    )?;
+
+    Ok(())
+}
 fn split(args: Split) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
     let module = InputModule::parse(&input_wasm)?;
