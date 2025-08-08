@@ -9,8 +9,7 @@ use std::{
 
 pub use wasm_split_macros::wasm_split;
 
-pub type LoadCallbackFn = unsafe extern "C" fn(*const c_void, bool) -> ();
-pub type LoadFn = unsafe extern "C" fn(LoadCallbackFn, *const c_void) -> ();
+pub type LoadFn = unsafe extern "C" fn(*const u8, usize, *const c_void) -> ();
 
 type Lazy = async_once_cell::Lazy<Option<()>, SplitLoaderFuture>;
 
@@ -83,9 +82,11 @@ impl Future for SplitLoaderFuture {
             SplitLoaderState::Deferred(load) => {
                 self.loader.state.set(SplitLoaderState::Pending);
                 self.loader.waker.set(Some(cx.waker().clone()));
+                let load_callback = "__wasm_split_load_callback";
                 unsafe {
                     load(
-                        load_callback,
+                        load_callback.as_ptr(),
+                        load_callback.len(),
                         Rc::<SplitLoader>::into_raw(self.loader.clone()) as *const c_void,
                     )
                 };
@@ -100,10 +101,10 @@ impl Future for SplitLoaderFuture {
     }
 }
 
-unsafe extern "C" fn load_callback(loader: *const c_void, success: bool) {
+#[no_mangle]
+unsafe extern "C" fn __wasm_split_load_callback(loader: *const c_void, success: bool) {
     unsafe { Rc::from_raw(loader as *const SplitLoader) }.complete(success);
 }
-
 
 // pub enum LinkKind {
 //     Function,

@@ -35,6 +35,21 @@ mod index_safety;
 mod modify;
 mod names;
 
+// enum DataAlignment {
+//   /// Rmove gaps from data segments.
+//     RemoveGaps,
+//     /// Keep original gaps in data segments. (no guarantee of data alignment)
+//     KeepOriginalGaps,
+// }
+// #[derive(Debug, Clone, PartialEq, Eq, Debug)]
+// struct EmitConfig {
+//     /// Warn if overlapping data symbols are detected.
+//     warn_on_overlapping_data: bool,
+//     process_data: ExtractGlobal | KeepOffsets | Shrink,
+//     data_alignment: KeepOriginalGaps | RemoveGaps | Order
+//
+// }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DefinedFunction {
     input_func_id: InputFuncId,
@@ -163,8 +178,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let main_module = output_module_index == 0;
 
-        let retain_gaps = main_module; // TODO: make configurable
-
         let shared_imports = program_info
             .output_modules
             .iter()
@@ -290,7 +303,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let empty = HashSet::new();
                 let entries = data_to_define.get(&data_segment_id).unwrap_or(&empty);
                 let mut data_segment = data.clone();
-                data_segment.retain_symbols(entries, retain_gaps);
+                data_segment.retain_symbols(entries);
                 data_segment
             })
             .collect::<IdVec<_>>();
@@ -336,10 +349,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 lib_base_global_id,
                 mem_start,
                 segment_offset,
-                retain_gaps
             )) as i32;
-            let out =
-                segment.to_lib_output(lib_base_global_id, mem_start, segment_offset, retain_gaps);
+            let out = segment.to_lib_output(lib_base_global_id, mem_start, segment_offset);
             // TODO: apply relocations to data segment
             if out.is_active() {
                 segment_offset += out.as_raw().len() as i32;
@@ -1199,7 +1210,8 @@ pub fn emit_modules<'a>(
                 .get(data_segment)
                 .cloned()
                 .expect("Symbols for data segment not found");
-            DataSegment::new_inner(data.clone(), data_symbols, data_relocs)
+            let segment_info = module.source.linking.segments_info[data_segment].clone();
+            DataSegment::new_inner(data.clone(), segment_info, data_symbols, data_relocs)
         })
         .collect::<Result<IdVec<_>>>()?;
     log::debug!("Data segments with symbols: {:#?}", data_segments);

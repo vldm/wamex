@@ -49,6 +49,7 @@ struct Roundtrip {
     input: PathBuf,
     output: PathBuf,
 }
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Split wasm module into multiple parts.
@@ -56,6 +57,7 @@ enum Command {
 
     /// Compare two wasm modules.
     Diff(Diff),
+
     /// Roundtrip wasm module.
     Roundtrip(Roundtrip),
 }
@@ -194,6 +196,7 @@ fn roundtrip(args: Roundtrip) -> Result<()> {
 fn split(args: Split) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
     let module = InputModule::parse(&input_wasm)?;
+    dbg!(&module.linking);
     let info = analysis::ModuleInfo::new(&module)?;
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;

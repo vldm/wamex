@@ -1,55 +1,33 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, iter::Peekable, ops::Range};
+use std::{collections::HashSet, fmt::Debug, iter::Peekable};
 
 use anyhow::Result;
 use wasm_encoder::Encode;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
-    analysis::{self, ModuleInfo},
+    analysis,
     emit::globals::DataSymbol,
     helpers::{encoding_size, RangeComp, RangeExt},
     index::{DataSymbolId, Indexed},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NamedData<'a> {
     chunk: &'a [u8],
 
-    symbol: GapOrSymbol<'a>,
-}
-
-#[derive(Clone)]
-enum GapOrSymbol<'a> {
-    Gap,
-    Symbol {
-        name: &'a str,
-        index: DataSymbolId,
-        flags: SymbolFlags,
-        /// Offsets related to this symbol
-        relocations: Vec<wasmparser::RelocationEntry>,
-    },
-}
-
-impl Debug for NamedData<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Print in short form:
-        // ...<name>:symbol_index - flags
-        let name = match &self.symbol {
-            GapOrSymbol::Gap => "GAP",
-            GapOrSymbol::Symbol { name, .. } => name,
-        };
-        let flags = match &self.symbol {
-            GapOrSymbol::Gap => SymbolFlags::empty(),
-            GapOrSymbol::Symbol { flags, .. } => *flags,
-        };
-        write!(f, "{} <{}>:{:?}", hex::encode(&self.chunk), name, flags)
-    }
+    name: &'a str,
+    index: DataSymbolId,
+    flags: SymbolFlags,
+    aligned: bool, // true if data is aligned to segment alignment
+    // offset related to this symbol
+    relocations: Vec<wasmparser::RelocationEntry>,
 }
 
 #[derive(Clone)]
 pub struct DataSegment<'a> {
     data_parts: Vec<NamedData<'a>>,
-    pub segment_offset: usize,
+
+    pub alignment: usize,
     pub kind: DataKind<'a>,
 }
 
@@ -86,18 +64,17 @@ impl Debug for DataSegment<'_> {
 impl<'a> DataSegment<'a> {
     pub fn new_inner(
         data: Data<'a>,
+        segment_info: wasmparser::Segment<'a>,
         symbols: &[analysis::DataSymbol<'a>],
         // Save relocations related to each symbol
         relocations: &[wasmparser::RelocationEntry],
     ) -> Result<Self> {
-        let mut data_parts = vec![];
-
-        let mut relocation_iter = relocations.iter().peekable();
+        let alignment = (2usize).pow(segment_info.alignment);
         // skip header of data segment
         let data_start = data.range.end - data.data.len();
-        dbg!(data_start - data.range.start);
-        dbg!(&data.kind);
 
+        let mut data_parts = vec![];
+        let mut relocation_iter = relocations.iter().peekable();
         let mut prev_end = 0;
         for sym in symbols {
             if sym.range.len() == 0 {
@@ -129,16 +106,29 @@ impl<'a> DataSegment<'a> {
             );
 
             let original_range = sym.range.clone().shift_left(data_start);
+
+            let field_alignment = std::cmp::min(alignment, original_range.len());
+            let aligned = original_range.start % field_alignment == 0;
             let chunk = &data.data[original_range.clone()];
 
             if prev_end < original_range.start {
                 let gap_range = prev_end..original_range.start;
-                // There is a gap before this symbol, add it
-                let gap = &data.data[gap_range.clone()];
-                data_parts.push(NamedData {
-                    chunk: gap,
-                    symbol: GapOrSymbol::Gap,
-                });
+
+                if gap_range.len() >= alignment {
+                    log::debug!(
+                        "Data segment has gap larger than alignment: {:?} > {} before {}",
+                        gap_range,
+                        alignment,
+                        sym.data_in_segment.name
+                    );
+                } else {
+                    log::debug!(
+                        "Data segment has gap: {:?} ({} bytes) before {}",
+                        gap_range,
+                        gap_range.len(),
+                        sym.data_in_segment.name
+                    );
+                }
             } else if prev_end > original_range.start {
                 log::error!(
                     "Skipping DataSymbol that intersects with previous: {:?} range:{:?} prev_end: {}",
@@ -154,26 +144,24 @@ impl<'a> DataSegment<'a> {
 
             prev_end = original_range.end;
 
-            data_parts.push(NamedData {
+            let part = NamedData {
                 chunk,
-                symbol: GapOrSymbol::Symbol {
-                    name,
-                    index: sym.symbol_index,
-                    flags: sym.data_in_segment.flags,
-                    relocations: entries,
-                },
-            })
+                name,
+                index: sym.symbol_index,
+                flags: sym.data_in_segment.flags,
+                relocations: entries,
+                aligned,
+            };
+            log::trace!("Data part: {part:?}");
+            data_parts.push(part)
         }
 
         let kind = data.kind.clone();
-        // debug_assert!(data_parts.is_sorted_by(|a, b| matches!(
-        //     a.original_range.end.cmp(&b.original_range.start),
-        //     Ordering::Less | Ordering::Equal
-        // )),);
+
         Ok(DataSegment {
+            alignment,
             data_parts,
             kind,
-            segment_offset: data_start,
         })
     }
 
@@ -193,14 +181,12 @@ impl<'a> DataSegment<'a> {
     }
 
     // Keeps only symbols with id is in `indexes`.
-    pub fn retain_symbols(&mut self, indexes: &HashSet<DataSymbolId>, retain_gaps: bool) {
+    pub fn retain_symbols(&mut self, indexes: &HashSet<DataSymbolId>) {
         let mut result = vec![];
 
         for item in self.data_parts.drain(..) {
-            match item.symbol {
-                GapOrSymbol::Gap if !retain_gaps => continue,
-                GapOrSymbol::Symbol { index, .. } if !indexes.contains(&index) => continue,
-                _ => {}
+            if !indexes.contains(&item.index) {
+                continue;
             }
             result.push(item);
         }
@@ -208,15 +194,24 @@ impl<'a> DataSegment<'a> {
         self.data_parts = result;
     }
 
-    pub fn data_len(&self, retain_gaps: bool) -> usize {
+    pub fn data_len(&self, segment_misalignment: usize) -> usize {
         let mut len = 0;
-        for symbol in &self.data_parts {
-            match symbol.symbol {
-                GapOrSymbol::Gap if !retain_gaps => continue,
-                _ => {}
+
+        for data_part in &self.data_parts {
+            let current_offset = segment_misalignment + len;
+            let field_alignment = std::cmp::min(self.alignment, data_part.chunk.len());
+            // Determine how far off we are from the required alignment
+            let misalignment = current_offset % field_alignment;
+
+            // If we're not aligned, add padding
+            if data_part.aligned && misalignment != 0 {
+                let padding = field_alignment - misalignment;
+                len += padding;
             }
-            len += symbol.chunk.len();
+
+            len += data_part.chunk.len();
         }
+
         len
     }
 
@@ -226,23 +221,9 @@ impl<'a> DataSegment<'a> {
         lib_base_global_id: Option<u32>,
         mem_start: i32,
         segment_offset: i32,
-        retain_gaps: bool,
     ) -> usize {
-        let data_init = match self.kind {
-            DataKind::Passive => None,
-            DataKind::Active { .. } => {
-                let offset_expr = match lib_base_global_id {
-                    None => wasm_encoder::ConstExpr::i32_const(mem_start + segment_offset),
-                    Some(lib_base_global_id) => {
-                        // submodules use lib_base_id
-                        wasm_encoder::ConstExpr::global_get(lib_base_global_id)
-                            .with_i32_const(segment_offset)
-                            .with_i32_add()
-                    }
-                };
-                Some(offset_expr)
-            }
-        };
+        let (data_init, segment_misalignment) =
+            self.segment_header(mem_start, segment_offset, lib_base_global_id);
         let len = match data_init {
             None => 1,
             Some(data_init) => {
@@ -256,7 +237,38 @@ impl<'a> DataSegment<'a> {
             }
         };
 
-        len + encoding_size(self.data_len(retain_gaps) as u32)
+        len + encoding_size(self.data_len(segment_misalignment) as u32)
+    }
+
+    /// Compute data init offset and segment misalignment.
+    /// Returns (offset_expr, segment_misalignment)
+    fn segment_header(
+        &self,
+        mem_start: i32,
+        segment_offset: i32,
+        lib_base_global_id: Option<u32>,
+    ) -> (Option<wasm_encoder::ConstExpr>, usize) {
+        match self.kind {
+            DataKind::Passive => (None, 0),
+            DataKind::Active { .. } => {
+                let (offset_expr, segment_misalignment) = match lib_base_global_id {
+                    None => (
+                        wasm_encoder::ConstExpr::i32_const(mem_start + segment_offset),
+                        (mem_start + segment_offset) as usize % self.alignment,
+                    ),
+                    Some(lib_base_global_id) => {
+                        // submodules use lib_base_id
+                        (
+                            wasm_encoder::ConstExpr::global_get(lib_base_global_id)
+                                .with_i32_const(segment_offset)
+                                .with_i32_add(),
+                            segment_offset as usize % self.alignment,
+                        )
+                    }
+                };
+                (Some(offset_expr), segment_misalignment)
+            }
+        }
     }
 
     pub fn to_lib_output(
@@ -264,44 +276,36 @@ impl<'a> DataSegment<'a> {
         lib_base_global_id: Option<u32>,
         mem_start: i32,
         segment_offset: i32,
-        retain_gaps: bool,
     ) -> DataSegmentOutput {
+        const BYTE_FILLER: u8 = 0;
         let mut all_relocations = Vec::new();
+
         let mut data = Vec::new();
-        let data_init = match self.kind {
-            DataKind::Passive => None,
-            DataKind::Active { .. } => {
-                let offset_expr = match lib_base_global_id {
-                    None => wasm_encoder::ConstExpr::i32_const(mem_start + segment_offset),
-                    Some(lib_base_global_id) => {
-                        // submodules use lib_base_id
-                        wasm_encoder::ConstExpr::global_get(lib_base_global_id)
-                            .with_i32_const(segment_offset)
-                            .with_i32_add()
-                    }
-                };
-                Some(offset_expr)
-            }
-        };
+
+        let (data_init, segment_misalignment) =
+            self.segment_header(mem_start, segment_offset, lib_base_global_id);
         let mut globals = Vec::new();
         for symbol in &self.data_parts {
-            let GapOrSymbol::Symbol {
-                index, relocations, ..
-            } = &symbol.symbol
-            else {
-                // Gaps are not represented as globals
+            let total_offset = data.len() + segment_misalignment;
+            let field_alignment = std::cmp::min(self.alignment, symbol.chunk.len());
+            let misalignment = total_offset % field_alignment;
 
-                if retain_gaps {
-                    data.extend_from_slice(symbol.chunk);
-                }
-                continue;
-            };
+            // add padding to align data
+            if symbol.aligned && misalignment != 0 {
+                let padding = field_alignment - misalignment;
+                log::debug!(
+                    "Add padding before data symbol {}: {padding} bytes",
+                    symbol.name
+                );
+                data.resize(data.len() + padding, BYTE_FILLER);
+            }
+
             globals.push(DataSymbol {
                 data_offset: data.len() as i32,
-                symbol_index: *index,
+                symbol_index: symbol.index,
                 type_info: super::globals::GlobalConstructor::POINTER_TYPE,
             });
-            all_relocations.extend(relocations.into_iter().map(|entry| {
+            all_relocations.extend(symbol.relocations.iter().map(|entry| {
                 wasmparser::RelocationEntry {
                     offset: entry.offset + data.len() as u32,
                     ..entry.clone()

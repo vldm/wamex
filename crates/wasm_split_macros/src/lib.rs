@@ -68,7 +68,7 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
             #[link(wasm_import_module = "./__wasm_split.js")]
             extern "C" {
                 #[no_mangle]
-                fn #load_module_ident (callback: unsafe extern "C" fn(*const ::std::ffi::c_void, bool), data: *const ::std::ffi::c_void) -> ();
+                fn #load_module_ident (name: *const u8, name_len: usize, data: *const ::std::ffi::c_void) -> ();
 
                 #[allow(improper_ctypes)]
                 #[no_mangle]

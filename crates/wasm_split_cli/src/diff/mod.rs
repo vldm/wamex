@@ -24,7 +24,11 @@ impl<'any, 'src> Compare<'any, 'src> {
     /// Compare two modules and return a list of differences.
     pub fn print_diff(&self) -> Result<(), anyhow::Error> {
         macro_rules! print_hex_diff {
-            ($left: expr, $right: expr) => {
+            ($id:expr, $left: expr, $right: expr) => {
+                let num_imports = 27;
+                let raw_id = $id.as_raw_index() + num_imports;
+                let id = crate::index::Id::from_index(raw_id);
+                log::info!("name: {}", self.left.names.functions[id]);
                 match ($left, $right) {
                     (Some(left), Some(right)) => {
                         let left = hex::encode(left.body.as_bytes());
@@ -36,7 +40,7 @@ impl<'any, 'src> Compare<'any, 'src> {
             };
         }
         macro_rules! print_elements {
-            ($left: expr, $right: expr) => {
+            ($id:expr, $left: expr, $right: expr) => {
                 if let Some(elem) = $left {
                     log::info!("Left item {}", elem.debug(),);
                 }
@@ -66,7 +70,7 @@ impl<'any, 'src> Compare<'any, 'src> {
                         err
                     );
 
-                    $v!(left, right);
+                    $v!(id, left, right);
                 }
             };
         }
@@ -80,7 +84,8 @@ impl<'any, 'src> Compare<'any, 'src> {
         print_compare_section!(memories);
 
         self.print_compare_data();
-        // self.left.code.defined_funcs.get(0).unwrap().body.as_bytes()
+
+        // self.left.code.defined_funcs.get(0).unwrap().
         print_compare_section!(print_hex_diff, code.defined_funcs);
         // data
         // custom sections (names, linking, relocations, target_features, ...)
@@ -364,9 +369,15 @@ impl DiffExt for wasmparser::Element<'_> {
     }
     fn debug(&self) -> String {
         let kind_type = match &self.kind {
-            wasmparser::ElementKind::Active { .. } => "Active",
-            wasmparser::ElementKind::Passive => "Passive",
-            wasmparser::ElementKind::Declared => "Declared",
+            wasmparser::ElementKind::Active {
+                offset_expr,
+                table_index,
+            } => format!(
+                "Active {{ offset_expr: {:?}, table_index: {:?} }}",
+                offset_expr, table_index
+            ),
+            wasmparser::ElementKind::Passive => "Passive".into(),
+            wasmparser::ElementKind::Declared => "Declared".into(),
         };
         let items_type = match &self.items {
             wasmparser::ElementItems::Functions(_) => "Functions",
