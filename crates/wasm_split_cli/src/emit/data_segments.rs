@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashSet, fmt::Debug, ops::Range};
+use std::{cmp::Ordering, collections::HashSet, fmt::Debug, iter::Peekable, ops::Range};
 
 use anyhow::Result;
 use wasm_encoder::Encode;
@@ -14,8 +14,6 @@ use crate::{
 #[derive(Clone)]
 pub struct NamedData<'a> {
     chunk: &'a [u8],
-    // Related to data segment start
-    original_range: Range<usize>,
 
     symbol: GapOrSymbol<'a>,
 }
@@ -27,6 +25,8 @@ enum GapOrSymbol<'a> {
         name: &'a str,
         index: DataSymbolId,
         flags: SymbolFlags,
+        /// Offsets related to this symbol
+        relocations: Vec<wasmparser::RelocationEntry>,
     },
 }
 
@@ -49,8 +49,6 @@ impl Debug for NamedData<'_> {
 #[derive(Clone)]
 pub struct DataSegment<'a> {
     data_parts: Vec<NamedData<'a>>,
-    // Full range of original data segment, including header
-    pub original_range: Range<usize>,
     pub segment_offset: usize,
     pub kind: DataKind<'a>,
 }
@@ -86,9 +84,15 @@ impl Debug for DataSegment<'_> {
 }
 
 impl<'a> DataSegment<'a> {
-    pub fn new_inner(data: Data<'a>, symbols: &[analysis::DataSymbol<'a>]) -> Result<Self> {
+    pub fn new_inner(
+        data: Data<'a>,
+        symbols: &[analysis::DataSymbol<'a>],
+        // Save relocations related to each symbol
+        relocations: &[wasmparser::RelocationEntry],
+    ) -> Result<Self> {
         let mut data_parts = vec![];
 
+        let mut relocation_iter = relocations.iter().peekable();
         // skip header of data segment
         let data_start = data.range.end - data.data.len();
         dbg!(data_start - data.range.start);
@@ -101,6 +105,29 @@ impl<'a> DataSegment<'a> {
                 // Ignore zero-size symbols since they cannot be the target of a relocation.
                 continue;
             }
+            let entries = Self::collect_and_map_while(
+                &mut relocation_iter,
+                // Save relocation entries related to this symbol
+                |entry| wasmparser::RelocationEntry {
+                    offset: entry.offset - sym.range.start as u32,
+                    ..entry.clone()
+                },
+                |entry| {
+                    let range = entry.relocation_range();
+                    match sym.range.cmp_range(range) {
+                        // In case relocations is not ordered, or related to more than one symbol.
+                        RangeComp::Right | RangeComp::NonComparable => {
+                            panic!(
+                                "BUG: Relocation entry is not related to symbols: {:?} and {:?}",
+                                sym, entry
+                            );
+                        }
+                        RangeComp::OverlapOrEqual => true,
+                        RangeComp::Left => false,
+                    }
+                },
+            );
+
             let original_range = sym.range.clone().shift_left(data_start);
             let chunk = &data.data[original_range.clone()];
 
@@ -110,14 +137,14 @@ impl<'a> DataSegment<'a> {
                 let gap = &data.data[gap_range.clone()];
                 data_parts.push(NamedData {
                     chunk: gap,
-                    original_range: gap_range,
                     symbol: GapOrSymbol::Gap,
                 });
             } else if prev_end > original_range.start {
                 log::error!(
-                    "Data segment has intersecting parts: {:?} and {:?}",
-                    prev_end,
-                    original_range
+                    "Skipping DataSymbol that intersects with previous: {:?} range:{:?} prev_end: {}",
+                    sym,
+                    original_range,
+                    prev_end
                 );
                 //TODO: SKip?
                 continue;
@@ -129,17 +156,16 @@ impl<'a> DataSegment<'a> {
 
             data_parts.push(NamedData {
                 chunk,
-                original_range,
                 symbol: GapOrSymbol::Symbol {
                     name,
                     index: sym.symbol_index,
                     flags: sym.data_in_segment.flags,
+                    relocations: entries,
                 },
             })
         }
 
         let kind = data.kind.clone();
-        let original_range = data.range;
         // debug_assert!(data_parts.is_sorted_by(|a, b| matches!(
         //     a.original_range.end.cmp(&b.original_range.start),
         //     Ordering::Less | Ordering::Equal
@@ -147,9 +173,23 @@ impl<'a> DataSegment<'a> {
         Ok(DataSegment {
             data_parts,
             kind,
-            original_range,
             segment_offset: data_start,
         })
+    }
+
+    fn collect_and_map_while<'any, I, U>(
+        iterator: &mut Peekable<I>,
+        map: impl Fn(&'any wasmparser::RelocationEntry) -> U,
+        condition: impl Fn(&&'any wasmparser::RelocationEntry) -> bool + Copy,
+    ) -> Vec<U>
+    where
+        I: Iterator<Item = &'any wasmparser::RelocationEntry>,
+    {
+        let mut result = vec![];
+        while let Some(entry) = iterator.next_if(condition) {
+            result.push(map(entry));
+        }
+        result
     }
 
     // Keeps only symbols with id is in `indexes`.
@@ -168,77 +208,6 @@ impl<'a> DataSegment<'a> {
         self.data_parts = result;
     }
 
-    /// Shifts relocation entries to account for removed or reordered data parts in the segment.
-    ///
-    /// # Parameters
-    /// - `entries`: A slice of `wasmparser::RelocationEntry` representing the original relocation entries.
-    ///
-    /// # Returns
-    /// A `Vec<wasmparser::RelocationEntry>` containing the relocation entries with updated offsets
-    /// relative to the current data segment layout.
-    pub fn shift_relocation_entries(
-        &self,
-        entries: &[wasmparser::RelocationEntry],
-    ) -> Vec<wasmparser::RelocationEntry> {
-        let mut kept_data_len = 0;
-        let segment_offset = self.segment_offset as usize;
-
-        let mut result = Vec::with_capacity(entries.len());
-
-        let mut parts_iter = self.data_parts.iter().peekable();
-        let Some(mut part) = parts_iter.next() else {
-            return Vec::new();
-        };
-        'outer: for entry in entries.iter() {
-            // offset related to start
-            let entry_range = entry.relocation_range().shift_left(segment_offset);
-
-            log::trace!("Entry range: {:?}", entry_range);
-            log::trace!("Part range: {:?}", part.original_range);
-
-            'no_reloc: loop {
-                match part.original_range.cmp_range(&entry_range) {
-                    RangeComp::Left => {
-                        log::trace!("Skipping entry {:?} after part {:?}", entry, part);
-                        // This means that entry is after part, so we can skip it
-
-                        kept_data_len += part.chunk.len();
-                        let Some(new_part) = parts_iter.next() else {
-                            log::debug!("No more data parts for entry {:?}", entry);
-                            break 'outer;
-                        };
-                        part = new_part;
-                        continue 'no_reloc;
-                    }
-                    RangeComp::OverlapOrEqual => {
-                        break 'no_reloc;
-                    }
-                    RangeComp::Right => {
-                        log::trace!("Skipping entry {:?} before part {:?}", entry, part);
-                        continue 'outer;
-                    }
-                    RangeComp::NonComparable => {
-                        panic!(
-                            "Data segment has intersecting parts: {:?} and {:?}",
-                            part, entry
-                        );
-                    }
-                }
-            }
-            // Compute new offset: sum of all kept bytes before this part + offset within this part
-            let rel_in_part = (entry_range.start as usize)
-                .checked_sub(part.original_range.start)
-                .unwrap();
-            let new_offset = kept_data_len + rel_in_part;
-
-            let mut shifted_entry = entry.clone();
-            shifted_entry.offset = u32::try_from(segment_offset + new_offset).unwrap();
-
-            result.push(shifted_entry);
-        }
-
-        result
-    }
     pub fn data_len(&self, retain_gaps: bool) -> usize {
         let mut len = 0;
         for symbol in &self.data_parts {
@@ -297,6 +266,7 @@ impl<'a> DataSegment<'a> {
         segment_offset: i32,
         retain_gaps: bool,
     ) -> DataSegmentOutput {
+        let mut all_relocations = Vec::new();
         let mut data = Vec::new();
         let data_init = match self.kind {
             DataKind::Passive => None,
@@ -315,7 +285,10 @@ impl<'a> DataSegment<'a> {
         };
         let mut globals = Vec::new();
         for symbol in &self.data_parts {
-            let GapOrSymbol::Symbol { index, .. } = symbol.symbol else {
+            let GapOrSymbol::Symbol {
+                index, relocations, ..
+            } = &symbol.symbol
+            else {
                 // Gaps are not represented as globals
 
                 if retain_gaps {
@@ -325,9 +298,15 @@ impl<'a> DataSegment<'a> {
             };
             globals.push(DataSymbol {
                 data_offset: data.len() as i32,
-                symbol_index: index,
+                symbol_index: *index,
                 type_info: super::globals::GlobalConstructor::POINTER_TYPE,
             });
+            all_relocations.extend(relocations.into_iter().map(|entry| {
+                wasmparser::RelocationEntry {
+                    offset: entry.offset + data.len() as u32,
+                    ..entry.clone()
+                }
+            }));
             data.extend_from_slice(symbol.chunk);
         }
         DataSegmentOutput {
@@ -335,6 +314,7 @@ impl<'a> DataSegment<'a> {
             data_init,
             data,
             globals,
+            relocations: all_relocations,
         }
     }
 }
@@ -346,6 +326,7 @@ pub struct DataSegmentOutput {
     memory_offset: i32,
     data: Vec<u8>,
     globals: Vec<super::globals::DataSymbol>,
+    relocations: Vec<wasmparser::RelocationEntry>,
 }
 
 impl DataSegmentOutput {
@@ -366,6 +347,9 @@ impl DataSegmentOutput {
     }
     pub fn globals(&self) -> &[super::globals::DataSymbol] {
         &self.globals
+    }
+    pub fn relocations(&self) -> &[wasmparser::RelocationEntry] {
+        &self.relocations
     }
     pub fn is_active(&self) -> bool {
         self.data_init.is_some()

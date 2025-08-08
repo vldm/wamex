@@ -376,13 +376,9 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let mut data_relocations = IdMap::new();
 
         // TODO: move shift in previous (segment_id, segment) in data_segments.iter()
-        for (segment_id, data_segment) in data_segments.iter() {
-            let range = data_segment.original_range.clone();
-            let data_relocs = Self::get_relocations_for_range(&emit_info.all_relocations, &range);
-            let data_relocs = data_segment.shift_relocation_entries(data_relocs);
-            log::trace!(
-                "Data segment {segment_id}: {data_segment:?} relocations: {data_relocs:#?}"
-            );
+        for (segment_id, data_segment) in data_segment_outputs.iter() {
+            let data_relocs = data_segment.relocations().to_vec();
+
             let segment_relocs = data_relocs
                 .into_iter()
                 .map(|entry| {
@@ -390,7 +386,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         |id| global_getter(id, &entry),
                         &entry,
                         !main_module,
-                        data_segment.segment_offset,
+                        0,
                     )
                 })
                 .collect::<Result<Vec<_>>>()
@@ -1197,13 +1193,13 @@ pub fn emit_modules<'a>(
         .iter()
         .enumerate()
         .map(|(data_segment, data)| {
-            DataSegment::new_inner(
-                data.clone(),
-                data_segments_symbols
-                    .get(data_segment)
-                    .cloned()
-                    .expect("Symbols for data segment not found"),
-            )
+            let data_relocs =
+                ModuleEmitState::get_relocations_for_range(&emit_info.all_relocations, &data.range);
+            let data_symbols = data_segments_symbols
+                .get(data_segment)
+                .cloned()
+                .expect("Symbols for data segment not found");
+            DataSegment::new_inner(data.clone(), data_symbols, data_relocs)
         })
         .collect::<Result<IdVec<_>>>()?;
     log::debug!("Data segments with symbols: {:#?}", data_segments);
