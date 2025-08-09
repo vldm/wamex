@@ -825,7 +825,6 @@ mod tests {
                 testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
             );
         }
-        dbg!(&shared_entries);
 
         assert_eq!(shared_entries.len(), 2);
         assert_eq!(

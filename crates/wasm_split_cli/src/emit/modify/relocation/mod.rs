@@ -105,7 +105,7 @@ where
             bail!("Relocation {relocation:?} refers to passive data segment {segment_id}");
         }
 
-        Ok((segment.memory_offset() + data.data_offset + relocation.addend as i32) as usize)
+        Ok(segment.memory_offset() + data.data_offset + relocation.addend as usize)
     }
 
     fn get_global_id(&self, relocation: &RelocationEntry) -> Result<OutputGlobalId> {

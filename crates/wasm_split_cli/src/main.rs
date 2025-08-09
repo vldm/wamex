@@ -170,7 +170,6 @@ fn main() -> Result<()> {
 fn roundtrip(args: Roundtrip) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
     let module = InputModule::parse(&input_wasm)?;
-    // dbg!(&module.linking);
     let info = analysis::ModuleInfo::new(&module)?;
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
@@ -196,7 +195,6 @@ fn roundtrip(args: Roundtrip) -> Result<()> {
 fn split(args: Split) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
     let module = InputModule::parse(&input_wasm)?;
-    dbg!(&module.linking);
     let info = analysis::ModuleInfo::new(&module)?;
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;

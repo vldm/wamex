@@ -6,7 +6,6 @@ use similar::{ChangeTag, TextDiff};
 use wasmparser::{Data, Global};
 
 use crate::{
-    analysis,
     index::{Id, IdVec, Indexed},
     read::{self, code::FunctionWithBody},
 };
@@ -343,7 +342,11 @@ impl DiffExt for wasmparser::Element<'_> {
                     table_index: other_table_index,
                     offset_expr: other_offset_expr,
                 },
-            ) => table_index == other_table_index && offset_expr == other_offset_expr,
+            ) => {
+                let offset_expr = const_expr_to_string(offset_expr);
+                let other_offset_expr = const_expr_to_string(other_offset_expr);
+                table_index == other_table_index && offset_expr == other_offset_expr
+            }
             (wasmparser::ElementKind::Passive, wasmparser::ElementKind::Passive)
             | (wasmparser::ElementKind::Declared, wasmparser::ElementKind::Declared) => true,
             _ => false,
@@ -355,11 +358,14 @@ impl DiffExt for wasmparser::Element<'_> {
             (
                 wasmparser::ElementItems::Functions(funcs),
                 wasmparser::ElementItems::Functions(other_funcs),
-            ) => funcs.range() == other_funcs.range(),
+            ) => {
+                // TODO: compare items
+                funcs.range().len() == other_funcs.range().len()
+            }
             (
                 wasmparser::ElementItems::Expressions(exprs, reader),
                 wasmparser::ElementItems::Expressions(other_exprs, other_reader),
-            ) => exprs == other_exprs && reader.range() == other_reader.range(),
+            ) => exprs == other_exprs && reader.range().len() == other_reader.range().len(),
             _ => false,
         };
         if !items_same {
@@ -374,7 +380,8 @@ impl DiffExt for wasmparser::Element<'_> {
                 table_index,
             } => format!(
                 "Active {{ offset_expr: {:?}, table_index: {:?} }}",
-                offset_expr, table_index
+                const_expr_to_string(offset_expr),
+                table_index
             ),
             wasmparser::ElementKind::Passive => "Passive".into(),
             wasmparser::ElementKind::Declared => "Declared".into(),
@@ -388,4 +395,17 @@ impl DiffExt for wasmparser::Element<'_> {
             kind_type, items_type
         )
     }
+}
+
+fn const_expr_to_string(expr: &wasmparser::ConstExpr<'_>) -> String {
+    let mut ops = expr.get_operators_reader();
+    let mut result = String::new();
+    while !ops.is_end_then_eof() {
+        if let Ok(op) = ops.read() {
+            result.push_str(&format!("{:?} ", op));
+        } else {
+            break;
+        }
+    }
+    result
 }

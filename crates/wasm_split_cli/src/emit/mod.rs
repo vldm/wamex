@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use anyhow::{anyhow, bail, Context, Result};
 use globals::GlobalConstructor;
-use wasm_encoder::{Encode, GlobalType};
+use wasm_encoder::GlobalType;
 use wasmparser::{DataKind, RelocationEntry, RelocationType, TypeRef};
 
 use crate::analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier};
@@ -35,18 +35,11 @@ mod index_safety;
 mod modify;
 mod names;
 
-// enum DataAlignment {
-//   /// Rmove gaps from data segments.
-//     RemoveGaps,
-//     /// Keep original gaps in data segments. (no guarantee of data alignment)
-//     KeepOriginalGaps,
-// }
 // #[derive(Debug, Clone, PartialEq, Eq, Debug)]
 // struct EmitConfig {
 //     /// Warn if overlapping data symbols are detected.
 //     warn_on_overlapping_data: bool,
 //     process_data: ExtractGlobal | KeepOffsets | Shrink,
-//     data_alignment: KeepOriginalGaps | RemoveGaps | Order
 //
 // }
 
@@ -325,35 +318,25 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let mut globals_map = BTreeMap::new();
         let mut data_segment_outputs = IdVec::new();
-        let first_data_offset = data_segments
+
+        let first_segment = data_segments
             .iter()
-            .map(|(_, segment)| match segment.kind {
-                DataKind::Active {
-                    ref offset_expr, ..
-                } => Some(offset_expr.clone()),
-                DataKind::Passive => None,
-            })
             .next()
             .expect("There should be at least one data segment")
-            .expect("First data segment should be active");
-        // Start of data in memory.
-        let mem_start = ModuleInfo::read_const_expr(&first_data_offset).unwrap();
-        // offset of current segment.
-        let mut segment_offset = 0;
+            .1;
+        let mem_start = first_segment.memory_offset();
 
+        // offset of current segment.
+        let mut segment_mem_offset = 0;
         log::debug!("Data segments for module: {:#?}", data_segments);
         for (segment_id, segment) in data_segments.iter() {
             let lib_base_global_id = (!main_module).then_some(lib_base_id);
-            let header_len = dbg!(segment.header_len(
-                MEMORY_INDEX,
-                lib_base_global_id,
-                mem_start,
-                segment_offset,
-            )) as i32;
-            let out = segment.to_lib_output(lib_base_global_id, mem_start, segment_offset);
+
+            let (new_segment_offset, out) =
+                segment.to_lib_output(lib_base_global_id, mem_start, segment_mem_offset);
             // TODO: apply relocations to data segment
             if out.is_active() {
-                segment_offset += out.as_raw().len() as i32;
+                segment_mem_offset = new_segment_offset + out.as_raw().len();
             }
             if !main_module {
                 for constructor in out.globals() {
@@ -813,7 +796,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .collect::<Result<Vec<_>>>()?;
         section.segment(wasm_encoder::ElementSegment {
             mode: wasm_encoder::ElementMode::Active {
-                table: Some(0),
+                table: None,
                 offset: &wasm_encoder::ConstExpr::i32_const(1 as i32),
             },
             elements: wasm_encoder::Elements::Functions(std::borrow::Cow::Borrowed(&func_ids)),
@@ -1211,6 +1194,7 @@ pub fn emit_modules<'a>(
                 .cloned()
                 .expect("Symbols for data segment not found");
             let segment_info = module.source.linking.segments_info[data_segment].clone();
+
             DataSegment::new_inner(data.clone(), segment_info, data_symbols, data_relocs)
         })
         .collect::<Result<IdVec<_>>>()?;

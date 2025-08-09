@@ -11,14 +11,37 @@ use crate::{
     index::{DataSymbolId, Indexed},
 };
 
+/// Describes how a data symbol relates to its neighboring symbols within a segment.
+
+#[derive(Clone, Debug)]
+enum SymbolRelation<'a> {
+    /// A standalone symbol with no binding constraints.
+    Regular {
+        chunk: &'a [u8],
+        // true if data was properly aligned.
+        // If data was not aligned, it will not be aligned in output.
+        // It can report false-positive. But it is okay to align data on bigger alignment.
+        //
+        // Linking table does not contain information about symbol alignment.
+        // We use size + segment alignment to calculate if data was aligned properly.
+        aligned: bool,
+    },
+
+    /// A symbol that must stay adjacent to the previous symbol
+    /// and cannot be moved or removed independently.
+    BoundToPrevious {
+        /// minus offset from end of previous symbol to start of this symbol.
+        offset: usize,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct NamedData<'a> {
-    chunk: &'a [u8],
-
     name: &'a str,
     index: DataSymbolId,
     flags: SymbolFlags,
-    aligned: bool, // true if data is aligned to segment alignment
+    relation: SymbolRelation<'a>,
+
     // offset related to this symbol
     relocations: Vec<wasmparser::RelocationEntry>,
 }
@@ -27,8 +50,9 @@ pub struct NamedData<'a> {
 pub struct DataSegment<'a> {
     data_parts: Vec<NamedData<'a>>,
 
-    pub alignment: usize,
-    pub kind: DataKind<'a>,
+    alignment: usize,
+    kind: DataKind<'a>,
+    mem_offset: usize,
 }
 
 impl Debug for DataSegment<'_> {
@@ -73,9 +97,23 @@ impl<'a> DataSegment<'a> {
         // skip header of data segment
         let data_start = data.range.end - data.data.len();
 
+        let mem_offset = match &data.kind {
+            DataKind::Passive => 0,
+            DataKind::Active { offset_expr, .. } => {
+                crate::analysis::ModuleInfo::read_const_expr(offset_expr)?
+            }
+        };
+
+        log::debug!("Memory offset is {}", mem_offset);
+        log::debug!(
+            "Segment alignment is {}, aligned = {}",
+            alignment,
+            mem_offset % alignment as i32 == 0
+        );
+
         let mut data_parts = vec![];
         let mut relocation_iter = relocations.iter().peekable();
-        let mut prev_end = 0;
+        let mut prev = 0..0;
         for sym in symbols {
             if sym.range.len() == 0 {
                 log::error!("Data segment has zero-size symbol: {:?}", sym);
@@ -90,67 +128,81 @@ impl<'a> DataSegment<'a> {
                     ..entry.clone()
                 },
                 |entry| {
-                    let range = entry.relocation_range();
-                    match sym.range.cmp_range(range) {
+                    match sym.range.cmp_range(entry.relocation_range()) {
                         // In case relocations is not ordered, or related to more than one symbol.
-                        RangeComp::Right | RangeComp::NonComparable => {
+                        RangeComp::Right | RangeComp::NonComparable | RangeComp::Within => {
                             panic!(
                                 "BUG: Relocation entry is not related to symbols: {:?} and {:?}",
                                 sym, entry
                             );
                         }
-                        RangeComp::OverlapOrEqual => true,
+                        RangeComp::Overlap | RangeComp::Equal => true,
                         RangeComp::Left => false,
                     }
                 },
             );
 
-            let original_range = sym.range.clone().shift_left(data_start);
+            let symbol_in_data = sym.range.clone().shift_left(data_start);
 
-            let field_alignment = std::cmp::min(alignment, original_range.len());
-            let aligned = original_range.start % field_alignment == 0;
-            let chunk = &data.data[original_range.clone()];
+            let field_alignment = std::cmp::min(alignment, symbol_in_data.len());
 
-            if prev_end < original_range.start {
-                let gap_range = prev_end..original_range.start;
-
-                if gap_range.len() >= alignment {
-                    log::debug!(
-                        "Data segment has gap larger than alignment: {:?} > {} before {}",
-                        gap_range,
-                        alignment,
-                        sym.data_in_segment.name
-                    );
-                } else {
-                    log::debug!(
-                        "Data segment has gap: {:?} ({} bytes) before {}",
-                        gap_range,
-                        gap_range.len(),
-                        sym.data_in_segment.name
-                    );
-                }
-            } else if prev_end > original_range.start {
-                log::error!(
-                    "Skipping DataSymbol that intersects with previous: {:?} range:{:?} prev_end: {}",
+            let relation = if prev.end > symbol_in_data.start {
+                log::warn!(
+                    "DataSymbol intersects with previous, this is currently in testing: {:?} range:{:?} prev_range: {:?}",
                     sym,
-                    original_range,
-                    prev_end
+                    symbol_in_data,
+                    prev
                 );
-                //TODO: SKip?
-                continue;
-            }
+                assert!(matches!(
+                    prev.cmp_range(&symbol_in_data),
+                    RangeComp::Overlap | RangeComp::Equal
+                ));
+                let offset = prev.end - symbol_in_data.start;
+                // range.intersect(other)
+                SymbolRelation::BoundToPrevious { offset: offset }
+            } else {
+                if prev.end < symbol_in_data.start {
+                    let gap_range = prev.end..symbol_in_data.start;
 
-            let name = sym.data_in_segment.name;
+                    if gap_range.len() >= alignment {
+                        log::error!(
+                            "Data segment has gap larger than alignment: {:?} > {} before {}",
+                            gap_range,
+                            alignment,
+                            sym.data_in_segment.name
+                        );
+                    } else {
+                        log::debug!(
+                            "Data segment has gap: {:?} ({} bytes) before {}",
+                            gap_range,
+                            gap_range.len(),
+                            sym.data_in_segment.name
+                        );
+                    }
+                }
+                let aligned = (symbol_in_data.start + mem_offset as usize) % field_alignment == 0;
 
-            prev_end = original_range.end;
+                log::trace!(
+                    "Data symbol {}: offset: {}, size: {}, aligned: {}, alignment: {}",
+                    sym.data_in_segment.name,
+                    symbol_in_data.start,
+                    symbol_in_data.len(),
+                    aligned,
+                    field_alignment
+                );
+                prev = symbol_in_data.clone();
+                SymbolRelation::Regular {
+                    chunk: &data.data[symbol_in_data.clone()],
+                    aligned: aligned,
+                }
+            };
 
             let part = NamedData {
-                chunk,
-                name,
+                name: sym.data_in_segment.name,
                 index: sym.symbol_index,
                 flags: sym.data_in_segment.flags,
                 relocations: entries,
-                aligned,
+                relation,
             };
             log::trace!("Data part: {part:?}");
             data_parts.push(part)
@@ -162,7 +214,12 @@ impl<'a> DataSegment<'a> {
             alignment,
             data_parts,
             kind,
+            mem_offset: mem_offset as usize,
         })
+    }
+
+    pub fn memory_offset(&self) -> usize {
+        self.mem_offset
     }
 
     fn collect_and_map_while<'any, I, U>(
@@ -184,32 +241,54 @@ impl<'a> DataSegment<'a> {
     pub fn retain_symbols(&mut self, indexes: &HashSet<DataSymbolId>) {
         let mut result = vec![];
 
-        for item in self.data_parts.drain(..) {
-            if !indexes.contains(&item.index) {
-                continue;
+        {
+            let mut parts_iter = self.data_parts.drain(..).peekable();
+            let mut last_regular_removed = false;
+            for item in &mut parts_iter {
+                let remove = !indexes.contains(&item.index);
+
+                match item.relation {
+                    SymbolRelation::BoundToPrevious { .. } => {
+                        if remove != last_regular_removed {
+                            panic!(
+                                "BUG: Data segment has bound symbol that is removed:{}, but previous symbol removed: {}",
+                                item.index,
+                                last_regular_removed
+                            );
+                        }
+                    }
+                    SymbolRelation::Regular { .. } => {
+                        last_regular_removed = remove;
+                    }
+                }
+                if remove {
+                    continue;
+                }
+                result.push(item);
             }
-            result.push(item);
         }
 
         self.data_parts = result;
     }
 
-    pub fn data_len(&self, segment_misalignment: usize) -> usize {
+    pub fn data_len(&self, segment_offset: usize) -> usize {
         let mut len = 0;
 
         for data_part in &self.data_parts {
-            let current_offset = segment_misalignment + len;
-            let field_alignment = std::cmp::min(self.alignment, data_part.chunk.len());
-            // Determine how far off we are from the required alignment
-            let misalignment = current_offset % field_alignment;
+            let SymbolRelation::Regular { chunk, aligned } = data_part.relation else {
+                // BoundToPrevious symbols are not counted in data length
+                continue;
+            };
+            let current_offset = segment_offset + len;
 
             // If we're not aligned, add padding
-            if data_part.aligned && misalignment != 0 {
-                let padding = field_alignment - misalignment;
+            if aligned {
+                let field_alignment = self.field_alignment(chunk.len());
+                let padding = Self::calculate_padding(current_offset, field_alignment);
                 len += padding;
             }
 
-            len += data_part.chunk.len();
+            len += chunk.len();
         }
 
         len
@@ -219,10 +298,10 @@ impl<'a> DataSegment<'a> {
         &self,
         memory_index: u32,
         lib_base_global_id: Option<u32>,
-        mem_start: i32,
-        segment_offset: i32,
+        mem_start: usize,
+        segment_offset: usize,
     ) -> usize {
-        let (data_init, segment_misalignment) =
+        let (data_init, segment_offset) =
             self.segment_header(mem_start, segment_offset, lib_base_global_id);
         let len = match data_init {
             None => 1,
@@ -237,89 +316,141 @@ impl<'a> DataSegment<'a> {
             }
         };
 
-        len + encoding_size(self.data_len(segment_misalignment) as u32)
+        len + encoding_size(self.data_len(segment_offset) as u32)
     }
 
-    /// Compute data init offset and segment misalignment.
-    /// Returns (offset_expr, segment_misalignment)
+    /// Compute data init offset and alligned segment_offset.
+    /// Returns (offset_expr, segment_offset)
     fn segment_header(
         &self,
-        mem_start: i32,
-        segment_offset: i32,
+        mem_start: usize,
+        mut segment_offset: usize,
         lib_base_global_id: Option<u32>,
     ) -> (Option<wasm_encoder::ConstExpr>, usize) {
         match self.kind {
             DataKind::Passive => (None, 0),
             DataKind::Active { .. } => {
-                let (offset_expr, segment_misalignment) = match lib_base_global_id {
-                    None => (
-                        wasm_encoder::ConstExpr::i32_const(mem_start + segment_offset),
-                        (mem_start + segment_offset) as usize % self.alignment,
-                    ),
-                    Some(lib_base_global_id) => {
-                        // submodules use lib_base_id
-                        (
-                            wasm_encoder::ConstExpr::global_get(lib_base_global_id)
-                                .with_i32_const(segment_offset)
-                                .with_i32_add(),
-                            segment_offset as usize % self.alignment,
+                let offset_expr = match lib_base_global_id {
+                    None => {
+                        segment_offset +=
+                            Self::calculate_padding(mem_start + segment_offset, self.alignment);
+                        wasm_encoder::ConstExpr::i32_const(
+                            (mem_start + segment_offset).try_into().unwrap(),
                         )
                     }
+                    Some(lib_base_global_id) => {
+                        // submodules use lib_base_id
+                        {
+                            segment_offset +=
+                                Self::calculate_padding(segment_offset, self.alignment);
+                            wasm_encoder::ConstExpr::global_get(lib_base_global_id)
+                                .with_i32_const(segment_offset.try_into().unwrap())
+                                .with_i32_add()
+                        }
+                    }
                 };
-                (Some(offset_expr), segment_misalignment)
+                (Some(offset_expr), segment_offset)
             }
+        }
+    }
+
+    fn field_alignment(&self, chunk_size: usize) -> usize {
+        let alignment = 1usize << chunk_size.trailing_zeros();
+        std::cmp::min(self.alignment, alignment)
+    }
+
+    fn calculate_padding(starting_point: usize, alignment: usize) -> usize {
+        let misalignment = starting_point % alignment;
+        if misalignment == 0 {
+            0
+        } else {
+            alignment - misalignment
         }
     }
 
     pub fn to_lib_output(
         &self,
         lib_base_global_id: Option<u32>,
-        mem_start: i32,
-        segment_offset: i32,
-    ) -> DataSegmentOutput {
+        mem_start: usize,
+        segment_offset: usize,
+        //TODO: move segment_offset padding outside
+    ) -> (usize, DataSegmentOutput) {
         const BYTE_FILLER: u8 = 0;
         let mut all_relocations = Vec::new();
 
         let mut data = Vec::new();
 
-        let (data_init, segment_misalignment) =
+        log::debug!("Segment offset before is {}", mem_start + segment_offset);
+        let (data_init, segment_offset) =
             self.segment_header(mem_start, segment_offset, lib_base_global_id);
+
+        log::debug!("Segment offset is {}", mem_start + segment_offset);
         let mut globals = Vec::new();
         for symbol in &self.data_parts {
-            let total_offset = data.len() + segment_misalignment;
-            let field_alignment = std::cmp::min(self.alignment, symbol.chunk.len());
-            let misalignment = total_offset % field_alignment;
+            match symbol.relation {
+                SymbolRelation::BoundToPrevious { offset } => {
+                    // BoundToPrevious symbols are not counted in data length
+                    log::debug!(
+                        "BoundToPrevious symbol {}: {offset} is not counted in data length",
+                        symbol.name
+                    );
 
-            // add padding to align data
-            if symbol.aligned && misalignment != 0 {
-                let padding = field_alignment - misalignment;
-                log::debug!(
-                    "Add padding before data symbol {}: {padding} bytes",
-                    symbol.name
-                );
-                data.resize(data.len() + padding, BYTE_FILLER);
-            }
-
-            globals.push(DataSymbol {
-                data_offset: data.len() as i32,
-                symbol_index: symbol.index,
-                type_info: super::globals::GlobalConstructor::POINTER_TYPE,
-            });
-            all_relocations.extend(symbol.relocations.iter().map(|entry| {
-                wasmparser::RelocationEntry {
-                    offset: entry.offset + data.len() as u32,
-                    ..entry.clone()
+                    globals.push(DataSymbol {
+                        data_offset: data.len() - offset,
+                        symbol_index: symbol.index,
+                        type_info: super::globals::GlobalConstructor::POINTER_TYPE,
+                    });
                 }
-            }));
-            data.extend_from_slice(symbol.chunk);
+                SymbolRelation::Regular { chunk, aligned } => {
+                    let total_offset = data.len() + segment_offset as usize;
+
+                    // add padding to align data
+                    if aligned {
+                        let field_alignment = self.field_alignment(chunk.len()); //std::cmp::min(self.alignment, chunk.len());
+
+                        let padding = Self::calculate_padding(total_offset, field_alignment);
+                        if padding > 0 {
+                            log::debug!(
+                                "Add padding before data symbol {}: {padding} bytes",
+                                symbol.name
+                            );
+
+                            data.resize(data.len() + padding, BYTE_FILLER);
+                        }
+                    }
+                    log::trace!(
+                        "Data symbol {}: offset: {}, size: {}, aligned: {}",
+                        symbol.name,
+                        data.len(),
+                        chunk.len(),
+                        aligned
+                    );
+
+                    globals.push(DataSymbol {
+                        data_offset: data.len(),
+                        symbol_index: symbol.index,
+                        type_info: super::globals::GlobalConstructor::POINTER_TYPE,
+                    });
+                    all_relocations.extend(symbol.relocations.iter().map(|entry| {
+                        wasmparser::RelocationEntry {
+                            offset: entry.offset + data.len() as u32,
+                            ..entry.clone()
+                        }
+                    }));
+                    data.extend_from_slice(chunk);
+                }
+            }
         }
-        DataSegmentOutput {
-            memory_offset: mem_start + segment_offset,
-            data_init,
-            data,
-            globals,
-            relocations: all_relocations,
-        }
+        (
+            segment_offset,
+            DataSegmentOutput {
+                memory_offset: mem_start + segment_offset,
+                data_init,
+                data,
+                globals,
+                relocations: all_relocations,
+            },
+        )
     }
 }
 
@@ -327,7 +458,7 @@ impl<'a> DataSegment<'a> {
 pub struct DataSegmentOutput {
     data_init: Option<wasm_encoder::ConstExpr>,
     // only for active segments
-    memory_offset: i32,
+    memory_offset: usize,
     data: Vec<u8>,
     globals: Vec<super::globals::DataSymbol>,
     relocations: Vec<wasmparser::RelocationEntry>,
@@ -358,7 +489,7 @@ impl DataSegmentOutput {
     pub fn is_active(&self) -> bool {
         self.data_init.is_some()
     }
-    pub fn memory_offset(&self) -> i32 {
+    pub fn memory_offset(&self) -> usize {
         self.memory_offset
     }
 }

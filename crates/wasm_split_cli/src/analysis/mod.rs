@@ -10,7 +10,7 @@ use std::ops::Range;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use wasmparser::{Data, ElementItems, ElementKind, TypeRef};
 
-use crate::read::data;
+use crate::helpers::RangeExt;
 use crate::read::{self, linking::section::DataInSegment};
 
 use crate::index::{
@@ -306,7 +306,11 @@ fn get_data_symbols<'a>(
             });
         }
     }
-    data_symbols.sort_by_key(|symbol| symbol.range.start);
+    data_symbols.sort_by(|left, right|
+        left.range.cmp_range(&right.range)
+        .as_partial_ordering()
+        .expect("Failed to compare symbol ranges, this means that some symbol partially intesects with another symbol, which is not allowed")
+    );
 
     // assert that segment is also sorted
     if cfg!(debug_assertions) {

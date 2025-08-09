@@ -5,7 +5,7 @@ use crate::index::DataSymbolId;
 // Init global variable that will replace all usage of DataSymbol.
 #[derive(Clone, Debug)]
 pub struct DataSymbol {
-    pub data_offset: i32,
+    pub data_offset: usize,
     pub symbol_index: DataSymbolId,
     pub type_info: wasm_encoder::GlobalType,
 }
@@ -32,7 +32,7 @@ impl GlobalConstructor {
             GlobalConstructor::DataSymbol(symbol) => symbol,
         };
         wasm_encoder::ConstExpr::global_get(lib_base_id)
-            .with_i32_const(symbol.data_offset)
+            .with_i32_const(symbol.data_offset.try_into().unwrap())
             .with_i32_add()
     }
 
