@@ -1,6 +1,5 @@
 use anyhow::{anyhow, bail, Result};
 use wasm_encoder::CustomSection;
-
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 

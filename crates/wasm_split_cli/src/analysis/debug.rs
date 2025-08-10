@@ -1,11 +1,17 @@
-use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+};
 
-use crate::analysis;
-use crate::analysis::dep_graph::{DepGraph, DepNode, ReachabilityGraph};
-use crate::analysis::split_point::OutputModuleInfo;
-use crate::helpers::debug_fmt_mostly_filled;
-use crate::index::DefinedFuncId;
+use crate::{
+    analysis,
+    analysis::{
+        dep_graph::{DepGraph, DepNode, ReachabilityGraph},
+        split_point::OutputModuleInfo,
+    },
+    helpers::debug_fmt_mostly_filled,
+    index::DefinedFuncId,
+};
 
 impl ReachabilityGraph {
     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo) {

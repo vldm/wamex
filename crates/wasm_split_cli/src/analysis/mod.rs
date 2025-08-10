@@ -2,20 +2,21 @@
 //! Module with external info usefull to build dep graph, and request information about function and data entries.
 //!
 
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::ops::Range;
+use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Range};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use wasmparser::{Data, ElementItems, ElementKind, TypeRef};
 
-use crate::helpers::RangeExt;
-use crate::read::{self, linking::section::DataInSegment};
-
-use crate::index::{
-    DataSegmentId, DataSymbolId, DefinedFuncId, ElementId, ExportId, IdMap, IdVec, ImportId,
-    InputFuncId, SymbolId, TableId,
+use crate::{
+    helpers::RangeExt,
+    index::{
+        DataSegmentId, DataSymbolId, DefinedFuncId, ElementId, ExportId, IdMap, IdVec, ImportId,
+        InputFuncId, SymbolId, TableId,
+    },
+    read::{
+        linking::section::DataInSegment,
+        {self},
+    },
 };
 
 mod debug;

@@ -13,17 +13,16 @@ mod start_fn_gen;
 use std::{collections::HashMap, ops::Range};
 
 use anyhow::{bail, Result};
+use constant_extraction::ConstantExtractionEntry;
+pub use constant_extraction::GlobalVar;
+pub use relocation::RelocateState;
+pub use start_fn_gen::{StartFnGen, StartFnModifyContext};
 use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     emit::ModuleEmitState,
     index::{DefinedFuncId, GlobalId, InputFuncId, OutputGlobalId, SymbolId},
 };
-use constant_extraction::ConstantExtractionEntry;
-pub use constant_extraction::GlobalVar;
-pub use relocation::RelocateState;
-pub use start_fn_gen::StartFnGen;
-pub use start_fn_gen::StartFnModifyContext;
 #[derive(Debug)]
 pub struct ModifyContext<'a> {
     pub function_name: &'a str,

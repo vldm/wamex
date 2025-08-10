@@ -1,14 +1,19 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt::Debug;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    fmt::Debug,
+};
 
-use super::dep_graph::{DepGraph, DepNode, ReachabilityGraph};
-use crate::analysis;
-use crate::analysis::dep_graph::NamedGraph;
-use crate::index::{ExportId, ImportId, InputFuncId};
-use crate::read::InputModule;
 use anyhow::{anyhow, bail};
 use lazy_static::lazy_static;
 use regex::Regex;
+
+use super::dep_graph::{DepGraph, DepNode, ReachabilityGraph};
+use crate::{
+    analysis,
+    analysis::dep_graph::NamedGraph,
+    index::{ExportId, ImportId, InputFuncId},
+    read::InputModule,
+};
 
 // TODO: impl merge and use it in emit_modules as one of strategies to emit modules.
 // The other possible is to emit it as separate chunk and allow linkage.

@@ -1,33 +1,32 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::convert::identity;
-use std::ops::Range;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    convert::identity,
+    ops::Range,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
+pub use data_segments::{DataSegment, DataSegmentOutput};
 use globals::GlobalConstructor;
+use index_safety::OutputFuncId;
+use modify::{init_each_store_var, GlobalVar, ModifyContext, StoreType};
 use wasm_encoder::GlobalType;
 use wasmparser::{RelocationEntry, RelocationType, TypeRef};
 
-use crate::analysis;
-use crate::analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier};
-use crate::emit::modify::{RelocateState, StartFnGen};
-use crate::helpers::{encoding_size, iter_if};
-use crate::index::{
-    DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, Indexed, MemoryId, OutputGlobalId,
-    OutputSymbolDataId, WithOriginalIndex,
-};
-use crate::read::linking::SymbolIndex;
-use modify::{init_each_store_var, ModifyContext, StoreType};
-
 pub use crate::emit::config::{EmitConfig, EmitMemoryMode};
 use crate::{
-    analysis::dep_graph::DepNode,
-    analysis::split_point::SplitProgramInfo,
-    index::{ImportId, InputFuncId},
-    read::InputModule,
+    analysis,
+    analysis::{
+        dep_graph::DepNode,
+        split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo},
+    },
+    emit::modify::{RelocateState, StartFnGen},
+    helpers::{encoding_size, iter_if},
+    index::{
+        DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, ImportId, Indexed, InputFuncId,
+        MemoryId, OutputGlobalId, OutputSymbolDataId, WithOriginalIndex,
+    },
+    read::{linking::SymbolIndex, InputModule},
 };
-pub use data_segments::{DataSegment, DataSegmentOutput};
-use index_safety::OutputFuncId;
-use modify::GlobalVar;
 
 mod data_segments;
 mod globals;

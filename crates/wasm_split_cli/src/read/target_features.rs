@@ -1,5 +1,4 @@
 use anyhow::{bail, Result};
-
 use wasm_encoder::Encode;
 use wasmparser::{WasmFeatures, WasmFeaturesInflated};
 

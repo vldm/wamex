@@ -12,13 +12,18 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::analysis::dep_graph::DepNode;
-use crate::index::{DataSegmentId, DataSymbolId, InputFuncId};
-use nom::branch::alt;
-use nom::bytes::{tag, take_while};
-use nom::character::{complete, multispace0};
-use nom::Parser;
-use nom::{combinator::map_res, IResult};
+use nom::{
+    branch::alt,
+    bytes::{tag, take_while},
+    character::{complete, multispace0},
+    combinator::map_res,
+    IResult, Parser,
+};
+
+use crate::{
+    analysis::dep_graph::DepNode,
+    index::{DataSegmentId, DataSymbolId, InputFuncId},
+};
 
 fn parse_fn_node(input: &str) -> IResult<&str, DepNode> {
     let (input, _) = (tag("F("), multispace0()).parse(input)?;

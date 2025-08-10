@@ -1,10 +1,10 @@
+use anyhow::{bail, Result};
+use vec_map::VecMap;
+
+use super::CustomSectionReader;
 use crate::index::{
     DataSegmentId, ElementId, FuncTypeId, GlobalId, IdMap, InputFuncId, MemoryId, TableId, TagId,
 };
-
-use super::CustomSectionReader;
-use anyhow::{bail, Result};
-use vec_map::VecMap;
 
 // Custom sections
 #[derive(Default, Clone, Debug)]

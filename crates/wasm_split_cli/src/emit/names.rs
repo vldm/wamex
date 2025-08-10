@@ -1,4 +1,2 @@
 //! Encoder for name section
-//! 
-
-
+//!

@@ -4,15 +4,14 @@
 //! In order to allow "sub" modules to access to their data, we patch the code to use global variables instead of constant offsets.
 //! Later, during "sub" module loading, this global variables will be initialized with the offsets relative to their starting point.
 
+use std::ops::Range;
+
 use anyhow::{bail, Result};
 use wasm_encoder::Encode;
 use wasmparser::RelocationType;
 
-use std::ops::Range;
-
-use crate::{emit::modify::CustomModify, helpers::RangeExt, index::SymbolId};
-
 use super::{ModifyContext, StoreType};
+use crate::{emit::modify::CustomModify, helpers::RangeExt, index::SymbolId};
 
 // Represents a data relocation entry with additional information about global variable.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -34,7 +34,7 @@ unsafe extern "C" fn load_callback_sync(loader: *const std::ffi::c_void, success
 
 #[wasm_split(my_secret_exported_function_split)]
 async fn my_secret_exported_function_split() -> usize {
-42
+    42
 }
 
 #[no_mangle]

@@ -1,8 +1,5 @@
-use crate::emit::ImportedFunction;
-use crate::read::code::InputFunction;
-
-use super::DefinedFunction;
-use super::Indexed;
+use super::{DefinedFunction, Indexed};
+use crate::{emit::ImportedFunction, read::code::InputFunction};
 
 pub type OutputFuncId = crate::index::Id<DefinedFunction>;
 

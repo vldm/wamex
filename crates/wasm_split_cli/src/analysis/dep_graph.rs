@@ -10,12 +10,8 @@ use wasmparser::RelocationType;
 use crate::{
     analysis,
     helpers::RangeExt,
-    index::{DataSegmentId, DataSymbolId},
-    read::InputModule,
-};
-use crate::{
-    index::{InputFuncId, SymbolId},
-    read::linking::SymbolIndex,
+    index::{DataSegmentId, DataSymbolId, InputFuncId, SymbolId},
+    read::{linking::SymbolIndex, InputModule},
 };
 
 #[derive(PartialEq, Eq, Hash, Copy, PartialOrd, Ord, Clone)]
@@ -396,6 +392,7 @@ mod tests {
     use std::collections::HashSet;
 
     use lazy_static::lazy_static;
+    use testing::tests::function;
 
     use crate::{
         analysis::{
@@ -405,8 +402,6 @@ mod tests {
         },
         read,
     };
-
-    use testing::tests::function;
 
     // checkout test-data/simple-graph crate at root (just keep wasm in case rustc changes)
     const WASM_FILE: &[u8] = include_bytes!("../../test-data/simple_graph.wasm");

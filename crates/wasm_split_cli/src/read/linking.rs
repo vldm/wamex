@@ -1,6 +1,5 @@
 use anyhow::Result;
 use vec_map::VecMap;
-
 use wasmparser::{Comdat, InitFunc, Segment};
 
 use super::CustomSectionReader;

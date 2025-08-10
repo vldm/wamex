@@ -1,6 +1,6 @@
 use std::pin::Pin;
-use wasm_bindgen::prelude::*;
 
+use wasm_bindgen::prelude::*;
 #[cfg(feature = "split")]
 use wasm_split::wasm_split;
 

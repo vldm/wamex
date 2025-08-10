@@ -7,7 +7,10 @@ use wasmparser::{Data, Global};
 
 use crate::{
     index::{Id, IdVec, Indexed},
-    read::{self, code::FunctionWithBody},
+    read::{
+        code::FunctionWithBody,
+        {self},
+    },
 };
 
 pub struct Compare<'any, 'src> {
