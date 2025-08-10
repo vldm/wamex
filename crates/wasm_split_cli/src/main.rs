@@ -16,7 +16,7 @@ mod read;
 
 use read::InputModule;
 
-use crate::emit::EmitStrategy;
+use crate::emit::EmitConfig;
 
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
@@ -183,7 +183,7 @@ fn roundtrip(args: Roundtrip) -> Result<()> {
     crate::emit::emit_modules(
         &info,
         &split_program_info,
-        EmitStrategy::default(),
+        EmitConfig::default(),
         &|_: usize, data: &[u8]| -> Result<()> {
             std::fs::write(&args.output, data)?;
             Ok(())
@@ -215,7 +215,7 @@ fn split(args: Split) -> Result<()> {
     crate::emit::emit_modules(
         &info,
         &split_program_info,
-        EmitStrategy::default(),
+        EmitConfig::default(),
         &|output_module_index: usize, data: &[u8]| -> Result<()> {
             let identifier = &split_program_info.output_modules[output_module_index].0;
             let output_filename = identifier.name() + ".wasm";
