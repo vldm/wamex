@@ -19,3 +19,6 @@ nom = { version = "8.0.0", features = ["std"] }
 hex = "0.4.3"
 similar = { version = "2", features = ["inline"] }
 colored = "3"
+
+[dev-dependencies]
+tempdir = "0.3"
