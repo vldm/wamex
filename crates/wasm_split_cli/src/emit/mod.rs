@@ -609,17 +609,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     fn get_function_type(&self, index: OutputFuncId) -> FuncTypeId {
         let input_func_id = self._get_input_func_id(index);
 
-        let Some(defined_index) = self.info.as_defined_function_id(input_func_id) else {
-            // It's import function - recover from import id.
-            let import_id =
-                self.info.import_funcs_info.imported_funcs[input_func_id.as_raw_index()];
-            let TypeRef::Func(ty) = self.info.source.imports[import_id].ty else {
-                panic!("Expected function type")
-            };
-            return FuncTypeId::from_index(ty);
-        };
-        // It's a defined function.
-        self.info.source.defined_func_type_id(defined_index)
+        self.info.get_function_type_id(input_func_id)
     }
     // Get name of output function by index.
     fn get_function_name(&self, index: OutputFuncId) -> String {

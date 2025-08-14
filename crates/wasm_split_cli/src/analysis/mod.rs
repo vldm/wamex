@@ -10,13 +10,10 @@ use wasmparser::{Data, ElementItems, ElementKind, TypeRef};
 use crate::{
     helpers::RangeExt,
     index::{
-        DataSegmentId, DataSymbolId, DefinedFuncId, ElementId, ExportId, IdMap, IdVec, ImportId,
-        InputFuncId, SymbolId, TableId,
+        DataSegmentId, DataSymbolId, DefinedFuncId, ElementId, ExportId, FuncTypeId, IdMap, IdVec,
+        ImportId, InputFuncId, SymbolId, TableId,
     },
-    read::{
-        linking::section::DataInSegment,
-        {self},
-    },
+    read::{self, linking::section::DataInSegment},
 };
 
 mod debug;
@@ -188,6 +185,19 @@ impl<'a> ModuleInfo<'a> {
                     .expect("Function ID is out of bounds") as u32,
             ))
         }
+    }
+
+    pub fn get_function_type_id(&self, func_id: InputFuncId) -> FuncTypeId {
+        let Some(defined_index) = self.as_defined_function_id(func_id) else {
+            // It's import function - recover from import id.
+            let import_id = self.import_funcs_info.imported_funcs[func_id.as_raw_index()];
+            let TypeRef::Func(ty) = self.source.imports[import_id].ty else {
+                panic!("Expected function type")
+            };
+            return FuncTypeId::from_index(ty);
+        };
+        // It's a defined function.
+        self.source.defined_func_type_id(defined_index)
     }
 
     pub fn get_function_import_id(&self, func_id: InputFuncId) -> Option<ImportId> {

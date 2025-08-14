@@ -16,7 +16,6 @@ use crate::read::{
 
 pub type SymbolId = usize;
 pub type SectionId = usize;
-pub type OutputFuncId = usize;
 pub type OutputSymbolDataId = usize;
 pub type OutputGlobalId = u32;
 

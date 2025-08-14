@@ -9,3 +9,7 @@
 8. process only relocation entry specific for section
 9. Cleanup exports from sub-modules 
 10. Add imports for data symbols.
+
+
+- Use mut global and init in start fn
+- Patch code from call -> call indirect table.

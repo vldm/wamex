@@ -3,15 +3,24 @@ During development of large WebAssembly application, some pieces of app can be r
 but they still needed to be downloaded by browser.
 This can lead to large initial download size and slow loading time.
 
-Another common problem is that feedback loop for such application is too slow.
-This is because the whole module needs to be recompiled and then reloaded.
+Another common problem is that during development - feedback loop for such application is too slow.
+This is because the whole module needs to be recompiled and reloaded, also there is no way to resume application state after reload.
 Reducing recompilation time can significantly improve development experience, another solution is to implement some kind of hot reloading.
 Dioxus and Leptos are both implementing hot reloading, but it is limited only for html layout changes.
-Changing logic of the application requires full reload of the page.
+And currently changing logic of the application requires full reload of the page.
 But this reload clear all "in-memory" state. Which makes "hot reloading" not so useful.
 
 Original author of https://github.com/jbms/wasm-split-prototype/tree/main was aimed on solving first problem.
 This project is based on that prototype but in mind with js [HMR](https://pinia.vuejs.org/cookbook/hot-module-replacement.html).
+
+This tool is designed to split one large WebAssembly module into multiple modules.
+All entrypoints of the application are kept in the main module. As in https://emscripten.org/docs/optimizing/Module-Splitting.html
+the main module is compatible by exports-imports with the source module (except imports of sub modules).
+
+Sub modules are extracted from the source module, they contain their own entrypoint functions and all unique dependencies (function or data symbols).
+Sub modules can be loaded lazily, or eagerly, depending on the use case.
+
+
 
 # Implementation details
 
@@ -37,14 +46,14 @@ fn main(hot: bool) -> &str {
 ```
 In this code graph will look like this:
 ```
-fn main
-├── MAIN_STR
-├── fn sub_method
-│   └── VAR
-└── MAIN_STR
+fn: main
+├── DATA: MAIN_STR
+├── fn: sub_method
+│   └── DATA: VAR
+└── DATA: MAIN_STR
 ```
 The `main` function depends on `MAIN_STR` and `sub_method`, which in turn depends on `VAR`.
-By default (without `no_mangle` attribute) `VAR` and `MAIN_STR` is not exported as global variable, but it symbol information 
+`VAR` and `MAIN_STR` is not exported as global variable in WASM, but it symbol information 
 is still available in the `linking` section of the WASM module. Names of functions are available in the `name` section.
 
 The `relocation` table represents uses of these symbols in the code and data segments.
@@ -62,3 +71,79 @@ that was implemented in the original prototype. Sub module should contain two fu
 - `__wasm_split_00{SUB_MODULE_NAME}00_export_{RANDOM_ID}` - this function is sub module entry point, it is defined in the sub module and exported to the main module.
 - `__wasm_split_00{SUB_MODULE_NAME}00_import_{RANDOM_ID}` - this function is used in the main module to lazy load sub module and call it's entry point.
 
+## Module declaration:
+
+```json
+{
+    "main": {
+        // list of all exported functions
+        "provides": [
+            {
+                "name": "main_exported_function",
+                "content_hash": "hash_of_function",
+                "signature": "signature_of_function"
+            },
+            {
+                "name": "main_data_field",
+                "content_hash": "hash_of_data",
+                "signature": "signature_of_data"
+            }
+        ],
+        // list of all dependencies
+        "deps": {
+            "sub_module": {
+
+                "symbols": [
+                    {
+                        "name": "sub_module_exported_function",
+                        // ?
+                        "content_hash": "hash_of_function",
+                        "signature": "signature_of_function"
+                    }
+                ]
+            }
+        },
+        
+    },
+    "sub_module": {
+        "version": "hash",
+        // list of all exported functions
+        "provides": [
+            {
+                "name": "sub_module_exported_function",
+                "content_hash": "hash_of_function",
+                "signature": "signature_of_function"
+            }
+        ],
+        // list of all dependencies
+        "deps": {
+            "main_module": {
+
+                "symbols": [
+                    {
+                        "name": "main_module_data",
+                        // ?
+                        "content_hash": "hash_of_data",
+                        "signature": "signature_of_data"
+                    }
+                ]
+            }
+        },
+    },
+    // Save symbols
+    "snapshot": {
+        // Vec<(name, hash)> of the symbol
+        "symbols": [
+            {
+            "name": "hash",
+            "other_name": "hash",
+            }
+            // ...
+        ],
+        // Map<ID, Vec<ID>> of dependencies, where ID is index in the `symbols` array
+        "deps":{
+            0:[1, 2],
+        }
+    }
+}
+```

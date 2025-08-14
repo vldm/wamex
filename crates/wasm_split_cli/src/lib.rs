@@ -1,14 +1,19 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use analysis::split_point::SplitProgramInfo;
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 // todo: Refactor analysis and emit modules.
 mod analysis;
 mod emit;
 mod helpers;
 mod index;
+#[cfg(feature = "metadata")]
+mod metadata;
 
 mod diff;
 // mod js_glue;
@@ -17,6 +22,37 @@ mod read;
 pub use read::InputModule;
 
 use crate::emit::EmitConfig;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, ValueEnum)]
+pub enum ModuleStructure {
+    // Includes all shared chunks into main module.
+    BigMain,
+    // Emit chunks into separate modules.
+    EmitChunks,
+    // Emit chunks with main module.
+    EmitMainChunked,
+}
+impl ToString for ModuleStructure {
+    fn to_string(&self) -> String {
+        match self {
+            ModuleStructure::BigMain => "big-main".to_string(),
+            ModuleStructure::EmitChunks => "emit-chunks".to_string(),
+            ModuleStructure::EmitMainChunked => "emit-main-chunked".to_string(),
+        }
+    }
+}
+impl FromStr for ModuleStructure {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "big-main" => Ok(ModuleStructure::BigMain),
+            "emit-chunks" => Ok(ModuleStructure::EmitChunks),
+            "emit-main-chunked" => Ok(ModuleStructure::EmitMainChunked),
+            _ => Err(format!("Unknown module structure: {s}")),
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
@@ -28,14 +64,22 @@ pub struct Cli {
 #[command(name = "wasm-split")]
 pub struct Split {
     /// Input .wasm file.
-    pub input: Box<Path>,
+    pub input: PathBuf,
 
     /// Output directory.
-    pub output: Box<Path>,
+    pub output: PathBuf,
 
     /// Print verbose split information.
+    /// Also if metadata is enabled, it will print it in pretty JSON format.
     #[arg(short, long)]
     pub verbose: bool,
+
+    #[arg(short, long)]
+    pub metadata: bool,
+
+    /// Module structure.
+    #[arg(long, default_value_t = ModuleStructure::EmitMainChunked)]
+    pub module_structure: ModuleStructure,
 }
 
 #[derive(Debug, Args)]
@@ -193,7 +237,6 @@ pub fn split(args: Split) -> Result<()> {
     let info = analysis::ModuleInfo::new(&module)?;
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
-    log::info!("dep_graph={dep_graph:?}");
     let split_points = analysis::split_point::find_split_points(&module, &info)?;
 
     log::debug!("split_points={split_points:?}");
@@ -202,6 +245,7 @@ pub fn split(args: Split) -> Result<()> {
 
     log::debug!("split_program_info={split_program_info:?}");
     if args.verbose {
+        println!("dep_graph={dep_graph:?}");
         for (name, split_deps) in split_program_info.output_modules.iter() {
             split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
         }
@@ -220,6 +264,18 @@ pub fn split(args: Split) -> Result<()> {
             Ok(())
         },
     )?;
+
+    #[cfg(feature = "metadata")]
+    if args.metadata {
+        let metadata_path = args.output.join("metadata.json");
+        let metadata = metadata::build_metadata(&info, &split_program_info, args.module_structure);
+        let metadata_json = if args.verbose {
+            serde_json::to_string_pretty(&metadata)?
+        } else {
+            serde_json::to_string(&metadata)?
+        };
+        std::fs::write(metadata_path, metadata_json)?;
+    }
 
     Ok(())
 }

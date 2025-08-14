@@ -22,6 +22,7 @@ pub struct OutputModuleInfo {
     pub included_symbols: HashSet<DepNode>,
     // Shared imports that should be imported from other modules.
     pub link_symbols: HashSet<DepNode>,
+    // TODO: Instead of split points we need list of what "split-points" we exports, and what we imports
     pub split_points: Vec<SplitPoint>,
 }
 
@@ -158,6 +159,12 @@ impl SplitModuleIdentifier {
             Self::Shared(_) => None,
         }
     }
+    pub fn is_shared(&self) -> bool {
+        matches!(self, Self::Shared(_))
+    }
+    pub fn is_main(&self) -> bool {
+        matches!(self, Self::Single(ModuleIdentifier::Main))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -236,7 +243,6 @@ impl SplitProgramInfo {
             }
 
             let split_functions = ReachabilityGraph::find_reachable_deps(dep_graph, &roots);
-            split_functions.print(&format!("split_{module_name}"), info);
             named_modules.push(NamedGraph::new(
                 ModuleIdentifier::Split(module_name.clone()),
                 split_functions,
@@ -250,12 +256,21 @@ impl SplitProgramInfo {
 
         split_module_contents.extend(named_modules.into_iter().map(|named_graph| {
             let link_symbols = named_graph.linked_nodes().clone();
+            // TODO: Rewrite this
+            let split_points = split_points_by_module
+                .get(named_graph.module.name())
+                .iter()
+                .copied()
+                .flatten()
+                .copied()
+                .cloned()
+                .collect();
             (
                 SplitModuleIdentifier::Single(named_graph.module),
                 OutputModuleInfo {
                     included_symbols: named_graph.deps.reachable,
                     link_symbols,
-                    ..Default::default()
+                    split_points,
                 },
             )
         }));

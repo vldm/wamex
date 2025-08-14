@@ -23,7 +23,10 @@ pub enum CallABI {
     // TODO: We can combine ABI, for main module keeping CallIndirect, with manual 'ensure' and for leaf modules use ImportExport.
     ImportExport,
     /// Use `call_indirect` to call functions.
-    CallIndirect,
+    CallIndirect {
+        /// Sets whether to share main __indirect_table or create a new isolated table for each sub-module.
+        share_main_table: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

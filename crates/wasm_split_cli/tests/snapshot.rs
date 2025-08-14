@@ -1,12 +1,11 @@
 #![feature(trace_macros)]
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Result};
-use clap::Parser;
 use tempdir::TempDir;
 use wasm_split_cli::{split, InputModule, Split};
 
@@ -17,6 +16,8 @@ fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
         input: src.into(),
         output: output_temp.path().into(),
         verbose: false,
+        metadata: false,
+        module_structure: wasm_split_cli::ModuleStructure::EmitMainChunked,
     };
     split(cli)?;
 

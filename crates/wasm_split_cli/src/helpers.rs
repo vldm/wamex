@@ -160,6 +160,24 @@ pub fn encoding_size(n: u32) -> usize {
     pos
 }
 
+#[cfg(feature = "demangle")]
+pub fn demangle_name(name: &str) -> (String, String) {
+    let name = rustc_demangle::demangle(name);
+    let full = name.to_string();
+    let start = format!("{:#}", name);
+    let suffix = full
+        .strip_prefix(&start)
+        .and_then(|s| s.strip_prefix("::h"))
+        .map_or_else(String::new, |s| s.to_string());
+
+    (start, suffix)
+}
+
+#[cfg(not(feature = "demangle"))]
+pub fn demangle_name(name: &str) -> (String, String) {
+    (name.to_string(), String::new())
+}
+
 #[cfg(test)]
 mod tests {
 
