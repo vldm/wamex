@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-pub use data_segments::{DataSegment, DataSegmentOutput};
+pub use data_segments::{DataSegment, DataSegmentOutput, NamedData, SymbolRelation};
 use globals::GlobalConstructor;
 use index_safety::OutputFuncId;
 use modify::{init_each_store_var, GlobalVar, ModifyContext, StoreType};
@@ -470,7 +470,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         }
     }
 
-    fn get_relocations_for_range<'b>(
+    pub fn get_relocations_for_range<'b>(
         all_relocations: &'b [wasmparser::RelocationEntry],
         range: &Range<usize>,
     ) -> &'b [wasmparser::RelocationEntry] {
@@ -1057,7 +1057,21 @@ pub struct EmitInfo {
 
 impl EmitInfo {
     fn new(module: &InputModule<'_>, program_info: &SplitProgramInfo) -> Result<Self> {
-        let mut all_relocations = Vec::<RelocationEntry>::new();
+        let all_relocations = Self::all_relocations(module)?;
+        let mut split_point_imports = HashSet::<ImportId>::new();
+        for (_, output_module) in program_info.output_modules.iter() {
+            for split_point in output_module.split_points.iter() {
+                split_point_imports.insert(split_point.import);
+            }
+        }
+        Ok(EmitInfo {
+            all_relocations,
+            split_point_imports,
+        })
+    }
+
+    pub fn all_relocations(module: &InputModule<'_>) -> Result<Vec<RelocationEntry>> {
+        let mut all_relocations = Vec::new();
         for (section_index, section_offset) in [
             (module.code.section_index, module.code.starting_offset),
             (module.data.section_index, module.data.starting_offset),
@@ -1080,16 +1094,7 @@ impl EmitInfo {
             }
         }
         all_relocations.sort_by_key(|reloc| reloc.offset);
-        let mut split_point_imports = HashSet::<ImportId>::new();
-        for (_, output_module) in program_info.output_modules.iter() {
-            for split_point in output_module.split_points.iter() {
-                split_point_imports.insert(split_point.import);
-            }
-        }
-        Ok(EmitInfo {
-            all_relocations,
-            split_point_imports,
-        })
+        Ok(all_relocations)
     }
 }
 

@@ -45,16 +45,22 @@ impl ReachabilityGraph {
 
         let format_dep = |dep: &DepNode| match dep {
             DepNode::Function(index) => {
-                let name = info.source.names.functions.get(*index);
+                let name = info
+                    .source
+                    .names
+                    .functions
+                    .get(*index)
+                    .map(|n| crate::helpers::demangle_full(n));
                 format!("func[{index}] <{name:?}> (size={})", size_fn(dep))
             }
             DepNode::DataSymbol(segment, idx) => {
-                let symbol = info
-                    .source
-                    .linking
-                    .get_data_in_segment(*segment, *idx)
-                    .expect("indexes should be valid")
-                    .name;
+                let symbol = crate::helpers::demangle_full(
+                    info.source
+                        .linking
+                        .get_data_in_segment(*segment, *idx)
+                        .expect("indexes should be valid")
+                        .name,
+                );
                 let segment_name = info.source.names.data_segments[*segment];
                 format!(
                     "data[{segment}:{idx}] {segment_name}<{symbol:?}> (size={})",

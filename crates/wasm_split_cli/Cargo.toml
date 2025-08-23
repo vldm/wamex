@@ -19,11 +19,12 @@ nom = { version = "8.0.0", features = ["std"] }
 hex = "0.4.3"
 similar = { version = "2", features = ["inline"] }
 colored = "3"
+derivative = "2.2"
 
 serde_json = { version = "1.0.104", optional = true }
 serde = { version = "1.0.130", features = ["derive"], optional = true }
 rustc-demangle = { version = "0.1.24", optional = true }
-
+gxhash = { version = "3.5", optional = true }
 
 [dev-dependencies]
 tempdir = "0.3"
@@ -31,5 +32,5 @@ tempdir = "0.3"
 
 [features]
 default = ["metadata", "demangle"]
-metadata = ["dep:serde_json", "dep:serde"]
+metadata = ["demangle", "dep:serde_json", "dep:serde", "dep:gxhash"]
 demangle = ["dep:rustc-demangle"]

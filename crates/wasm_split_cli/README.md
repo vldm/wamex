@@ -134,10 +134,10 @@ that was implemented in the original prototype. Sub module should contain two fu
     "snapshot": {
         // Vec<(name, hash)> of the symbol
         "symbols": [
-            {
-            "name": "hash",
-            "other_name": "hash",
-            }
+            // Symbol stored as tuple to make it ordered and compact (avoid repeating field names)
+            // signature contain name and type of the symbol
+            ["signature", "hash"],
+            ["other_signature", "hash"],
             // ...
         ],
         // Map<ID, Vec<ID>> of dependencies, where ID is index in the `symbols` array

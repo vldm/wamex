@@ -162,7 +162,7 @@ impl<'a> SymbolTable for InputModule<'a> {
                 None
             }
             _ => {
-                //println!("{v:?} is not supported symol dep");
+                // log::error!("{symbol_index:?} is not supported symol dep");
                 None
             }
         }
@@ -256,8 +256,8 @@ impl ReachabilityGraph {
             // Can be unreachable if cycle in graph
             let _reachable = self.reachable.remove(&node);
 
-            if let Some(childs) = graph.get(&node) {
-                for child in childs {
+            if let Some(children) = graph.get(&node) {
+                for child in children {
                     let child_parent = self.parents.get_mut(&child).expect("Parent should exist");
                     child_parent.remove(&node);
                     if child_parent.is_empty() {
@@ -630,7 +630,7 @@ mod tests {
         );
         assert_eq!(shared_entries[1].module_names, vec!["module1", "module3"]);
         assert_eq!(
-            shared_entries[1].shared_deps, // F(7) and childs are stored in [m1,m2,m3] shared deps
+            shared_entries[1].shared_deps, // F(7) and children are stored in [m1,m2,m3] shared deps
             testing::uniq_nodes("F(4) & D(5, 6)").unwrap()
         );
         for module in &[&modules[0], &modules[2]] {

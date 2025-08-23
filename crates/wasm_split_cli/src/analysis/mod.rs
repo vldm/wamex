@@ -15,7 +15,6 @@ use crate::{
     },
     read::{self, linking::section::DataInSegment},
 };
-
 mod debug;
 pub mod dep_graph;
 pub mod split_point;
@@ -168,6 +167,21 @@ impl<'a> ModuleInfo<'a> {
             op => bail!("Expected End after I32.const: {:?}", op),
         }
         return val;
+    }
+    pub fn function_id_iter<'any>(&'any self) -> impl Iterator<Item = InputFuncId> + use<'any, 'a> {
+        (0..self.import_funcs_info.imported_funcs.len())
+            .map(InputFuncId::from_index)
+            .chain(
+                self.source
+                    .code
+                    .section_payload
+                    .defined_funcs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        InputFuncId::from_index(index + self.import_funcs_info.imported_funcs.len())
+                    }),
+            )
     }
 
     pub fn is_imported_function(&self, func_id: InputFuncId) -> bool {

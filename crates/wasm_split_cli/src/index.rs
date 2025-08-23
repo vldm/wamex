@@ -35,9 +35,10 @@ pub type TagId = Id<TagType>;
 // TODO: Maybe replace Vecs with id_arena?
 // Currently the only difference is that we also use
 
+type PhantomCovariant<T> = PhantomData<fn() -> T>;
 pub struct Id<TypeTag> {
     id: usize,
-    _ty: PhantomData<fn() -> TypeTag>,
+    _ty: PhantomCovariant<TypeTag>,
 }
 // TODO: Remove this functions later
 impl<TypeTag> Id<TypeTag> {
@@ -64,7 +65,7 @@ impl<TypeTag> Id<TypeTag> {
 #[derive(Clone, PartialEq, Eq)]
 pub struct IdMap<Idx, Res> {
     vecmap: VecMap<Res>,
-    _res: PhantomData<Idx>,
+    _res: PhantomCovariant<Idx>,
 }
 impl<Idx, Res> Debug for IdMap<Idx, Res>
 where
@@ -82,7 +83,7 @@ pub struct IdVec<
     Idx = <Type as Indexed>::IndexType,
 > {
     types: Vec<Type>,
-    _idx: PhantomData<Idx>,
+    _idx: PhantomCovariant<Idx>,
 }
 impl<Type, Idx> Debug for IdVec<Type, Idx>
 where
@@ -328,17 +329,18 @@ impl_indexed_type!(MemoryType, FuncType, TagType);
 
 // TODO: replace with macro_metavar_expr_concat
 // Currently need explicitly define private type for each index
+#[macro_export]
 macro_rules! impl_standalone_index {
     ( $($ty:ident($priv:ident)),* ) => {
         $(
-            enum $priv {}
-            type $ty = Id<$priv>;
+            pub enum $priv {}
+            pub type $ty = $crate::index::Id<$priv>;
+            impl crate::index::Indexed for $priv {
+                type StaticTypeTagForIndex = $priv;
+                type IndexType = Id<$priv>;
+            }
         )*
     };
-}
-
-impl_standalone_index! {
-    Foo(_Foo)
 }
 
 // Type that maybe defined or imported.

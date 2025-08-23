@@ -6,12 +6,12 @@ use wasm_split::wasm_split;
 
 #[cfg_attr(feature = "split", wasm_split(static_str))]
 async fn static_str() -> Pin<Box<&'static str>> {
-    Box::pin("foo123123")
+    Box::pin("SUPER STATIC   STRING")
 }
 
 #[cfg_attr(feature = "split", wasm_split(string_from_static))]
 async fn string_from_static() -> Pin<Box<String>> {
-    Box::pin(String::from("other_string_bigger_size"))
+    Box::pin(String::from("OTHER   STATIC STRING"))
 }
 
 #[wasm_bindgen]

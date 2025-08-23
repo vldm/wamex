@@ -14,7 +14,7 @@ use crate::{
 /// Describes how a data symbol relates to its neighboring symbols within a segment.
 
 #[derive(Clone, Debug)]
-enum SymbolRelation<'a> {
+pub enum SymbolRelation<'a> {
     /// A standalone symbol with no binding constraints.
     Regular {
         chunk: &'a [u8],
@@ -32,6 +32,7 @@ enum SymbolRelation<'a> {
     BoundToPrevious {
         /// minus offset from end of previous symbol to start of this symbol.
         offset: usize,
+        len: usize,
     },
 }
 
@@ -44,6 +45,19 @@ pub struct NamedData<'a> {
 
     // offset related to this symbol
     relocations: Vec<wasmparser::RelocationEntry>,
+}
+
+impl NamedData<'_> {
+    pub fn name(&self) -> &str {
+        self.name
+    }
+    pub fn relocations(&self) -> &[wasmparser::RelocationEntry] {
+        &self.relocations
+    }
+    //TODO: Don't expose in public API
+    pub fn symbol_relation(&self) -> &SymbolRelation<'_> {
+        &self.relation
+    }
 }
 
 #[derive(Clone)]
@@ -159,7 +173,10 @@ impl<'a> DataSegment<'a> {
                 ));
                 let offset = prev.end - symbol_in_data.start;
                 // range.intersect(other)
-                SymbolRelation::BoundToPrevious { offset: offset }
+                SymbolRelation::BoundToPrevious {
+                    offset: offset,
+                    len: symbol_in_data.len(),
+                }
             } else {
                 if prev.end < symbol_in_data.start {
                     let gap_range = prev.end..symbol_in_data.start;
@@ -216,6 +233,13 @@ impl<'a> DataSegment<'a> {
             kind,
             mem_offset: mem_offset as usize,
         })
+    }
+    pub fn _data_symbols_iter(&self) -> impl Iterator<Item = &NamedData<'a>> {
+        self.data_parts.iter()
+    }
+
+    pub fn get_data_symbol(&self, idx: DataSymbolId) -> Option<&NamedData<'a>> {
+        self.data_parts.iter().find(|part| part.index == idx)
     }
 
     pub fn memory_offset(&self) -> usize {
@@ -388,7 +412,7 @@ impl<'a> DataSegment<'a> {
         let mut globals = Vec::new();
         for symbol in &self.data_parts {
             match symbol.relation {
-                SymbolRelation::BoundToPrevious { offset } => {
+                SymbolRelation::BoundToPrevious { offset, len } => {
                     // BoundToPrevious symbols are not counted in data length
                     log::debug!(
                         "BoundToPrevious symbol {}: {offset} is not counted in data length",
