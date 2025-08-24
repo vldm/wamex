@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use clap::Id;
 pub use data_segments::{DataSegment, DataSegmentOutput, NamedData, SymbolRelation};
 use globals::GlobalConstructor;
 use index_safety::OutputFuncId;
@@ -14,8 +15,8 @@ use wasmparser::{RelocationEntry, RelocationType, TypeRef};
 
 pub use crate::emit::config::{EmitConfig, EmitMemoryMode};
 use crate::{
-    analysis,
     analysis::{
+        self,
         dep_graph::DepNode,
         split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo},
     },
@@ -25,7 +26,7 @@ use crate::{
         DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, ImportId, Indexed, InputFuncId,
         MemoryId, OutputGlobalId, OutputSymbolDataId, WithOriginalIndex,
     },
-    read::{linking::SymbolIndex, InputModule},
+    read::{self, linking::SymbolIndex, InputModule},
 };
 
 mod data_segments;
@@ -138,7 +139,7 @@ pub struct ModuleEmitState<'any, 'src> {
     data_relocations: IdMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
 
     // src module
-    pub info: &'any analysis::ModuleInfo<'src>,
+    pub info: &'any analysis::ModuleInfo<'any, 'src>,
     // Generated fields:
     // Fields that calculated from other fields, and should be updated after any change.
     pub input_data_to_output_id: HashMap<DataId, (DataSegmentId, OutputSymbolDataId)>,
@@ -149,7 +150,7 @@ pub struct ModuleEmitState<'any, 'src> {
 const MEMORY_INDEX: u32 = 0; //TODO: Support multiple memories
 impl<'any, 'src> ModuleEmitState<'any, 'src> {
     pub fn produce_state(
-        module_info: &'any analysis::ModuleInfo<'src>,
+        module_info: &'any analysis::ModuleInfo<'any, 'src>,
         data_segments: &'any IdVec<data_segments::DataSegment<'src>>,
         emit_info: &'any EmitInfo,
         program_info: &SplitProgramInfo,
@@ -1098,8 +1099,8 @@ impl EmitInfo {
     }
 }
 
-pub fn emit_modules<'a>(
-    module: &'a analysis::ModuleInfo<'a>,
+pub fn emit_modules<'a, 'src>(
+    module: &'a analysis::ModuleInfo<'a, 'src>,
     program_info: &SplitProgramInfo,
     emit_config: EmitConfig,
     emit_fn: &dyn Fn(usize, &[u8]) -> anyhow::Result<()>,
@@ -1134,7 +1135,7 @@ pub fn emit_modules<'a>(
         .data_symbols
         .chunk_by(|left, right| left.segment_index == right.segment_index)
         .collect::<Vec<_>>();
-    let data_segments = module
+    let data_segments: IdVec<DataSegment<'src>> = module
         .source
         .data
         .section_payload
@@ -1152,7 +1153,7 @@ pub fn emit_modules<'a>(
 
             DataSegment::new_inner(data.clone(), segment_info, data_symbols, data_relocs)
         })
-        .collect::<Result<IdVec<_>>>()?;
+        .collect::<Result<IdVec<DataSegment<'src>>>>()?;
     log::debug!("Data segments with symbols: {:#?}", data_segments);
 
     for (id, output_module) in program_info.output_modules.iter() {

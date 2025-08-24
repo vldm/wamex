@@ -87,6 +87,8 @@ pub struct Split {
 pub struct Diff {
     pub left: PathBuf,
     pub right: PathBuf,
+    #[arg(short, long)]
+    pub structural: bool,
 }
 
 #[derive(Debug, Args)]
@@ -291,7 +293,7 @@ pub fn diff(args: Diff) -> Result<()> {
     let left_module = InputModule::parse(&left)?;
     let right_module = InputModule::parse(&right)?;
 
-    let diff = diff::Compare::new(&left_module, &right_module);
+    let diff = diff::Compare::new(&left_module, &right_module, args.structural);
     diff.print_diff()?;
 
     Ok(())

@@ -7,20 +7,27 @@ use wasmparser::{Data, Global};
 
 use crate::{
     index::{Id, IdVec, Indexed},
-    read::{
-        code::FunctionWithBody,
-        {self},
-    },
+    metadata,
+    read::{self, code::FunctionWithBody},
 };
 
 pub struct Compare<'any, 'src> {
     left: &'any read::InputModule<'src>,
     right: &'any read::InputModule<'src>,
+    structural: bool,
 }
 
 impl<'any, 'src> Compare<'any, 'src> {
-    pub fn new(left: &'any read::InputModule<'src>, right: &'any read::InputModule<'src>) -> Self {
-        Self { left, right }
+    pub fn new(
+        left: &'any read::InputModule<'src>,
+        right: &'any read::InputModule<'src>,
+        structural: bool,
+    ) -> Self {
+        Self {
+            left,
+            right,
+            structural,
+        }
     }
 
     /// Compare two modules and return a list of differences.
@@ -89,10 +96,50 @@ impl<'any, 'src> Compare<'any, 'src> {
 
         // self.left.code.defined_funcs.get(0).unwrap().
         print_compare_section!(print_hex_diff, code.defined_funcs);
+
+        if self.structural {
+            let left_structure = Self::module_structure_from_module(self.left);
+            let right_structure = Self::module_structure_from_module(self.right);
+            let diff = left_structure.structure.diff(&right_structure.structure);
+            for added in diff.added.iter() {
+                log::warn!("Added: {:?}", added);
+                let new_node = added.new_node.unwrap();
+
+                Self::info_parents("right", &right_structure, &new_node);
+            }
+            for removed in diff.removed.iter() {
+                log::warn!("Removed: {:?}", removed);
+                let old_node = removed.old_node.unwrap();
+                Self::info_parents("left", &left_structure, &old_node);
+            }
+        }
         // data
         // custom sections (names, linking, relocations, target_features, ...)
 
         Ok(())
+    }
+    fn info_parents(
+        context: &str,
+        modules: &crate::metadata::uniq::ModuleStructure,
+        node: &crate::metadata::uniq::GraphNode,
+    ) {
+        for parent in modules.structure.nodes[node].parents.iter() {
+            log::info!(
+                " {context} Parent: {}",
+                modules.structure.nodes[parent]
+                    .signature()
+                    .display_signature()
+            );
+        }
+    }
+
+    fn module_structure_from_module(
+        module: &read::InputModule<'src>,
+    ) -> crate::metadata::uniq::ModuleStructure {
+        let info = crate::analysis::ModuleInfo::new(module).unwrap();
+        let mut structure = crate::metadata::_build_module_structure(&info);
+        structure.refine_hashes();
+        structure
     }
     fn print_compare_data(&self) {
         let mut errors = Vec::new();

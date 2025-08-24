@@ -19,6 +19,9 @@ use crate::{
     metadata::{graph_utils::Child, Hash, SymbolSignature},
 };
 
+mod diff;
+use diff::{classify_results, extract_exact_matches, extract_fuzzy_matches, DiffResult};
+
 fn apply_empty_relocs(body: &mut [u8], relocations: &[wasmparser::RelocationEntry]) {
     for rel in relocations {
         let reloc_range = rel.relocation_range();
@@ -239,6 +242,39 @@ impl Structure {
 
         crate::metadata::Snapshot { symbols, deps }
     }
+
+    /// Diff this structure against another structure to find added, removed, and same nodes
+    pub fn diff(&self, other: &Structure) -> DiffResult {
+        // Phase 1: Build identity maps
+        let mut old_identity_map = self.build_symbol_map();
+        let mut new_identity_map = other.build_symbol_map();
+
+        // Phase 2: Find exact matches and clean maps simultaneously
+        let mut exact_matches = extract_exact_matches(&mut old_identity_map, &mut new_identity_map);
+
+        // Phase 3: Signature-based matching using context and order
+        let signature_matches = extract_fuzzy_matches(
+            &mut old_identity_map, // Already cleaned of exact matches
+            &mut new_identity_map, // Already cleaned of exact matches
+        );
+        exact_matches.extend(signature_matches);
+
+        // Phase 4: Classify results
+        classify_results(self, other, exact_matches)
+    }
+
+    fn build_symbol_map(&self) -> diff::SymbolMap {
+        let mut symbol_map = BTreeMap::new();
+
+        for (&node, info) in &self.nodes {
+            let key = (info.content_hash(), info.signature().clone());
+            let entry = symbol_map.entry(key).or_insert_with(diff::SVec::new);
+            let node_context = diff::NodeContext::new(&self, node, info);
+            entry.push(node_context);
+        }
+
+        symbol_map
+    }
 }
 
 pub struct ModuleStructure {
@@ -384,3 +420,6 @@ impl ModuleStructure {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

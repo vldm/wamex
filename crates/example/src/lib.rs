@@ -11,7 +11,7 @@ async fn static_str() -> Pin<Box<&'static str>> {
 
 #[cfg_attr(feature = "split", wasm_split(string_from_static))]
 async fn string_from_static() -> Pin<Box<String>> {
-    Box::pin(String::from("OTHER   STATIC STRING"))
+    Box::pin(String::from("OTHER  STATIC STRING"))
 }
 
 #[wasm_bindgen]

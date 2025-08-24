@@ -29,10 +29,10 @@ pub struct ImportFuncsInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct DataSymbol<'a> {
+pub struct DataSymbol<'a, 'src> {
     pub segment_index: DataSegmentId,
     pub symbol_index: DataSymbolId,
-    pub data_in_segment: &'a DataInSegment<'a>,
+    pub data_in_segment: &'a DataInSegment<'src>,
     // Range relative to the start of the WebAssembly file.
     pub range: Range<usize>,
 }
@@ -41,20 +41,20 @@ pub struct DataSymbol<'a> {
 /// Like data_symbols - ordered by offsets where symbol is defined (relative to module start)
 /// and info about imported functions
 #[derive(Clone)]
-pub struct ModuleInfo<'a> {
+pub struct ModuleInfo<'a, 'src> {
     pub import_funcs_info: ImportFuncsInfo,
     // Symbol table with data entries sorted by offsets
-    pub data_symbols: Vec<DataSymbol<'a>>,
+    pub data_symbols: Vec<DataSymbol<'a, 'src>>,
 
-    pub source: &'a read::InputModule<'a>,
+    pub source: &'a read::InputModule<'src>,
     pub export_map: HashMap<(isize, SymbolId), (ExportId, &'a str)>,
 
     pub indirect_function_table_id: (TableId, ElementId),
     pub indirect_function_list: Vec<InputFuncId>,
 }
 
-impl<'a> ModuleInfo<'a> {
-    pub fn new(module: &'a read::InputModule<'a>) -> Result<ModuleInfo<'a>> {
+impl<'a, 'src> ModuleInfo<'a, 'src> {
+    pub fn new(module: &'a read::InputModule<'src>) -> Result<ModuleInfo<'a, 'src>> {
         let data_symbols = get_data_symbols(
             module.data.section_payload.data_segments.as_slice(),
             &module.linking.linking_symbols.data_in_segments,
@@ -168,7 +168,9 @@ impl<'a> ModuleInfo<'a> {
         }
         return val;
     }
-    pub fn function_id_iter<'any>(&'any self) -> impl Iterator<Item = InputFuncId> + use<'any, 'a> {
+    pub fn function_id_iter<'any>(
+        &'any self,
+    ) -> impl Iterator<Item = InputFuncId> + use<'any, 'src> {
         (0..self.import_funcs_info.imported_funcs.len())
             .map(InputFuncId::from_index)
             .chain(
@@ -221,7 +223,7 @@ impl<'a> ModuleInfo<'a> {
             .copied()
     }
 
-    pub fn find_data_symbol_by_name(&self, name: &str) -> Option<&DataSymbol<'_>> {
+    pub fn find_data_symbol_by_name(&self, name: &str) -> Option<&DataSymbol<'_, '_>> {
         self.data_symbols
             .iter()
             .find(|data_symbol| data_symbol.data_in_segment.name == name)
@@ -235,7 +237,7 @@ impl<'a> ModuleInfo<'a> {
     pub fn find_data_symbol_containing_range(
         &self,
         range: Range<usize>,
-    ) -> anyhow::Result<&DataSymbol<'_>> {
+    ) -> anyhow::Result<&DataSymbol<'_, '_>> {
         let index = Self::find_by_range(&self.data_symbols, &range, |data_symbol| {
             data_symbol.range.clone()
         })
@@ -292,10 +294,10 @@ impl<'a> ModuleInfo<'a> {
     }
 }
 
-fn get_data_symbols<'a>(
+fn get_data_symbols<'a, 'src>(
     data: &[Data],
-    symbols: &'a IdMap<DataSegmentId, IdVec<DataInSegment<'a>>>,
-) -> Result<Vec<DataSymbol<'a>>> {
+    symbols: &'a IdMap<DataSegmentId, IdVec<DataInSegment<'src>>>,
+) -> Result<Vec<DataSymbol<'a, 'src>>> {
     let mut data_symbols = Vec::new();
     for (segment_id, symbols) in symbols.iter() {
         let data_segment = data
@@ -349,7 +351,7 @@ fn get_data_symbols<'a>(
     Ok(data_symbols)
 }
 
-impl<'a> Debug for ModuleInfo<'a> {
+impl<'a, 'src> Debug for ModuleInfo<'a, 'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModuleInfo")
             .field("import_funcs_info", &self.import_funcs_info)

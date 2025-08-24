@@ -99,14 +99,14 @@ impl Debug for DataSegment<'_> {
     }
 }
 
-impl<'a> DataSegment<'a> {
+impl<'src> DataSegment<'src> {
     pub fn new_inner(
-        data: Data<'a>,
-        segment_info: wasmparser::Segment<'a>,
-        symbols: &[analysis::DataSymbol<'a>],
+        data: Data<'src>,
+        segment_info: wasmparser::Segment<'_>,
+        symbols: &[analysis::DataSymbol<'_, 'src>],
         // Save relocations related to each symbol
         relocations: &[wasmparser::RelocationEntry],
-    ) -> Result<Self> {
+    ) -> Result<DataSegment<'src>> {
         let alignment = (2usize).pow(segment_info.alignment);
         // skip header of data segment
         let data_start = data.range.end - data.data.len();
@@ -234,11 +234,11 @@ impl<'a> DataSegment<'a> {
             mem_offset: mem_offset as usize,
         })
     }
-    pub fn _data_symbols_iter(&self) -> impl Iterator<Item = &NamedData<'a>> {
+    pub fn _data_symbols_iter(&self) -> impl Iterator<Item = &NamedData<'src>> {
         self.data_parts.iter()
     }
 
-    pub fn get_data_symbol(&self, idx: DataSymbolId) -> Option<&NamedData<'a>> {
+    pub fn get_data_symbol(&self, idx: DataSymbolId) -> Option<&NamedData<'src>> {
         self.data_parts.iter().find(|part| part.index == idx)
     }
 

@@ -16,7 +16,7 @@ use crate::{
 
 mod graph_utils;
 mod linker_metadata;
-mod uniq;
+pub mod uniq;
 
 // Snapshot recovery functionality.
 #[derive(Default, Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
@@ -50,17 +50,7 @@ pub struct Metadata {
     pub modules: BTreeMap<String, Module>,
 }
 
-pub fn build_metadata_and_snapshot(
-    module: &ModuleInfo,
-    program_info: &SplitProgramInfo,
-    module_structure: ModuleStructure,
-) -> Metadata {
-    let modules = Module::build_modules_metadata(module, program_info, module_structure);
-    assert!(
-        modules.get("snapshot").is_none(),
-        "field 'snapshot' is reserved, and not allowed as module name"
-    );
-
+pub fn _build_module_structure(module: &ModuleInfo) -> uniq::ModuleStructure {
     let all_relocations =
         EmitInfo::all_relocations(module.source).expect("Failed to get all relocations");
 
@@ -116,7 +106,21 @@ pub fn build_metadata_and_snapshot(
     registry.refine_hashes();
 
     registry.warn_dups(module);
+    registry
+}
 
+pub fn build_metadata_and_snapshot(
+    module: &ModuleInfo,
+    program_info: &SplitProgramInfo,
+    module_structure: ModuleStructure,
+) -> Metadata {
+    let modules = Module::build_modules_metadata(module, program_info, module_structure);
+    assert!(
+        modules.get("snapshot").is_none(),
+        "field 'snapshot' is reserved, and not allowed as module name"
+    );
+
+    let registry = _build_module_structure(module);
     Metadata {
         snapshot: registry.structure.snapshot(),
         modules,

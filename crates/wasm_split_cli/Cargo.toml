@@ -20,6 +20,7 @@ hex = "0.4.3"
 similar = { version = "2", features = ["inline"] }
 colored = "3"
 derivative = "2.2"
+smallvec = "1.15"
 
 serde_json = { version = "1.0.104", optional = true }
 serde = { version = "1.0.130", features = ["derive"], optional = true }
