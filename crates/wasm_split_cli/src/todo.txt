@@ -13,3 +13,6 @@
 
 - Use mut global and init in start fn
 - Patch code from call -> call indirect table.
+
+- split content_hash and kWL "color" into separate fields
+- fix escaping in DemangledName::display_signature

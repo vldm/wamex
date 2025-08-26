@@ -1,12 +1,14 @@
 use digest::Digest;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{parse_macro_input, Ident, ItemFn, Signature};
 
 #[proc_macro_attribute]
 pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
     let module_ident = parse_macro_input!(args as Ident);
     let item_fn = parse_macro_input!(input as ItemFn);
+
+    let vis = item_fn.vis;
 
     let name = &item_fn.sig.ident;
 
@@ -59,7 +61,7 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
     let stmts = &item_fn.block.stmts;
 
     quote! {
-        #wrapper_sig {
+        #vis #wrapper_sig {
             thread_local! {
                 static #split_loader_ident: ::wasm_split::LazySplitLoader = unsafe { ::wasm_split::LazySplitLoader::new(#load_module_ident) };
             }
@@ -74,6 +76,8 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
                 #import_sig;
             }
 
+            ::wasm_split::ensure_loaded(&#split_loader_ident).await.unwrap();
+
             #(#attrs)*
             #[allow(improper_ctypes_definitions)]
             #[no_mangle]
@@ -81,7 +85,6 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
                 #(#stmts)*
             }
 
-            ::wasm_split::ensure_loaded(&#split_loader_ident).await.unwrap();
             unsafe { #impl_import_ident( #(#args),* ) }
         }
     }

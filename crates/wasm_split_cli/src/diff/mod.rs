@@ -1,13 +1,15 @@
 //! Find a difference between two wasm modules.
 //!
 
+use std::collections::{BTreeSet, HashSet};
+
 use colored::Colorize;
 use similar::{ChangeTag, TextDiff};
 use wasmparser::{Data, Global};
 
 use crate::{
     index::{Id, IdVec, Indexed},
-    metadata,
+    metadata::{self, uniq::GraphNode},
     read::{self, code::FunctionWithBody},
 };
 
@@ -83,6 +85,7 @@ impl<'any, 'src> Compare<'any, 'src> {
                 }
             };
         }
+
         print_compare_section!(types);
         print_compare_section!(imports);
         print_compare_section!(exports);
@@ -92,45 +95,164 @@ impl<'any, 'src> Compare<'any, 'src> {
         print_compare_section!(globals);
         print_compare_section!(memories);
 
-        self.print_compare_data();
-
-        // self.left.code.defined_funcs.get(0).unwrap().
-        print_compare_section!(print_hex_diff, code.defined_funcs);
-
         if self.structural {
             let left_structure = Self::module_structure_from_module(self.left);
             let right_structure = Self::module_structure_from_module(self.right);
             let diff = left_structure.structure.diff(&right_structure.structure);
-            for added in diff.added.iter() {
-                log::warn!("Added: {:?}", added);
-                let new_node = added.new_node.unwrap();
 
-                Self::info_parents("right", &right_structure, &new_node);
-            }
-            for removed in diff.removed.iter() {
-                log::warn!("Removed: {:?}", removed);
-                let old_node = removed.old_node.unwrap();
-                Self::info_parents("left", &left_structure, &old_node);
-            }
+            Self::print_node_tree_changes(&left_structure, &right_structure, &diff);
+            Self::print_cascade_of_changes(&left_structure, &right_structure, &diff);
+        } else {
+            self.print_compare_data();
+
+            // self.left.code.defined_funcs.get(0).unwrap().
+            print_compare_section!(print_hex_diff, code.defined_funcs);
         }
+
         // data
         // custom sections (names, linking, relocations, target_features, ...)
 
         Ok(())
     }
-    fn info_parents(
-        context: &str,
-        modules: &crate::metadata::uniq::ModuleStructure,
-        node: &crate::metadata::uniq::GraphNode,
+
+    // During diff calculation one changed node cause all its parents to be marked as changed.
+    // This function will print tree of changes
+    //  - starting from root nodes (the ones that are exported)
+    //  - going to bottom-most (leaf that actually was changed)
+    fn print_node_tree_changes(
+        old_structure: &crate::metadata::uniq::ModuleStructure,
+        new_structure: &crate::metadata::uniq::ModuleStructure,
+        diff: &crate::metadata::uniq::DiffResult,
     ) {
-        for parent in modules.structure.nodes[node].parents.iter() {
-            log::info!(
-                " {context} Parent: {}",
-                modules.structure.nodes[parent]
-                    .signature()
-                    .display_signature()
-            );
+        let mut added_nodes = BTreeSet::new();
+        let mut removed_nodes = BTreeSet::new();
+
+        for change in diff.changed.iter() {
+            if let Some(node) = &change.new_node {
+                added_nodes.insert(*node);
+            };
+            if let Some(node) = &change.old_node {
+                removed_nodes.insert(*node);
+            };
         }
+        let mut added_roots = BTreeSet::new();
+        for node in added_nodes.iter() {
+            // if no roots parents in changes - this is root of diff
+            if !new_structure.structure.nodes[node]
+                .parents
+                .iter()
+                .any(|p| added_nodes.contains(p))
+            {
+                added_roots.insert(*node);
+            }
+        }
+
+        for id in added_roots.iter() {
+            let node = &old_structure.module_nodes.get(*id).unwrap();
+            log::info!("Root {} => {:?}", id, node);
+        }
+        let mut tree_builder = ptree::TreeBuilder::new("Changes tree".to_string());
+
+        let mut tree = &mut tree_builder;
+        for root in added_roots.iter() {
+            Self::build_child_tree(root, &new_structure.structure, &added_nodes, &mut tree);
+        }
+        ptree::print_tree(&tree.build()).unwrap();
+
+        log::warn!("Added nodes: {added_nodes:?}");
+        log::warn!("Added roots: {added_roots:?}");
+    }
+
+    // Print tree of changes
+    // - starting from leafs (the one that was really changed)
+    // - going to top-most (should be root nodes - one that exported to world)
+    fn print_cascade_of_changes(
+        old_structure: &crate::metadata::uniq::ModuleStructure,
+        new_structure: &crate::metadata::uniq::ModuleStructure,
+        diff: &crate::metadata::uniq::DiffResult,
+    ) {
+        let mut added_nodes = BTreeSet::new();
+        let mut removed_nodes = BTreeSet::new();
+
+        for change in diff.changed.iter() {
+            if let Some(node) = &change.new_node {
+                added_nodes.insert(*node);
+            };
+            if let Some(node) = &change.old_node {
+                removed_nodes.insert(*node);
+            };
+        }
+
+        let mut leafs = BTreeSet::new();
+
+        for node in added_nodes.iter() {
+            if !new_structure.structure.nodes[node]
+                .children
+                .iter()
+                .any(|c| match c {
+                    crate::metadata::uniq::NodeMarker::Lazy { node: child_id, .. } => {
+                        added_nodes.contains(child_id)
+                    }
+                    _ => false,
+                })
+            {
+                leafs.insert(*node);
+            }
+        }
+
+        let mut tree_builder = ptree::TreeBuilder::new("Cascade of changes".to_string());
+
+        let mut tree = &mut tree_builder;
+        for leaf in leafs.iter() {
+            Self::build_parent_tree(leaf, &new_structure.structure, &added_nodes, &mut tree);
+        }
+        ptree::print_tree(&tree.build()).unwrap();
+
+        log::warn!("Added nodes: {added_nodes:?}");
+        log::warn!("Added leafs: {leafs:?}");
+    }
+
+    fn build_child_tree(
+        node_id: &GraphNode,
+        structure: &crate::metadata::uniq::Structure,
+        changed_nodes: &BTreeSet<GraphNode>,
+        tree: &mut ptree::TreeBuilder,
+    ) {
+        let mut used_childs = BTreeSet::new();
+        let node = &structure.nodes[node_id];
+        let name = node.signature().display_signature();
+        tree.begin_child(name.clone());
+        for child in node.children.iter() {
+            let crate::metadata::uniq::NodeMarker::Lazy { node: child_id, .. } = child else {
+                continue;
+            };
+            if !changed_nodes.contains(child_id) || used_childs.contains(child_id) {
+                continue;
+            }
+            used_childs.insert(child_id);
+            Self::build_child_tree(child_id, structure, changed_nodes, tree);
+        }
+        tree.end_child();
+    }
+
+    fn build_parent_tree(
+        node_id: &GraphNode,
+        structure: &crate::metadata::uniq::Structure,
+        changed_nodes: &BTreeSet<GraphNode>,
+        tree: &mut ptree::TreeBuilder,
+    ) {
+        let mut used_parents = BTreeSet::new();
+        let node = &structure.nodes[node_id];
+        let name = node.signature().display_signature();
+        tree.begin_child(name.clone());
+        for parent in node.parents.iter() {
+            if !changed_nodes.contains(parent) || used_parents.contains(parent) {
+                continue;
+            }
+            used_parents.insert(parent);
+            Self::build_parent_tree(parent, structure, changed_nodes, tree);
+        }
+        tree.end_child();
     }
 
     fn module_structure_from_module(

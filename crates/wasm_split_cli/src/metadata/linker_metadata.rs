@@ -61,7 +61,7 @@ pub enum Type {
     // Like structs, arrays, etc.
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialOrd, Ord, Eq, Serialize, Deserialize)]
 pub struct DemangledName {
     pub name: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -69,7 +69,7 @@ pub struct DemangledName {
     pub anonymous: bool,
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SymbolSignature {
     Function {
@@ -90,14 +90,14 @@ pub enum SymbolSignature {
     },
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Module {
     version: BumpVersion,
     provides: Vec<ExportedSymbol>,
     deps: BTreeMap<String, Vec<ExportedSymbol>>,
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ExportedSymbol {
     version: BumpVersion,
     #[serde(flatten)]
@@ -131,10 +131,13 @@ impl DemangledName {
 
     /// Check if name contains blacklisted characters that would interfere with parsing
     fn validate_for_display(&self) -> Result<String, String> {
-        const BLACKLISTED_CHARS: &[char] = &['(', ')', '<', '>', ' '];
+        const BLACKLISTED_PATTERNS: &[&str] = &["\\(", "\\)"];
 
         // Check main name for blacklisted characters
-        if let Some(bad_char) = self.name.chars().find(|c| BLACKLISTED_CHARS.contains(c)) {
+        if let Some(bad_char) = BLACKLISTED_PATTERNS
+            .iter()
+            .find(|pattern| self.name.find(*pattern).is_some())
+        {
             return Err(format!(
                 "Name '{}' contains invalid character '{}'",
                 self.name, bad_char
@@ -227,14 +230,14 @@ impl SymbolSignature {
                 let sanitized_name = name
                     .validate_for_display()
                     .expect("Function name contains invalid characters for display");
-                result.push_str(&format!(" {sanitized_name}("));
+                result.push_str(&format!(" {sanitized_name}\\("));
                 for (i, param) in params.iter().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
                     }
                     result.push_str(&format!("{param:?}"));
                 }
-                result.push_str(")");
+                result.push_str("\\)");
                 if !results.is_empty() {
                     result.push_str(" -> ");
                     for (i, result_type) in results.iter().enumerate() {
@@ -250,7 +253,7 @@ impl SymbolSignature {
                 let sanitized_name = name
                     .validate_for_display()
                     .expect("Data name contains invalid characters for display");
-                format!("data <{sanitized_name}>:{}", size)
+                format!("data \\({sanitized_name}\\):{}", size)
             }
         }
     }
@@ -264,6 +267,15 @@ impl std::hash::Hash for DemangledName {
         }
         state.write(self.name.as_bytes());
         state.write(self.distinguishing_hash.as_bytes());
+    }
+}
+
+impl PartialEq for DemangledName {
+    fn eq(&self, other: &Self) -> bool {
+        if self.anonymous && other.anonymous {
+            return true;
+        }
+        self.name == other.name
     }
 }
 
@@ -391,10 +403,10 @@ fn parse_function_signature(input: &str) -> IResult<&str, SymbolSignature> {
     let (input, _) = tag("fn").parse(input)?;
     let (input, _) = multispace1(input)?;
     let (input, name) = parse_identifier(input)?;
-    let (input, _) = char('(')(input)?;
+    let (input, _) = tag("\\(")(input)?;
     let (input, params) =
         separated_list0((multispace0, char(','), multispace0), parse_type).parse(input)?;
-    let (input, _) = char(')')(input)?;
+    let (input, _) = tag("\\)")(input)?;
 
     let (input, results) = opt(preceded(
         (multispace0, tag("->"), multispace0),
@@ -422,9 +434,9 @@ fn parse_data_signature(input: &str) -> IResult<&str, SymbolSignature> {
 
     let (input, _) = tag("data").parse(input)?;
     let (input, _) = multispace1(input)?;
-    let (input, _) = char('<')(input)?;
-    let (input, name) = take_until(">")(input)?;
-    let (input, _) = char('>')(input)?;
+    let (input, _) = tag("\\(")(input)?;
+    let (input, name) = take_until("\\)")(input)?;
+    let (input, _) = tag("\\)")(input)?;
     let (input, _) = char(':')(input)?;
     let (input, size) = map_res(digit1, |s: &str| s.parse::<u32>()).parse(input)?;
 
@@ -480,7 +492,7 @@ mod tests {
         };
 
         let display = signature.display_signature();
-        assert_eq!(display, "fn test_func(I32, F64) -> I32");
+        assert_eq!(display, "fn test_func\\(I32, F64\\) -> I32");
 
         let parsed: SymbolSignature = display.parse().unwrap();
         match parsed {
@@ -513,7 +525,7 @@ mod tests {
         };
 
         let display = signature.display_signature();
-        assert_eq!(display, "lazy fn lazy_func()");
+        assert_eq!(display, "lazy fn lazy_func\\(\\)");
 
         let parsed: SymbolSignature = display.parse().unwrap();
         match parsed {
@@ -544,7 +556,7 @@ mod tests {
         };
 
         let display = signature.display_signature();
-        assert_eq!(display, "data <my_data>:42");
+        assert_eq!(display, "data \\(my_data\\):42");
 
         let parsed: SymbolSignature = display.parse().unwrap();
         match parsed {
@@ -570,7 +582,7 @@ mod tests {
         };
 
         let display = signature.display_signature();
-        assert_eq!(display, "fn std::vector::push,pop()");
+        assert_eq!(display, "fn std::vector::push,pop\\(\\)");
 
         let parsed: SymbolSignature = display.parse().unwrap();
         match parsed {
@@ -593,7 +605,7 @@ mod tests {
     fn test_invalid_name_validation() {
         let signature = SymbolSignature::Function {
             name: DemangledName {
-                name: "func(with)invalid<chars>".to_string(),
+                name: "func\\(with\\)invalid<chars>".to_string(),
                 distinguishing_hash: String::new(),
                 anonymous: false,
             },
@@ -614,28 +626,28 @@ mod tests {
             distinguishing_hash: String::new(),
             anonymous: false,
         };
-        assert!(name_with_parens.validate_for_display().is_err());
+        assert!(name_with_parens.validate_for_display().is_ok());
 
-        let name_with_angle_brackets = DemangledName {
-            name: "func<template>".to_string(),
+        let name_with_parens = DemangledName {
+            name: "func\\(with_parens\\)".to_string(),
             distinguishing_hash: String::new(),
             anonymous: false,
         };
-        assert!(name_with_angle_brackets.validate_for_display().is_err());
+        assert!(name_with_parens.validate_for_display().is_err());
 
         let name_with_space = DemangledName {
             name: "func with space".to_string(),
             distinguishing_hash: String::new(),
             anonymous: false,
         };
-        assert!(name_with_space.validate_for_display().is_err());
+        assert!(name_with_space.validate_for_display().is_ok());
 
         let hash_with_invalid_chars = DemangledName {
             name: "valid_name".to_string(),
             distinguishing_hash: "hash(with_parens)".to_string(),
             anonymous: false,
         };
-        assert!(hash_with_invalid_chars.validate_for_display().is_err());
+        assert!(hash_with_invalid_chars.validate_for_display().is_ok());
 
         // Valid cases should work
         let valid_name = DemangledName {
@@ -649,8 +661,8 @@ mod tests {
     #[test]
     fn test_parse_error_handling() {
         assert!("invalid signature".parse::<SymbolSignature>().is_err());
-        assert!("fn incomplete(".parse::<SymbolSignature>().is_err());
-        assert!("data <incomplete".parse::<SymbolSignature>().is_err());
+        assert!("fn incomplete\\(".parse::<SymbolSignature>().is_err());
+        assert!("data \\(incomplete".parse::<SymbolSignature>().is_err());
     }
 
     #[test]
@@ -668,7 +680,7 @@ mod tests {
 
         let display = signature.display_signature();
         // Distinguishing hash should not appear in the signature
-        assert_eq!(display, "fn my_function(I32) -> F64");
+        assert_eq!(display, "fn my_function\\(I32\\) -> F64");
         assert!(!display.contains("debug_hash_info"));
 
         // Should still be able to parse it back

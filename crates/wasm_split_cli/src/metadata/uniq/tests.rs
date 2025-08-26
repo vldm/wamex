@@ -118,8 +118,30 @@ fn test_identical_functions() {
 
     let diff = old_structure.diff(&new_structure);
 
-    assert_eq!(diff.added.len(), 0);
-    assert_eq!(diff.removed.len(), 0);
+    diff.debug();
+    assert_eq!(diff.added().count(), 0);
+    assert_eq!(diff.removed().count(), 0);
+    assert_eq!(diff.same.len(), 2);
+}
+
+#[test]
+fn test_identical_data() {
+    let old_structure =
+        create_test_structure(&[], &[(".Ldata1", "hash1", 100), ("data2", "hash2", 200)]);
+    let new_structure = create_test_structure(
+        &[],
+        &[(".Ldata1_name", "hash1", 100), ("data2", "hash2", 200)],
+    ); // name for anonymous data is not important
+
+    assert_eq!(
+        old_structure.nodes[&GraphNode::from_index(1)].signature(),
+        new_structure.nodes[&GraphNode::from_index(1)].signature()
+    );
+    let diff = old_structure.diff(&new_structure);
+
+    diff.debug();
+    assert_eq!(diff.added().count(), 0);
+    assert_eq!(diff.removed().count(), 0);
     assert_eq!(diff.same.len(), 2);
 }
 
@@ -130,8 +152,10 @@ fn test_added_functions() {
 
     let diff = old_structure.diff(&new_structure);
 
-    assert_eq!(diff.added.len(), 1);
-    assert_eq!(diff.removed.len(), 0);
+    diff.debug();
+
+    assert_eq!(diff.added().count(), 1);
+    assert_eq!(diff.removed().count(), 0);
     assert_eq!(diff.same.len(), 1);
 }
 
@@ -142,8 +166,8 @@ fn test_removed_functions() {
 
     let diff = old_structure.diff(&new_structure);
 
-    assert_eq!(diff.added.len(), 0);
-    assert_eq!(diff.removed.len(), 1);
+    assert_eq!(diff.added().count(), 0);
+    assert_eq!(diff.removed().count(), 1);
     assert_eq!(diff.same.len(), 1);
 }
 
@@ -154,8 +178,8 @@ fn test_mixed_changes() {
 
     let diff = old_structure.diff(&new_structure);
 
-    assert_eq!(diff.added.len(), 1);
-    assert_eq!(diff.removed.len(), 1);
+    assert_eq!(diff.added().count(), 1);
+    assert_eq!(diff.removed().count(), 1);
     assert_eq!(diff.same.len(), 1);
 }
 
@@ -168,8 +192,8 @@ fn test_data_symbols() {
 
     let diff = old_structure.diff(&new_structure);
 
-    assert_eq!(diff.added.len(), 1);
-    assert_eq!(diff.removed.len(), 1);
+    assert_eq!(diff.added().count(), 1);
+    assert_eq!(diff.removed().count(), 1);
     assert_eq!(diff.same.len(), 1);
 }
 
@@ -198,8 +222,9 @@ fn test_usefull_refine_hashes() {
     let diff = old_structure.diff(&new_structure);
 
     diff.debug();
-    assert_eq!(diff.added.len(), 2);
-    assert_eq!(diff.removed.len(), 2);
+    assert_eq!(diff.added().count(), 0);
+    assert_eq!(diff.removed().count(), 0);
+    assert_eq!(diff.replaced().count(), 2); // Two functions were replaced
     assert_eq!(diff.same.len(), 1);
 }
 
@@ -226,8 +251,9 @@ fn test_data_symbol_conflicts_same_hash_different_parents() {
     // Parent1 -> because it doesn't refer to child anymore
     // Parent2 -> because it refer to a child (which wasn't a case before)
     // Child   -> Is same by content, but has different context (parent changed) - so it would be treated as different only if it conflict with another child
-    assert_eq!(diff.added.len(), 2);
-    assert_eq!(diff.removed.len(), 2);
+    assert_eq!(diff.replaced().count(), 2);
+    assert_eq!(diff.added().count(), 0);
+    assert_eq!(diff.removed().count(), 0);
     assert_eq!(diff.same.len(), 1);
 }
 
@@ -252,8 +278,9 @@ fn test_function_signature_hash_collision_matched_by_context() {
     let diff = old_structure.diff(&new_structure);
 
     diff.debug();
-    assert_eq!(diff.added.len(), 2); // new overloaded_func under parent_b, but parent_b is also changed
-    assert_eq!(diff.removed.len(), 1); // parent_b was removed
+    assert_eq!(diff.replaced().count(), 1); // parent_b was replaced
+    assert_eq!(diff.added().count(), 1); // new overloaded_func under parent_b
+    assert_eq!(diff.removed().count(), 0);
     assert_eq!(diff.same.len(), 2); // exact: parent_a, fuzzy: overloaded_func under parent_a
 }
 
@@ -264,14 +291,13 @@ fn test_mixed_function_data_diff() {
 
     let diff = old_structure.diff(&new_structure);
 
-    assert_eq!(diff.added.len(), 2); // func2 + data2
-    assert_eq!(diff.removed.len(), 2); // func1 + data1
+    assert_eq!(diff.added().count(), 2); // func2 + data2
+    assert_eq!(diff.removed().count(), 2); // func1 + data1
     assert_eq!(diff.same.len(), 0);
 
     // Verify that we have both function and data in added/removed
     let data_added = diff
-        .added
-        .iter()
+        .added()
         .filter(|entry| matches!(entry.signature, SymbolSignature::Data { .. }))
         .count();
     assert_eq!(data_added, 1);
@@ -294,7 +320,8 @@ fn test_parent_signature_changes_affect_context() {
     diff.debug();
     // Parent hash changed, so it's treated as removed/added
     // Child hash is the same and uniq so it's treated as the same
-    assert_eq!(diff.added.len(), 1);
-    assert_eq!(diff.removed.len(), 1);
+    assert_eq!(diff.replaced().count(), 1);
+    assert_eq!(diff.added().count(), 0);
+    assert_eq!(diff.removed().count(), 0);
     assert_eq!(diff.same.len(), 1);
 }

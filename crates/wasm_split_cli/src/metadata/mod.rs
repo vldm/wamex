@@ -35,7 +35,7 @@ impl Hash {
     }
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Snapshot {
     // Vec<(signature, hash)> of the symbol
     pub symbols: Vec<(SymbolSignature, Hash)>,
@@ -82,15 +82,15 @@ pub fn _build_module_structure(module: &ModuleInfo) -> uniq::ModuleStructure {
 
     let mut print_data_fromat = String::new();
     for (i, segment) in data_segments.iter() {
-        for (j, symbol) in segment._data_symbols_iter().enumerate() {
+        for symbol in segment._data_symbols_iter() {
             let chunk = match symbol.symbol_relation() {
                 SymbolRelation::Regular { chunk, .. } => hex::encode(chunk),
                 SymbolRelation::BoundToPrevious { .. } => "<bound to previous>".to_string(),
             };
             print_data_fromat.push_str(&format!(
-                "Data symbol {i}.{j}: {name} [{chunk}]\n",
+                "Data symbol {i}.{index}: {name} [{chunk}]\n",
                 i = i,
-                j = j,
+                index = symbol.index(),
                 name = symbol.name(),
             ));
         }

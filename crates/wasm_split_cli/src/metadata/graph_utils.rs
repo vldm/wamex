@@ -1,14 +1,24 @@
+use std::hash::Hash;
+
 use crate::{
     analysis::ModuleInfo,
     index::{DataSegmentId, DataSymbolId, InputFuncId},
     read::linking::SymbolIndex,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OtherReloc {
     pub relocation_type: wasmparser::RelocationType,
     pub id: u32,
     pub append: i64,
+}
+
+impl Hash for OtherReloc {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.relocation_type as u8).hash(state);
+        // self.id.hash(state);
+        self.append.hash(state);
+    }
 }
 
 impl Ord for OtherReloc {

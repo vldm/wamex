@@ -3,6 +3,7 @@ use std::{
     ffi::c_void,
     future::Future,
     pin::Pin,
+    process::abort,
     rc::Rc,
     task::{Context, Poll, Waker},
 };

@@ -58,6 +58,9 @@ impl NamedData<'_> {
     pub fn symbol_relation(&self) -> &SymbolRelation<'_> {
         &self.relation
     }
+    pub fn index(&self) -> DataSymbolId {
+        self.index
+    }
 }
 
 #[derive(Clone)]
@@ -174,7 +177,7 @@ impl<'src> DataSegment<'src> {
                 let offset = prev.end - symbol_in_data.start;
                 // range.intersect(other)
                 SymbolRelation::BoundToPrevious {
-                    offset: offset,
+                    offset,
                     len: symbol_in_data.len(),
                 }
             } else {
@@ -236,6 +239,18 @@ impl<'src> DataSegment<'src> {
     }
     pub fn _data_symbols_iter(&self) -> impl Iterator<Item = &NamedData<'src>> {
         self.data_parts.iter()
+    }
+    pub fn _data_symbols_rev_iter(
+        &self,
+        idx: DataSymbolId,
+    ) -> impl Iterator<Item = &NamedData<'src>> {
+        let idx = self
+            .data_parts
+            .iter()
+            .enumerate()
+            .find(|(_, part)| part.index == idx);
+        let end = idx.map(|(end, _)| end).unwrap();
+        self.data_parts[..end].iter().rev()
     }
 
     pub fn get_data_symbol(&self, idx: DataSymbolId) -> Option<&NamedData<'src>> {

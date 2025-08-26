@@ -9,7 +9,7 @@
 //!
 //! - During match we first match pairs of (content_signature, content_hash) if there are multiple candidates we trying to match by context (graph parents).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::{
     analysis::{dep_graph::DepNode, ModuleInfo},
@@ -20,7 +20,8 @@ use crate::{
 };
 
 mod diff;
-use diff::{classify_results, extract_exact_matches, extract_fuzzy_matches, DiffResult};
+pub use diff::DiffResult;
+use diff::{classify_results, extract_exact_matches, extract_fuzzy_matches};
 
 fn apply_empty_relocs(body: &mut [u8], relocations: &[wasmparser::RelocationEntry]) {
     for rel in relocations {
@@ -63,19 +64,29 @@ fn get_function_content_hash(
 
 fn get_data_chunk<'a>(
     segment_info: &'a DataSegment<'a>,
-    mut idx: DataSymbolId,
+    idx: DataSymbolId,
     data_symbol: &'a NamedData<'a>,
 ) -> &'a [u8] {
     match data_symbol.symbol_relation() {
         SymbolRelation::Regular { chunk, .. } => *chunk,
         SymbolRelation::BoundToPrevious { offset, len } => {
-            let prev_chunk = loop {
-                let prev_idx = DataSymbolId::from_index(idx.as_raw_index() - 1);
-                let prev_symbol = segment_info.get_data_symbol(prev_idx).unwrap();
-                idx = prev_idx;
-                if let SymbolRelation::Regular { chunk, .. } = prev_symbol.symbol_relation() {
-                    break chunk;
-                }
+            //TODO: hide in DataSegment impl
+            let mut iter = segment_info._data_symbols_rev_iter(idx).peekable();
+            while let Some(SymbolRelation::BoundToPrevious { .. }) =
+                iter.peek().map(|s| s.symbol_relation())
+            {
+                // skip bound symbols
+                iter.next();
+            }
+
+            let SymbolRelation::Regular {
+                chunk: prev_chunk, ..
+            } = iter
+                .next()
+                .expect("should have previous regular symbol")
+                .symbol_relation()
+            else {
+                panic!("first symbol should be regular");
             };
             let start = prev_chunk.len() - offset;
             let range = start..start + len;
@@ -95,10 +106,36 @@ fn get_data_content_hash(
     let data_symbol = data_segment
         .get_data_symbol(idx)
         .expect("data symbol should exist");
+
+    let debug = {
+        let symbols_ids = [Id::from_index(13), Id::from_index(12)];
+        symbols_ids.contains(&idx)
+    };
+
     let relocs = data_symbol.relocations();
     let mut data = get_data_chunk(data_segment, idx, data_symbol).to_vec();
+    if debug {
+        log::error!(
+            "Data before chunk for {:?}.{:?},  data: {}, relocs={:?}",
+            segment_id,
+            idx,
+            hex::encode(&data),
+            relocs
+        );
+    }
     apply_empty_relocs(&mut data, relocs);
-    (Hash::hash_bytes(&data), relocs.to_vec())
+    let hash = Hash::hash_bytes(&data);
+
+    if debug {
+        log::error!(
+            "Data after apply empty chunk for {:?}.{:?}, content_hash: {:?}, data: {}",
+            segment_id,
+            idx,
+            hash,
+            hex::encode(&data)
+        );
+    }
+    (hash, relocs.to_vec())
 }
 
 impl_standalone_index! {
@@ -106,7 +143,7 @@ impl_standalone_index! {
 }
 
 #[derive(Debug, Clone)]
-pub enum NodeMarker {
+pub(crate) enum NodeMarker {
     Lazy { node: GraphNode, salt: u32 },
     Static(Hash),
 }
@@ -257,14 +294,15 @@ impl Structure {
             &mut old_identity_map, // Already cleaned of exact matches
             &mut new_identity_map, // Already cleaned of exact matches
         );
+
         exact_matches.extend(signature_matches);
 
         // Phase 4: Classify results
-        classify_results(self, other, exact_matches)
+        classify_results(self, old_identity_map, new_identity_map, exact_matches)
     }
 
     fn build_symbol_map(&self) -> diff::SymbolMap {
-        let mut symbol_map = BTreeMap::new();
+        let mut symbol_map = HashMap::new();
 
         for (&node, info) in &self.nodes {
             let key = (info.content_hash(), info.signature().clone());
