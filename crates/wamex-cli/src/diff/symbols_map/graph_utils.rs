@@ -40,7 +40,7 @@ pub enum Child {
     Function(InputFuncId),
     DataSymbol {
         id: (DataSegmentId, DataSymbolId),
-        offset: u32,
+        offset: i64,
     },
     OtherReloc(OtherReloc),
 }

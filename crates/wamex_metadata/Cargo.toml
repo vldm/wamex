@@ -13,4 +13,5 @@ wasmparser = { version = "0.238.0", optional = true }
 
 [features]
 default = ["full"]
+# Symbol demangling and covnersion from wasmparser types
 full = ["dep:rustc-demangle", "dep:wasmparser"]

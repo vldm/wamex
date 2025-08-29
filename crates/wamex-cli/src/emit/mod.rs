@@ -864,6 +864,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 main_module,
                 if self.lib_base_import.is_some() { 1 } else { 0 },
                 defined_id,
+                output_func.input_func_id,
                 &output_func.modification_list,
             )?;
             for mut reloc in modified_relocs {
@@ -1155,6 +1156,29 @@ pub fn emit_modules<'a, 'src>(
         })
         .collect::<Result<IdVec<DataSegment<'src>>>>()?;
     log::debug!("Data segments with symbols: {:#?}", data_segments);
+
+    let mut print_data_fromat = String::new();
+    for (i, segment) in data_segments.iter() {
+        for symbol in segment._data_symbols_iter() {
+            let (chunk_hex, chunk_utf8) = match symbol.symbol_relation() {
+                SymbolRelation::Regular { chunk, .. } => (
+                    hex::encode(chunk),
+                    String::from_utf8_lossy(chunk).to_string(),
+                ),
+                SymbolRelation::BoundToPrevious { .. } => {
+                    ("<bound to previous>".to_string(), "".to_string())
+                }
+            };
+            print_data_fromat.push_str(&format!(
+                "Data symbol {i}.{index}: {name} [{chunk_hex}] [{chunk_utf8}]\n",
+                i = i,
+                index = symbol.index(),
+                name = symbol.name(),
+                chunk_utf8 = chunk_utf8.escape_debug(),
+            ));
+        }
+    }
+    log::warn!("Data segments: {print_data_fromat}");
 
     for (id, output_module) in program_info.output_modules.iter() {
         let SplitModuleIdentifier::Shared(_) = id else {

@@ -3,10 +3,10 @@ use std::{
     mem,
 };
 
-use crate::metadata::{
-    uniq_symbols::{GraphNode, NodeInfo, NodeMarker, Structure},
-    Hash, SymbolSignature,
-};
+use wamex_metadata::SymbolSignature;
+
+use super::{GraphNode, NodeInfo, NodeMarker, Structure};
+use crate::helpers::Hash;
 pub type SVec<T> = smallvec::SmallVec<[T; 2]>;
 
 pub type SignHash = (Hash, SymbolSignature);

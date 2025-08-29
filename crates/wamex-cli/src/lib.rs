@@ -14,7 +14,7 @@ mod helpers;
 #[macro_use]
 mod index;
 #[cfg(feature = "metadata")]
-mod metadata;
+mod metadata_ext;
 
 mod diff;
 // mod js_glue;
@@ -271,7 +271,7 @@ pub fn split(args: Split) -> Result<()> {
     #[cfg(feature = "metadata")]
     if args.metadata {
         let metadata_path = args.output.join("metadata.json");
-        let metadata = metadata::build_metadata_and_snapshot(
+        let metadata = metadata_ext::build_metadata_and_snapshot(
             &info,
             &split_program_info,
             args.module_structure,

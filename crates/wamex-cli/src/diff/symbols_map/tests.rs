@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
-use crate::metadata::{
-    metadata_ext::{DemangledName, SymbolSignature},
-    uniq_symbols::{GraphNode, NodeInfo, NodeMarker, Structure},
-    Hash,
+use wamex_metadata::{DemangledName, SymbolSignature};
+
+use crate::{
+    diff::symbols_map::{GraphNode, NodeInfo, NodeMarker, Structure},
+    helpers::Hash,
 };
 
 fn create_test_function_signature(name: &str) -> SymbolSignature {

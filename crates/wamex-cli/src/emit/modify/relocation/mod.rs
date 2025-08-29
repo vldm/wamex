@@ -104,8 +104,13 @@ where
         if !segment.is_active() {
             bail!("Relocation {relocation:?} refers to passive data segment {segment_id}");
         }
+        if relocation.addend < 0 {
+            log::warn!("Relocation {relocation:?} has negative addend");
+        }
+        let mut offset: i64 = segment.memory_offset() as i64 + data.data_offset as i64;
+        offset += relocation.addend;
 
-        Ok(segment.memory_offset() + data.data_offset + relocation.addend as usize)
+        Ok(offset as usize)
     }
 
     fn get_global_id(&self, relocation: &RelocationEntry) -> Result<OutputGlobalId> {

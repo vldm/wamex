@@ -36,6 +36,7 @@ impl<'a> ModifyContext<'a> {
         main_module: &'a ModuleEmitState<'a, 'src>,
         num_new_global_imports: usize,
         defined_function_id: DefinedFuncId,
+        input_function_id: InputFuncId,// debug purposes
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let (function_name, src_body) = {
@@ -56,7 +57,7 @@ impl<'a> ModifyContext<'a> {
             (name, defined_func.body.clone())
         };
         log::debug!(
-            "processing function: {function_name}[{defined_function_id}] for [{range:?}]",
+            "processing function: {function_name}[{input_function_id}] for [{range:?}]",
             range = src_body.range()
         );
 

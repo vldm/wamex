@@ -41,10 +41,10 @@ pub enum Type {
 
 #[derive(Debug, Clone, PartialOrd, Ord, Eq, Serialize, Deserialize)]
 pub struct DemangledName {
-    name: String,
+    pub name: String,
     #[serde(skip_serializing_if = "String::is_empty")]
-    distinguishing_hash: String,
-    anonymous: bool,
+    pub distinguishing_hash: String,
+    pub anonymous: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -130,7 +130,7 @@ pub struct ExportedSymbol {
 impl DemangledName {
     // Only data can be annonymous
     pub fn new(name: &str, can_be_anonymous: bool) -> Self {
-        if can_be_anonymous && Self::is_anonymous(name) {
+        if can_be_anonymous && Self::is_name_anonymous(name) {
             return DemangledName {
                 name: name.to_string(),
                 distinguishing_hash: String::new(),
@@ -164,7 +164,7 @@ impl DemangledName {
         (name.to_string(), String::new())
     }
 
-    pub(crate) fn is_anonymous(name: &str) -> bool {
+    pub(crate) fn is_name_anonymous(name: &str) -> bool {
         // .Lanon used by llvm, but any prefixed with ".L" can be considered anonymous.
         // TODO: refine better criteria for anonymous symbols.
         name.starts_with(".L")

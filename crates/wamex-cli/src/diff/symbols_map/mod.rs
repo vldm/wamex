@@ -12,16 +12,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graph_utils::Child;
+use wamex_metadata::SymbolSignature;
 
 use crate::{
     analysis::{dep_graph::DepNode, ModuleInfo},
+    diff::symbols_map::diff::NodeHashContext,
     emit::{DataSegment, ModuleEmitState, NamedData, SymbolRelation},
-    helpers::RangeExt,
+    helpers::{Hash, RangeExt},
     index::{DataSegmentId, DataSymbolId, Id, IdMap, IdVec, InputFuncId},
-    metadata::{
-        metadata_ext::SymbolSignatureExt, uniq_symbols::diff::NodeHashContext, Hash,
-        SymbolSignature,
-    },
+    metadata_ext::SymbolSignatureExt,
 };
 
 mod diff;
@@ -127,7 +126,7 @@ impl_standalone_index! {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub(crate) enum NodeMarker {
-    Lazy { node: GraphNode, salt: u32 },
+    Lazy { node: GraphNode, salt: i64 },
     Static(Hash),
 }
 
@@ -180,7 +179,7 @@ pub struct Structure {
     pub nodes: BTreeMap<GraphNode, NodeInfo>,
 }
 impl Structure {
-    pub fn snapshot(&self) -> crate::metadata::Snapshot {
+    pub fn snapshot(&self) -> crate::metadata_ext::Snapshot {
         let symbols = self
             .nodes
             .iter()
@@ -212,7 +211,7 @@ impl Structure {
             })
             .collect();
 
-        crate::metadata::Snapshot { symbols, deps }
+        crate::metadata_ext::Snapshot { symbols, deps }
     }
 
     /// Diff this structure against another structure to find added, removed, and same nodes
@@ -235,7 +234,7 @@ impl Structure {
         result
     }
 
-    pub fn recover_from_snapshot(snapshot: &crate::metadata::Snapshot) -> Result<Self> {
+    pub fn recover_from_snapshot(snapshot: &crate::metadata_ext::Snapshot) -> Result<Self> {
         let mut nodes = snapshot
             .symbols
             .iter()

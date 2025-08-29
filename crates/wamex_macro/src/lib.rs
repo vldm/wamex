@@ -16,8 +16,6 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
         &sha2::Sha256::digest(format!("{name} {span:?}", span = name.span()))[..16],
     );
 
-    let load_module_ident = format_ident!("__wasm_split_load_{module_ident}");
-    let split_loader_ident = format_ident!("__wasm_split_loader");
     let impl_import_ident =
         format_ident!("__wasm_split_00{module_ident}00_import_{unique_identifier}_{name}");
     let impl_export_ident =
@@ -62,21 +60,22 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
 
     quote! {
         #vis #wrapper_sig {
-            thread_local! {
-                static #split_loader_ident: ::wamex::LazySplitLoader = unsafe { ::wamex::LazySplitLoader::new(#load_module_ident) };
-            }
+            // thread_local! {
+            //     static #split_loader_ident: ::wamex::LazySplitLoader = unsafe { ::wamex::LazySplitLoader::new(#load_module_ident) };
+            // }
 
             #[link(wasm_import_module = "./__wasm_split.js")]
             extern "C" {
-                #[no_mangle]
-                fn #load_module_ident (name: *const u8, name_len: usize, data: *const ::std::ffi::c_void) -> ();
+                // #[no_mangle]
+                // fn #load_module_ident (name: *const u8, name_len: usize, data: *const ::std::ffi::c_void) -> ();
 
                 #[allow(improper_ctypes)]
                 #[no_mangle]
                 #import_sig;
             }
+            let id = ::wamex::ModuleId::new(stringify!(#module_ident));
 
-            ::wamex::ensure_loaded(&#split_loader_ident).await.unwrap();
+            ::wamex::load(id, false).await.unwrap();
 
             #(#attrs)*
             #[allow(improper_ctypes_definitions)]

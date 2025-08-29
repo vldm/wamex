@@ -5,6 +5,32 @@ use std::{
     ops::Range,
 };
 
+use serde::{Deserialize, Serialize};
+use wamex_metadata::DemangledName;
+
+// Snapshot recovery functionality.
+#[derive(Default, Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub struct Hash(pub u128);
+
+impl Hash {
+    const SEED: i64 = 0;
+    pub fn from_hashable<H: std::hash::Hash>(value: &H) -> Self {
+        let mut hasher = gxhash::GxHasher::with_seed(Self::SEED);
+        value.hash(&mut hasher);
+        Hash(hasher.finish_u128())
+    }
+
+    pub fn hash_bytes(data: &[u8]) -> Hash {
+        Hash(gxhash::gxhash128(data, Self::SEED))
+    }
+}
+
+impl Debug for Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord, Hash)]
 pub enum RangeComp {
     // This range is fully left to Other range.
@@ -161,18 +187,37 @@ pub fn encoding_size(n: u32) -> usize {
 }
 
 pub fn demangle_full(name: &str) -> String {
-    #[cfg(feature = "demangle")]
-    {
-        let (start, suffix) = demangle_name(name);
-        if !suffix.is_empty() {
-            format!("{start}::{suffix}")
-        } else {
-            start
-        }
+    let DemangledName {
+        name: start,
+        distinguishing_hash: suffix,
+        ..
+    } = DemangledName::new(name, false);
+    if !suffix.is_empty() {
+        format!("{start}::{suffix}")
+    } else {
+        start
     }
-    #[cfg(not(feature = "demangle"))]
+}
+
+#[cfg(feature = "metadata")]
+impl Serialize for Hash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
     {
-        name.to_string()
+        serializer.serialize_str(&format!("{:x}", self.0))
+    }
+}
+
+#[cfg(feature = "metadata")]
+impl<'de> Deserialize<'de> for Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let value = u128::from_str_radix(&s, 16).map_err(serde::de::Error::custom)?;
+        Ok(Hash(value))
     }
 }
 

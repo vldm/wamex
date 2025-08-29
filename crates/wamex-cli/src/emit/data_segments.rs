@@ -175,6 +175,12 @@ impl<'src> DataSegment<'src> {
                     RangeComp::Overlap | RangeComp::Equal
                 ));
                 let offset = prev.end - symbol_in_data.start;
+                log::warn!(
+                    "DataSymbol intersects with previous, offset: {}, entries: {:?}, index {}",
+                    offset,
+                    entries,
+                    sym.symbol_index
+                );
                 // range.intersect(other)
                 SymbolRelation::BoundToPrevious {
                     offset,

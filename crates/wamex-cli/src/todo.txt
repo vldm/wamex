@@ -16,3 +16,4 @@
 
 - Add dep in DepGraph for BoundToPrevious symbol
 - impl tests for Structure recovery
+- Convert relocations with negative appends to relocations to previous symbol
