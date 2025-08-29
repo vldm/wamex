@@ -1,4 +1,4 @@
-use wasm_split::wasm_split;
+use wamex::wasm_split;
 
 fn my_secret_exported_function() -> usize {
     #[link(wasm_import_module = "./__wasm_split.js")]

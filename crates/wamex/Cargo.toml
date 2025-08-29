@@ -1,0 +1,10 @@
+[package]
+name = "wamex"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-once-cell = { version = "0.5.3", features = ["std"] }
+wamex_macro = { version = "0.1.0", path = "../wamex_macro" }
+
+wamex_link = { version = "0.1.0", path = "../wamex_link" }

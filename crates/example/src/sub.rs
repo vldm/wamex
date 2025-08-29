@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 #[cfg(feature = "split")]
-use wasm_split::wasm_split;
+use wamex::wasm_split;
 
 #[cfg_attr(feature = "split", wasm_split(static_str))]
 pub async fn static_str() -> Pin<Box<&'static str>> {

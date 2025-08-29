@@ -17,10 +17,10 @@ js-sys = "0.3.69"
 wasm-bindgen = "0.2.100"
 wasm-bindgen-futures = "0.4.42"
 wasm-streams = "0.4.0"
-wasm_split = { path = "../wasm_split", optional = true }
+wamex = { path = "../wamex", optional = true }
 
 [features]
 default = ["split"]
-split = ["dep:wasm_split"]
+split = ["dep:wamex"]
 gzip = ["async-compression/gzip"]
 brotli = ["async-compression/brotli"]

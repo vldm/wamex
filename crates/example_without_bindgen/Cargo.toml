@@ -8,4 +8,4 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-wasm_split = { path = "../wasm_split" }
+wamex = { path = "../wamex" }
