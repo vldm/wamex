@@ -22,7 +22,7 @@ mod read;
 
 pub use read::InputModule;
 
-use crate::emit::EmitConfig;
+use crate::analysis::split_point::SplitModuleIdentifier;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, ValueEnum)]
 pub enum ModuleStructure {
@@ -222,15 +222,12 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         split_program_info.output_modules.len() == 1,
         "Roundtrip should produce single module",
     );
-    crate::emit::emit_modules(
-        &info,
-        &split_program_info,
-        EmitConfig::default(),
-        &|_: usize, data: &[u8]| -> Result<()> {
-            std::fs::write(&args.output, data)?;
-            Ok(())
-        },
-    )?;
+    crate::emit::emit_modules(&info, &split_program_info, &|_: &SplitModuleIdentifier,
+                                                            data: &[u8]|
+     -> Result<()> {
+        std::fs::write(&args.output, data)?;
+        Ok(())
+    })?;
 
     Ok(())
 }
@@ -257,9 +254,7 @@ pub fn split(args: Split) -> Result<()> {
     crate::emit::emit_modules(
         &info,
         &split_program_info,
-        EmitConfig::default(),
-        &|output_module_index: usize, data: &[u8]| -> Result<()> {
-            let identifier = &split_program_info.output_modules[output_module_index].0;
+        &|identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             let output_filename = identifier.name() + ".wasm";
             let output_path = args.output.join(output_filename);
             std::fs::create_dir_all(&args.output)?;

@@ -234,10 +234,10 @@ impl<Type, Res> IdMap<Id<Type>, Res> {
     }
 }
 
-impl<T: Indexed> Index<Id<T>> for IdVec<T> {
+impl<T: Indexed, Idx> Index<Id<Idx>> for IdVec<T, Id<Idx>> {
     type Output = T;
 
-    fn index(&self, id: Id<T>) -> &Self::Output {
+    fn index(&self, id: Id<Idx>) -> &Self::Output {
         &self.types[id.id]
     }
 }

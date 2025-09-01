@@ -1,34 +1,45 @@
-//! Methods to apply relocations.
-//! This module contains two type of relocation methods:
-//! - convenient methods, that can be found at: https://github.com/WebAssembly/tool-conventions/blob/main/Linking.md
-//!    it is primary used for function relocation.
-//! - constant replacement technique, that swaps all usage of constant offsets embeded in code with a global variable binding.
+//! Methods to apply relocations and code replacements.
+//! This module contains two type of methods:
+//! - convenient relocation methods, that can be found at: https://github.com/WebAssembly/tool-conventions/blob/main/Linking.md
+//! - constant replacement technique, that swaps all usage of constant offsets embeded in code with a global variable binding
+//! (something simmilar precalculated GOT + offset).
 //!
 //!
 
-mod constant_extraction;
+mod constant_extracton;
 mod relocation;
 mod start_fn_gen;
 
 use std::{collections::HashMap, ops::Range};
 
-use anyhow::{bail, Result};
-use constant_extraction::ConstantExtractionEntry;
-pub use constant_extraction::GlobalVar;
+use anyhow::{anyhow, bail, Result};
+use constant_extracton::ConstantExtractionEntry;
 pub use relocation::RelocateState;
-pub use start_fn_gen::{StartFnGen, StartFnModifyContext};
+pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
 use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
-    emit::ModuleEmitState,
-    index::{DefinedFuncId, GlobalId, InputFuncId, OutputGlobalId, AnySymbolId},
+    analysis,
+    emit::{ExtraImportGlobal, ModuleEmitState},
+    index::{AnySymbolId, DefinedFuncId, GlobalId, InputFuncId, OutputGlobalId},
 };
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum GlobalSymbolOp {
+    /// Data symbol offset extracted as GOT + Offset
+    GotOffset { offset: u32 },
+    /// Keep original constant value untouched
+    StaticOffset { offset: u32 },
+}
+
 #[derive(Debug)]
 pub struct ModifyContext<'a> {
     pub function_name: &'a str,
     pub global_tmps: &'a HashMap<StoreType, OutputGlobalId>,
     pub instruction: wasmparser::Operator<'a>,
     pub writer: &'a mut Vec<u8>,
+    pub lib_base_id: Option<u32>,
+    pub table_base_id: Option<u32>,
 }
 impl<'a> ModifyContext<'a> {
     pub fn emit_code_with_changes<'src>(
@@ -36,7 +47,7 @@ impl<'a> ModifyContext<'a> {
         main_module: &'a ModuleEmitState<'a, 'src>,
         num_new_global_imports: usize,
         defined_function_id: DefinedFuncId,
-        input_function_id: InputFuncId,// debug purposes
+        input_function_id: InputFuncId, // debug purposes
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let (function_name, src_body) = {
@@ -122,6 +133,14 @@ impl<'a> ModifyContext<'a> {
                 global_tmps: &module_emit.global_tmp_store,
                 instruction: instr.clone(),
                 writer: &mut result,
+                lib_base_id: module_emit
+                    .lib_base_import
+                    .as_ref()
+                    .map(ExtraImportGlobal::global_id),
+                table_base_id: module_emit
+                    .table_base_import
+                    .as_ref()
+                    .map(ExtraImportGlobal::global_id),
             };
 
             log::trace!(
@@ -277,15 +296,21 @@ pub enum ModifyEntry<C> {
 pub type CodeModifyEntry = ModifyEntry<ConstantExtractionEntry>;
 pub type DataModifyEntry = ModifyEntry<start_fn_gen::DataEntry>;
 
+pub struct RelocationContext {
+    pub dyn_relocate: bool,
+    // If relocation is targeted a data symbol - information about this symbol
+    pub referenced_symbol: Option<GlobalSymbolOp>,
+    // If relocation entry is in data segment - this is information about symbol
+    pub containing_symbol: Option<DataSymbolWithOffset>,
+}
+
 pub trait CustomModify {
     type Context<'any, 'src>
     where
         'src: 'any;
     fn try_from_entry(
-        global_getter: impl FnMut(AnySymbolId) -> Result<GlobalVar>,
         entry: &wasmparser::RelocationEntry,
-        extract_const: bool,
-        start_offset: usize,
+        context: &RelocationContext,
     ) -> Result<Option<Self>>
     where
         Self: Sized;
@@ -297,18 +322,16 @@ pub trait CustomModify {
 
 impl<C: CustomModify> ModifyEntry<C> {
     pub fn from_relocation_entry(
-        global_getter: impl Fn(AnySymbolId) -> Result<GlobalVar>,
         entry: &wasmparser::RelocationEntry,
-        extract_const: bool,
-        start_offset: usize,
+        context: &RelocationContext,
     ) -> Result<Self> {
-        C::try_from_entry(global_getter, entry, extract_const, start_offset).map(|opt| match opt {
+        C::try_from_entry(entry, context).map(|opt| match opt {
             Some(custom_entry) => ModifyEntry::Custom(custom_entry),
             None => ModifyEntry::Other(wasmparser::RelocationEntry {
                 ty: entry.ty,
                 index: entry.index,
                 addend: entry.addend,
-                offset: entry.offset.checked_sub(start_offset as u32).unwrap(),
+                offset: entry.offset,
             }),
         })
     }

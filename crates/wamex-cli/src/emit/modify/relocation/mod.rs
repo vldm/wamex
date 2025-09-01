@@ -98,7 +98,7 @@ where
         let Some(segment) = self.main_module.data.get(*segment_id) else {
             bail!("No data segment with id {segment_id} for relocation {relocation:?}");
         };
-        let Some(data) = segment.globals().get(*data_index) else {
+        let Some(data) = segment.symbols().get(*data_index) else {
             bail!("No data with index {data_index} in segment {segment_id} for relocation {relocation:?}");
         };
         if !segment.is_active() {

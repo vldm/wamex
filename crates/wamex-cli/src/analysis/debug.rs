@@ -101,7 +101,7 @@ impl ReachabilityGraph {
 impl Debug for OutputModuleInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut included_fns = self
-            .included_symbols
+            .defined_symbols
             .iter()
             .filter_map(|dep| match dep {
                 DepNode::Function(func_id) => Some(*func_id),
@@ -111,7 +111,7 @@ impl Debug for OutputModuleInfo {
         included_fns.sort_unstable();
 
         let mut included_datas = self
-            .included_symbols
+            .defined_symbols
             .iter()
             .filter_map(|dep| match dep {
                 DepNode::DataSymbol(segment, data_id) => Some((*segment, *data_id)),
@@ -165,6 +165,6 @@ impl Debug for OutputModuleInfo {
 impl OutputModuleInfo {
     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo, graph: &DepGraph) {
         let parents = graph.reverse();
-        ReachabilityGraph::print_deps_inner(module_name, info, &self.included_symbols, &parents);
+        ReachabilityGraph::print_deps_inner(module_name, info, &self.defined_symbols, &parents);
     }
 }

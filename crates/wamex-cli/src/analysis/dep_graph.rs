@@ -176,7 +176,7 @@ pub fn get_dependencies(
     let mut deps = DepGraph::new();
     let mut add_dep = |a: DepNode, linking_index: u32| {
         if let Some(target) = module.get_symbol_dep_node(linking_index as usize) {
-            log::trace!("Adding dirrect deps {a:?} -> {target:?}");
+            log::trace!("Adding direct deps {a:?} -> {target:?}");
             deps.entry(a).insert(target);
         };
     };
@@ -459,9 +459,9 @@ mod tests {
         // no_inline_fn is really inline data, but keep method call for "side effect"
         assert_eq!(data_deps.len(), 3);
 
-        let indirrect_fn = info.find_function_id_by_name("indirrect_fn").unwrap();
+        let indirect_fn = info.find_function_id_by_name("indirect_fn").unwrap();
 
-        let deps = dep_graph.get(&DepNode::Function(indirrect_fn)).unwrap();
+        let deps = dep_graph.get(&DepNode::Function(indirect_fn)).unwrap();
         assert_eq!(deps.len(), 1); // only dep on switchtable
         let swith_table = deps.iter().next().unwrap();
         assert!(matches!(swith_table, DepNode::DataSymbol(..)));
@@ -491,14 +491,14 @@ mod tests {
         reachability_graph.print("no_inline_fn", &info);
         assert_eq!(reachability_graph.reachable.len(), 7); // root +  3 data + 3 funcs
 
-        let indirrect_fn = info.find_function_id_by_name("indirrect_fn").unwrap();
+        let indirect_fn = info.find_function_id_by_name("indirect_fn").unwrap();
         let reachability_graph = super::ReachabilityGraph::find_reachable_deps(
             &dep_graph,
-            &HashSet::from([DepNode::Function(indirrect_fn)]),
+            &HashSet::from([DepNode::Function(indirect_fn)]),
         );
-        reachability_graph.print("indirrect_fn", &info);
-        // almost same count, but indirrect_fn has more deep graph and switchtable
-        // indirrect_fn -> switchtable -> func1 -> data1
+        reachability_graph.print("indirect_fn", &info);
+        // almost same count, but indirect_fn has more deep graph and switchtable
+        // indirect_fn -> switchtable -> func1 -> data1
         //                             -> func2 -> data2
         //                             -> func3 -> data3
         assert_eq!(reachability_graph.reachable.len(), 8); // root + <switchtable> +  3 data + 3 funcs

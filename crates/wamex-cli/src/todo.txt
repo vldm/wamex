@@ -15,5 +15,8 @@
 - Patch code from call -> call indirect table.
 
 - Add dep in DepGraph for BoundToPrevious symbol
-- impl tests for Structure recovery
+- impl tests for Structure recovery (partially done)
 - Convert relocations with negative appends to relocations to previous symbol
+- Reimplement "__indirect_function_table" - merging of this table into one main table (instead of using table for each module) 
+offset of table can be calculated dynamically and applied.
+- Replace GLOBAL VAR for each symbol to GOT + offset pattern

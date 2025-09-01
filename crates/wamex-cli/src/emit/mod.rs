@@ -5,26 +5,27 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::Id;
 pub use data_segments::{DataSegment, DataSegmentOutput, NamedData, SymbolRelation};
 use globals::GlobalConstructor;
 use index_safety::OutputFuncId;
-use modify::{init_each_store_var, GlobalVar, ModifyContext, StoreType};
+use modify::{init_each_store_var, GlobalSymbolOp, ModifyContext, StoreType};
 use wasm_encoder::GlobalType;
-use wasmparser::{RelocationEntry, RelocationType, TypeRef};
+use wasmparser::{Data, RelocationEntry, RelocationType, TypeRef};
 
-pub use crate::emit::config::{EmitConfig, EmitMemoryMode};
 use crate::{
     analysis::{
         self,
         dep_graph::DepNode,
         split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo},
     },
-    emit::modify::{RelocateState, StartFnGen},
+    emit::{
+        globals::DataSymbol,
+        modify::{DataSymbolWithOffset, RelocateState, StartFnGen},
+    },
     helpers::{encoding_size, iter_if},
     index::{
-        DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, ImportId, Indexed, InputFuncId,
-        MemoryId, OutputGlobalId, OutputSymbolDataId, WithOriginalIndex,
+        AnySymbolId, DataId, DataSegmentId, FuncTypeId, GlobalId, IdMap, IdVec, ImportId, Indexed,
+        InputFuncId, MemoryId, OutputGlobalId, OutputSymbolDataId, WithOriginalIndex,
     },
     read::{self, linking::SymbolIndex, InputModule},
 };
@@ -32,10 +33,33 @@ use crate::{
 mod data_segments;
 mod globals;
 
-mod config;
 mod index_safety;
 mod modify;
 mod names;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkageType {
+    /// Keep original layout of data segment and indirect_function_table.
+    /// This will emit "gaps" in "element" and in "data" sections.
+    ///
+    /// This layout is non-portable and doesn't support dynamic module re-building/re-loading.
+    /// It is useful in production, to split size of generated WASM binaries.
+    ///
+    OriginalLayout,
+
+    /// Replace constant offsets with GOT+offset (for memory and table access).
+    /// Allocate memory and table dynamically on module loading.
+    ///
+    /// This allow dynamic reloading of modules.
+    /// Modules entrypoints are still located in fixed position in table.
+    ///
+    DynamicLinking {
+        /// Fixed offset for storing entrypoints.
+        table_offset: u32,
+        /// Number of reserved elements in the table.
+        table_num_entrypoints: u32,
+    },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DefinedFunction {
@@ -104,6 +128,12 @@ struct ExtraImportGlobal {
     global_type: wasm_encoder::GlobalType,
 }
 
+impl ExtraImportGlobal {
+    fn global_id(&self) -> u32 {
+        self.global_id
+    }
+}
+
 // ignore relocations field in order
 impl Ord for DefinedFunction {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -132,10 +162,11 @@ pub struct ModuleEmitState<'any, 'src> {
     // extra imports that should be emitted for lib
     // Not available for main module.
     lib_base_import: Option<ExtraImportGlobal>,
+    table_base_import: Option<ExtraImportGlobal>,
     start_fn: Option<StartFnGen>,
 
     // Data Section
-    data: IdVec<data_segments::DataSegmentOutput>,
+    data: IdVec<data_segments::DataSegmentOutput, DataSegmentId>,
     data_relocations: IdMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
 
     // src module
@@ -145,32 +176,37 @@ pub struct ModuleEmitState<'any, 'src> {
     pub input_data_to_output_id: HashMap<DataId, (DataSegmentId, OutputSymbolDataId)>,
     // Indirect function table Functions from original table that are used in this module.
     pub indirect_functions: IndirectFunctionEmitInfo,
+    pub linkage_type: LinkageType,
 }
 
 const MEMORY_INDEX: u32 = 0; //TODO: Support multiple memories
 impl<'any, 'src> ModuleEmitState<'any, 'src> {
     pub fn produce_state(
         module_info: &'any analysis::ModuleInfo<'any, 'src>,
-        data_segments: &'any IdVec<data_segments::DataSegment<'src>>,
         emit_info: &'any EmitInfo,
+        // Merge use only output_module instead of program_info and output_module_index
         program_info: &SplitProgramInfo,
         output_module_index: usize,
+
+        common_module: Option<&Self>,
+        linkage_type: LinkageType,
     ) -> ModuleEmitState<'any, 'src> {
         let output_module_info = &program_info.output_modules[output_module_index].1;
 
         log::debug!("output_module_info: {output_module_info:#?}");
-        // We need to include definitions for all of the `included_symbols`.
+        // We need to include definitions for all of the `defined_symbols`.
         let mut funcs_to_define = HashSet::<(InputFuncId, bool)>::new();
         let mut import_functions = Vec::new();
 
         let main_module = output_module_index == 0;
+        assert_eq!(main_module, common_module.is_none());
 
         let shared_imports = program_info
             .output_modules
             .iter()
             .filter_map(|(id, output_module)| {
                 if let SplitModuleIdentifier::Shared(_) = id {
-                    Some(output_module.included_symbols.iter())
+                    Some(output_module.defined_symbols.iter())
                 } else {
                     None
                 }
@@ -179,7 +215,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let mut used_funcs = HashSet::new();
         for func_id in output_module_info
-            .included_symbols
+            .defined_symbols
             .iter()
             .chain(iter_if(main_module, shared_imports.clone()))
             .filter_map(DepNode::as_function)
@@ -254,24 +290,35 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .filter(|(_id, v)| matches!(v.ty, wasmparser::TypeRef::Global(_)))
             .count()
             + num_main_module_imports;
-        let lib_base_id = num_global_imports as u32;
-        let lib_base_import = if !main_module {
-            num_global_imports += 1; // for lib_base_id
-            Some(ExtraImportGlobal {
+        let lib_base_import = (!main_module).then(|| {
+            let lib_base_id = num_global_imports as u32;
+            num_global_imports += 1;
+            ExtraImportGlobal {
                 global_id: lib_base_id,
                 global_type: wasm_encoder::GlobalType {
                     val_type: wasm_encoder::ValType::I32,
                     mutable: false,
                     shared: false,
                 },
-            })
-        } else {
-            None
-        };
+            }
+        });
+
+        let table_base_import = (!main_module).then(|| {
+            let table_base_id = num_global_imports as u32;
+            num_global_imports += 1;
+            ExtraImportGlobal {
+                global_id: table_base_id,
+                global_type: wasm_encoder::GlobalType {
+                    val_type: wasm_encoder::ValType::I32,
+                    mutable: false,
+                    shared: false,
+                },
+            }
+        });
 
         let mut data_to_define = BTreeMap::new();
         for i in output_module_info
-            .included_symbols
+            .defined_symbols
             .iter()
             // Include all shared data segments also.
             .chain(iter_if(main_module, shared_imports.clone()))
@@ -284,14 +331,14 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         }
 
         // filter only used entries
-        let data_segments = data_segments
+        let data_segments = emit_info
+            .src_data_segments
             .iter()
             .map(|(data_segment_id, data)| {
                 let empty = HashSet::new();
                 let entries = data_to_define.get(&data_segment_id).unwrap_or(&empty);
-                let mut data_segment = data.clone();
-                data_segment.retain_symbols(entries);
-                data_segment
+                let data_segment = data.clone();
+                data_segment.new_with_whitelist(entries)
             })
             .collect::<IdVec<_>>();
 
@@ -310,7 +357,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             }
         }
 
-        let mut globals_map = BTreeMap::new();
+        let mut data_symbols_map = BTreeMap::new();
         let mut data_segment_outputs = IdVec::new();
 
         let first_segment = data_segments
@@ -320,11 +367,13 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .1;
         let mem_start = first_segment.memory_offset();
 
+        let globals = globals; // stop mutation
+
         // offset of current segment.
         let mut segment_mem_offset = 0;
         log::debug!("Data segments for module: {:#?}", data_segments);
         for (segment_id, segment) in data_segments.iter() {
-            let lib_base_global_id = (!main_module).then_some(lib_base_id);
+            let lib_base_global_id = lib_base_import.as_ref().map(ExtraImportGlobal::global_id);
 
             let (new_segment_offset, out) =
                 segment.to_lib_output(lib_base_global_id, mem_start, segment_mem_offset);
@@ -332,16 +381,30 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             if out.is_active() {
                 segment_mem_offset = new_segment_offset + out.as_raw().len();
             }
-            if !main_module {
-                for constructor in out.globals() {
-                    globals_map.insert(
-                        (segment_id, constructor.symbol_index),
-                        (globals.len() + num_global_imports) as u32,
-                    );
-                    globals.push(Global::WithConstructor(GlobalConstructor::DataSymbol(
-                        constructor.clone(),
-                    )));
+
+            if let Some(main_module) = common_module {
+                let segment_id: DataSegmentId = segment_id;
+                for constructor in main_module.data[segment_id].symbols() {
+                    let input_key = (segment_id, constructor.symbol_index);
+                    let offset = GlobalSymbolOp::StaticOffset {
+                        offset: constructor.data_offset as u32,
+                    };
+                    data_symbols_map.insert(input_key, offset);
                 }
+            }
+
+            for constructor in out.symbols() {
+                let input_key = (segment_id, constructor.symbol_index);
+                let offset = if !main_module {
+                    GlobalSymbolOp::GotOffset {
+                        offset: constructor.data_offset as u32,
+                    }
+                } else {
+                    GlobalSymbolOp::StaticOffset {
+                        offset: constructor.data_offset as u32,
+                    }
+                };
+                data_symbols_map.insert(input_key, offset);
             }
             data_segment_outputs.push(out);
         }
@@ -349,32 +412,45 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         //     log::info!("Global {i}: {g:?}");
         // }
         // dbg!(&globals_map);
-        let global_getter = |id, entry: &_| {
-            let SymbolIndex::DataDefined(segment_id, data_id) =
-                module_info.source.linking.linking_symbols.original_indexes[id]
-            else {
-                bail!("Relocation {entry:?} does not refer to a valid data symbol");
+        let data_symbol_op = |id| {
+            let result = match module_info.source.linking.linking_symbols.original_indexes[id] {
+                SymbolIndex::DataDefined(segment_id, data_id) => data_symbols_map
+                    .get(&(segment_id, data_id))
+                    .copied()
+                    .unwrap(),
+                _ => return None,
             };
-            Ok(globals_map
-                .get(&(segment_id, data_id))
-                .copied()
-                .map(GlobalVar::Extract)
-                .unwrap_or_default())
+            Some(result)
         };
+
         let mut data_relocations = IdMap::new();
 
         // TODO: move shift in previous (segment_id, segment) in data_segments.iter()
         for (segment_id, data_segment) in data_segment_outputs.iter() {
-            let data_relocs = data_segment.relocations().to_vec();
-
-            let segment_relocs = data_relocs
+            let segment_relocs = data_segment
+                .relocations()
                 .into_iter()
-                .map(|entry| {
+                .map(|reloc| {
+                    let entry_data_symbol_op = data_symbols_map
+                        .get(&(segment_id, reloc.reloc_in_symbol_index))
+                        .copied()
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Symbol ({segment_id}, {}) is not found in map",
+                                reloc.reloc_in_symbol_index
+                            );
+                        });
+                    let relocation_context = modify::RelocationContext {
+                        dyn_relocate: !main_module,
+                        referenced_symbol: data_symbol_op(reloc.entry.index as AnySymbolId),
+                        containing_symbol: Some(DataSymbolWithOffset {
+                            symbol: entry_data_symbol_op,
+                            addend: reloc.offset,
+                        }),
+                    };
                     modify::DataModifyEntry::from_relocation_entry(
-                        |id| global_getter(id, &entry),
-                        &entry,
-                        !main_module,
-                        0,
+                        &reloc.entry,
+                        &relocation_context,
                     )
                 })
                 .collect::<Result<Vec<_>>>()
@@ -396,12 +472,12 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let modification_list = func_relocs
                     .iter()
                     .map(|entry| {
-                        modify::CodeModifyEntry::from_relocation_entry(
-                            |id| global_getter(id, entry),
-                            entry,
-                            !main_module, // extract const only on sub modules
-                            range.start,
-                        )
+                        let relocation_context = modify::RelocationContext {
+                            dyn_relocate: !main_module,
+                            referenced_symbol: data_symbol_op(entry.index as AnySymbolId),
+                            containing_symbol: None,
+                        };
+                        modify::CodeModifyEntry::from_relocation_entry(entry, &relocation_context)
                     })
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
@@ -423,7 +499,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .iter()
             .flat_map(|(segment_index, segment)| {
                 segment
-                    .globals()
+                    .symbols()
                     .iter()
                     .enumerate()
                     .map(move |(data_index, data)| {
@@ -445,14 +521,13 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let indirect_functions = IndirectFunctionEmitInfo::new(indirect_function_table);
 
         let start_fn = if let Some(lib_base) = &lib_base_import {
-            StartFnGen::new(
+            Some(StartFnGen::new(
                 MEMORY_INDEX,
                 lib_base.global_id as OutputGlobalId,
                 data_relocations
                     .iter()
                     .flat_map(|(_, entries)| entries.iter()),
-            )
-            .ok()
+            ))
         } else {
             None
         };
@@ -463,11 +538,13 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             data_relocations,
             globals,
             lib_base_import,
+            table_base_import,
             global_tmp_store,
             input_data_to_output_id,
             indirect_functions,
             start_fn,
             functions: funcs,
+            linkage_type,
         }
     }
 
@@ -576,7 +653,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             if let Some(lib_base_import) = &self.lib_base_import {
                 section.import(
                     "__wasm_split",
-                    "lib_base_id",
+                    "__lib_base",
                     lib_base_import.global_type.clone(),
                 );
             }
@@ -1048,27 +1125,83 @@ impl IndirectFunctionEmitInfo {
     }
 }
 #[derive(Debug)]
-pub struct EmitInfo {
+pub struct EmitInfo<'src> {
     // All relocations, ordered by offset, which are relative to the start of
     // the file rather than the start of the section.
+    // TODO: move to analysis
     pub all_relocations: Vec<RelocationEntry>,
+
+    pub src_data_segments: IdVec<DataSegment<'src>>,
 
     // Imports (corresponding to split points) to exclude from all modules.
     pub split_point_imports: HashSet<ImportId>,
 }
 
-impl EmitInfo {
-    fn new(module: &InputModule<'_>, program_info: &SplitProgramInfo) -> Result<Self> {
-        let all_relocations = Self::all_relocations(module)?;
+impl<'src> EmitInfo<'src> {
+    fn new(
+        module: &analysis::ModuleInfo<'_, 'src>,
+        program_info: &SplitProgramInfo,
+    ) -> Result<Self> {
+        let all_relocations = Self::all_relocations(module.source)?;
         let mut split_point_imports = HashSet::<ImportId>::new();
         for (_, output_module) in program_info.output_modules.iter() {
             for split_point in output_module.split_points.iter() {
                 split_point_imports.insert(split_point.import);
             }
         }
+
+        // re-build data_segments (using only available symbols)
+        let data_segments_symbols = module
+            .data_symbols
+            .chunk_by(|left, right| left.segment_index == right.segment_index)
+            .collect::<Vec<_>>();
+        let data_segments: IdVec<DataSegment<'src>> = module
+            .source
+            .data
+            .section_payload
+            .data_segments
+            .iter()
+            .enumerate()
+            .map(|(data_segment, data)| {
+                let data_relocs =
+                    ModuleEmitState::get_relocations_for_range(&all_relocations, &data.range);
+                let data_symbols = data_segments_symbols
+                    .get(data_segment)
+                    .cloned()
+                    .expect("Symbols for data segment not found");
+                let segment_info = module.source.linking.segments_info[data_segment].clone();
+
+                DataSegment::new_inner(data.clone(), segment_info, data_symbols, data_relocs)
+            })
+            .collect::<Result<IdVec<DataSegment<'src>>>>()?;
+        log::debug!("Data segments with symbols: {:#?}", data_segments);
+
+        let mut print_data_format = String::new();
+        for (i, segment) in data_segments.iter() {
+            for symbol in segment._data_symbols_iter() {
+                let (chunk_hex, chunk_utf8) = match symbol.symbol_relation() {
+                    SymbolRelation::Regular { chunk, .. } => (
+                        hex::encode(chunk),
+                        String::from_utf8_lossy(chunk).to_string(),
+                    ),
+                    SymbolRelation::BoundToPrevious { .. } => {
+                        ("<bound to previous>".to_string(), "".to_string())
+                    }
+                };
+                print_data_format.push_str(&format!(
+                    "Data symbol {i}.{index}: {name} [{chunk_hex}] [{chunk_utf8}]\n",
+                    i = i,
+                    index = symbol.index(),
+                    name = symbol.name(),
+                    chunk_utf8 = chunk_utf8.escape_debug(),
+                ));
+            }
+        }
+        log::warn!("Data segments: {print_data_format}");
         Ok(EmitInfo {
             all_relocations,
             split_point_imports,
+            src_data_segments: data_segments,
         })
     }
 
@@ -1103,120 +1236,73 @@ impl EmitInfo {
 pub fn emit_modules<'a, 'src>(
     module: &'a analysis::ModuleInfo<'a, 'src>,
     program_info: &SplitProgramInfo,
-    emit_config: EmitConfig,
-    emit_fn: &dyn Fn(usize, &[u8]) -> anyhow::Result<()>,
+    emit_fn: &dyn Fn(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    // For now we will ignore data symbols because that simplifies things quite a bit.
-
-    for mode in emit_config
-        .shared
-        .iter()
-        .chain(&[emit_config.main, emit_config.sub])
-    {
-        if mode.memory_mode != EmitMemoryMode::ConvertSymbolsToGlobals {
-            bail!(
-                "Only ConvertSymbolsToGlobals memory mode is supported for now, but {mode:?} was requested"
-            );
-        }
-    }
-    if emit_config.shared.is_some() {
-        bail!("Shared modules are not supported yet");
-    }
-
-    let emit_info = EmitInfo::new(&module.source, program_info)?;
+    let emit_info = EmitInfo::new(&module, program_info)?;
     let modules_ids_iter = program_info.output_modules.iter().enumerate().filter_map(
         |(output_module_index, (id, _))| {
             // Skip shared modules, they are processed inside modules.
-            SplitModuleIdentifier::as_single(id).map(|id| (output_module_index, id))
+            SplitModuleIdentifier::as_single(id).map(|id| (output_module_index, id.clone()))
         },
     );
-
-    // re-build data_segments (using only available symbols)
-    let data_segments_symbols = module
-        .data_symbols
-        .chunk_by(|left, right| left.segment_index == right.segment_index)
-        .collect::<Vec<_>>();
-    let data_segments: IdVec<DataSegment<'src>> = module
-        .source
-        .data
-        .section_payload
-        .data_segments
-        .iter()
-        .enumerate()
-        .map(|(data_segment, data)| {
-            let data_relocs =
-                ModuleEmitState::get_relocations_for_range(&emit_info.all_relocations, &data.range);
-            let data_symbols = data_segments_symbols
-                .get(data_segment)
-                .cloned()
-                .expect("Symbols for data segment not found");
-            let segment_info = module.source.linking.segments_info[data_segment].clone();
-
-            DataSegment::new_inner(data.clone(), segment_info, data_symbols, data_relocs)
-        })
-        .collect::<Result<IdVec<DataSegment<'src>>>>()?;
-    log::debug!("Data segments with symbols: {:#?}", data_segments);
-
-    let mut print_data_fromat = String::new();
-    for (i, segment) in data_segments.iter() {
-        for symbol in segment._data_symbols_iter() {
-            let (chunk_hex, chunk_utf8) = match symbol.symbol_relation() {
-                SymbolRelation::Regular { chunk, .. } => (
-                    hex::encode(chunk),
-                    String::from_utf8_lossy(chunk).to_string(),
-                ),
-                SymbolRelation::BoundToPrevious { .. } => {
-                    ("<bound to previous>".to_string(), "".to_string())
-                }
-            };
-            print_data_fromat.push_str(&format!(
-                "Data symbol {i}.{index}: {name} [{chunk_hex}] [{chunk_utf8}]\n",
-                i = i,
-                index = symbol.index(),
-                name = symbol.name(),
-                chunk_utf8 = chunk_utf8.escape_debug(),
-            ));
-        }
-    }
-    log::warn!("Data segments: {print_data_fromat}");
 
     for (id, output_module) in program_info.output_modules.iter() {
         let SplitModuleIdentifier::Shared(_) = id else {
             continue;
         };
-
         log::debug!("Shared_modules_info {id:?}: {output_module:?}");
     }
 
-    let output_modules = modules_ids_iter
+    let linkage_type = LinkageType::OriginalLayout;
+
+    let mut main_module = modules_ids_iter
         .clone()
+        .find(|(_, id)| matches!(id, ModuleIdentifier::Main))
         .map(|(output_module_index, _)| {
             ModuleEmitState::produce_state(
                 module,
-                &data_segments,
                 &emit_info,
                 program_info,
                 output_module_index,
+                None,
+                linkage_type,
+            )
+        })
+        .expect("Main module not found");
+
+    let output_sub_modules = modules_ids_iter
+        .into_iter()
+        .filter(|(_, id)| !matches!(id, ModuleIdentifier::Main))
+        .map(|(output_module_index, id)| {
+            (
+                ModuleEmitState::produce_state(
+                    module,
+                    &emit_info,
+                    program_info,
+                    output_module_index,
+                    Some(&main_module),
+                    linkage_type,
+                ),
+                id,
             )
         })
         .collect::<Vec<_>>();
 
-    let main_module_id = modules_ids_iter
-        .clone()
-        .find(|(_, id)| matches!(id, ModuleIdentifier::Main))
-        .map(|(output_module_index, _)| output_module_index)
-        .expect("Main module not found");
-
-    for (output_module_index, _) in modules_ids_iter {
-        let state = &output_modules[output_module_index];
-        let identifier = &program_info.output_modules[output_module_index].0;
+    for (state, identifier) in output_sub_modules
+        .iter()
+        .map(|(state, id)| (state, id))
+        .chain(Some((&main_module, &ModuleIdentifier::Main)))
+    {
         let mut encoder = wasm_encoder::Module::new();
         state
-            .generate(&output_modules[main_module_id], &mut encoder)
+            .generate(&main_module, &mut encoder)
             .with_context(|| format!("Error generating {:?}", identifier))?;
 
-        emit_fn(output_module_index, encoder.as_slice())
-            .with_context(|| format!("Error emitting {:?}", identifier))?;
+        emit_fn(
+            &SplitModuleIdentifier::Single(identifier.clone()),
+            encoder.as_slice(),
+        )
+        .with_context(|| format!("Error emitting {:?}", identifier))?;
     }
 
     Ok(())

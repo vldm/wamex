@@ -11,33 +11,59 @@ use wasmparser::RelocationType;
 use crate::{
     emit::modify::{
         relocation::{self, encode},
-        CustomModify, DataModifyEntry, GlobalVar, ModifyEntry,
+        CustomModify, DataModifyEntry, GlobalSymbolOp, ModifyEntry, RelocationContext,
     },
     helpers::RangeExt,
-    index::{GlobalId, InputFuncId, OutputGlobalId, AnySymbolId},
+    index::{AnySymbolId, GlobalId, InputFuncId, OutputGlobalId},
     read::linking::SymbolIndex,
 };
 
 #[derive(Debug, Clone)]
+pub struct DataSymbolWithOffset {
+    pub symbol: GlobalSymbolOp,
+    pub addend: i64,
+}
+
+#[derive(Debug, Clone)]
 pub enum DataEntry {
     DataOffsetCalculator {
-        // Location of source part in original data segment
-        range: Range<usize>,
-        dep_data_id: GlobalVar,
+        // lvalue where to store address of source part in original data segment
+        storage: MixedOffset,
+
+        relocated_data_symbol: MixedOffset,
     },
     TableIndex {
-        // Location of source part in original data segment
-        range: Range<usize>,
+        // lvalue where to store address of source part in original data segment
+        storage: MixedOffset,
         /// Index in the symbol table contained in the linking section that
         /// corresponds to the value at `offset`.
         original_symbol: AnySymbolId,
     },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MixedOffset {
+    base: u32,
+    addend: i64,
+}
+impl MixedOffset {
+    fn from_parts(base: u32, addend: i64) -> Self {
+        Self { base, addend }
+    }
+
+    fn calculate(&self) -> i32 {
+        (self.base as i64 + self.addend).try_into().unwrap()
+    }
+}
+struct DataInitEntry {
+    storage: MixedOffset,
+    offset_value: MixedOffset,
+}
+
 pub struct StartFnGen {
     memory_index: u32,
     lib_base_id: OutputGlobalId,
-    data_inits: Vec<(u32, OutputGlobalId)>,
+    data_inits: Vec<DataInitEntry>,
 }
 
 impl StartFnGen {
@@ -45,42 +71,37 @@ impl StartFnGen {
         memory_index: u32,
         lib_base_id: OutputGlobalId,
         modify_entries: impl IntoIterator<Item = &'a ModifyEntry<DataEntry>>,
-    ) -> Result<Self> {
+    ) -> Self {
         let data_inits = modify_entries
             .into_iter()
             .filter_map(|entry| {
-                if let ModifyEntry::Custom(DataEntry::DataOffsetCalculator { range, dep_data_id }) =
-                    entry
+                if let ModifyEntry::Custom(DataEntry::DataOffsetCalculator {
+                    storage,
+                    relocated_data_symbol,
+                }) = entry
                 {
-                    let GlobalVar::Extract(dep_data_id) = dep_data_id else {
-                        log::trace!("Global var ignored in start_fn_generation in {entry:?}");
-                        return None;
-                    };
-                    Some((range.start as u32, *dep_data_id))
+                    Some(DataInitEntry {
+                        storage: *storage,
+                        offset_value: *relocated_data_symbol,
+                    })
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-        Ok(Self {
+        Self {
             memory_index,
             lib_base_id,
             data_inits,
-        })
+        }
     }
 
     pub fn generate_fn(&self) -> wasm_encoder::Function {
         let mut func = wasm_encoder::Function::new([]);
 
         let mut instr = func.instructions();
-        for (store_offset_at, global_var) in &self.data_inits {
-            self.push_init(
-                &mut instr,
-                *store_offset_at,
-                self.lib_base_id,
-                *global_var,
-                self.memory_index,
-            );
+        for data_entry in &self.data_inits {
+            self.push_init(&mut instr, data_entry, self.lib_base_id, self.memory_index);
         }
         instr.end();
         func
@@ -90,18 +111,29 @@ impl StartFnGen {
         &self,
         instr: &mut InstructionSink<'_>,
         // Offset in data segment where to store the address of global var
-        offset_to_store_at: u32,
+        data_entry: &DataInitEntry,
         lib_base_id: OutputGlobalId,
-        global_var: OutputGlobalId,
         memory_index: u32,
     ) {
+        // store pointer in specific data symbol
+        // value = (GOT+src) | src
+        // *(GOT+dst) = value
+
+        let src_offset = data_entry.offset_value.calculate();
+
+        let dst_offset = data_entry.storage.calculate();
+
         instr.global_get(lib_base_id as u32);
-        instr.i32_const(offset_to_store_at as i32);
+        instr.i32_const(src_offset);
         instr.i32_add();
-        instr.global_get(global_var as u32);
+
+        instr.global_get(lib_base_id as u32);
+        instr.i32_const(dst_offset);
+        instr.i32_add();
+
         instr.i32_store(MemArg {
             offset: 0,
-            align: 2,
+            align: 1,
             memory_index,
         });
     }
@@ -122,33 +154,70 @@ impl CustomModify for DataEntry {
     where
         'src: 'any;
     fn try_from_entry(
-        mut global_getter: impl FnMut(AnySymbolId) -> Result<super::GlobalVar>,
         entry: &wasmparser::RelocationEntry,
-        extract_const: bool,
-        start_offset: usize,
+        context: &RelocationContext,
     ) -> Result<Option<Self>>
     where
         Self: Sized,
     {
         Self::check_whitelisted_data_relocation(entry)?;
         Ok(match entry.ty {
-            RelocationType::MemoryAddrI32 if extract_const => Some(Self::DataOffsetCalculator {
-                range: entry.relocation_range().shift_left(start_offset),
-                dep_data_id: global_getter(entry.index as AnySymbolId)?,
-            }),
-            RelocationType::TableIndexI32 => Some(Self::TableIndex {
-                range: entry.relocation_range().shift_left(start_offset),
-                original_symbol: entry.index as AnySymbolId,
-            }),
+            RelocationType::MemoryAddrI32 if context.dyn_relocate => {
+                let containing_symbol = context.containing_symbol.as_ref().unwrap(); // storage should always exist in dyn relocation mode
+
+                // and be in GOT mode
+                let GlobalSymbolOp::GotOffset { offset: dst_offset } = containing_symbol.symbol
+                else {
+                    bail!("Relocation range {entry:?} does not refer to a valid global symbol inside current module")
+                };
+                let storage = MixedOffset::from_parts(dst_offset, containing_symbol.addend);
+
+                let data_symbol = context.referenced_symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Relocation {entry:?} does not refer to a valid global symbol")
+                })?; // source symbol should also be in map
+
+                // But if it static offset - skip dyn relocation and make it static
+                let GlobalSymbolOp::GotOffset { offset: src_offset } = data_symbol else {
+                    log::trace!(
+                        "SRC Global var from entry {entry:?} ignored in start fn generation"
+                    );
+                    return Ok(None);
+                };
+
+                Some(Self::DataOffsetCalculator {
+                    storage,
+                    relocated_data_symbol: MixedOffset::from_parts(src_offset, entry.addend),
+                })
+            }
+            RelocationType::TableIndexI32 => {
+                // return Ok(None);
+                // todo!();
+                let containing_symbol = context.containing_symbol.as_ref().unwrap(); // storage should always exist in dyn relocation mode
+
+                // and be in GOT mode
+                let GlobalSymbolOp::GotOffset { offset: dst_offset } = containing_symbol.symbol
+                else {
+                    log::trace!("Relocation range {entry:?} does not refer to a valid global symbol inside current module");
+
+                    return Ok(None);
+                };
+                let storage = MixedOffset::from_parts(dst_offset, containing_symbol.addend);
+
+                Some(Self::TableIndex {
+                    storage,
+                    original_symbol: entry.index as AnySymbolId,
+                })
+            }
             _ => return Ok(None),
         })
     }
 
     fn range(&self) -> Range<usize> {
-        match self {
-            Self::DataOffsetCalculator { range, .. } => range.clone(),
-            Self::TableIndex { range, .. } => range.clone(),
-        }
+        let start = match self {
+            Self::DataOffsetCalculator { storage, .. } => storage.calculate(),
+            Self::TableIndex { storage, .. } => storage.calculate(),
+        } as usize;
+        start..(start + 4)
     }
     fn try_apply(&self, ctx: Self::Context<'_, '_>) -> Result<()> {
         let relocation_range = self.range();

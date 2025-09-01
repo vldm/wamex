@@ -10,14 +10,14 @@ use crate::{
 pub struct OtherReloc {
     pub relocation_type: wasmparser::RelocationType,
     pub id: u32,
-    pub append: i64,
+    pub addend: i64,
 }
 
 impl Hash for OtherReloc {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         (self.relocation_type as u8).hash(state);
         // self.id.hash(state);
-        self.append.hash(state);
+        self.addend.hash(state);
     }
 }
 
@@ -26,7 +26,7 @@ impl Ord for OtherReloc {
         (self.relocation_type as u8)
             .cmp(&(other.relocation_type as u8))
             .then_with(|| self.id.cmp(&other.id))
-            .then_with(|| self.append.cmp(&other.append))
+            .then_with(|| self.addend.cmp(&other.addend))
     }
 }
 impl PartialOrd for OtherReloc {
@@ -70,7 +70,7 @@ impl Child {
                    Child::OtherReloc(OtherReloc {
                        relocation_type: entry.ty,
                        id: entry.index,
-                       append: entry.addend,
+                       addend: entry.addend,
                    })
                 }
                 // Offsets in function bodies

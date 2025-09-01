@@ -11,6 +11,8 @@ pub mod section {
     use std::ops::Range;
 
     use wasmparser::SymbolFlags;
+
+    use crate::index::AnySymbolId;
     #[derive(Default, Debug)]
     pub struct Data<'a> {
         /// The flags for the symbol.
@@ -27,6 +29,7 @@ pub mod section {
         pub name: &'a str,
         pub offset: u32,
         pub size: u32,
+        pub linkage_symbol: AnySymbolId,
     }
 
     /// The symbol is a section.
@@ -128,6 +131,7 @@ impl<'a> LinkingSymbolsInfo<'a> {
                             flags,
                             offset: symbol.offset,
                             size: symbol.size,
+                            linkage_symbol: info.original_indexes.len(),
                         });
                         SymbolIndex::DataDefined(DataSegmentId::from_index(symbol.index), id)
                     } else {

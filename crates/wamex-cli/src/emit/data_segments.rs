@@ -8,7 +8,7 @@ use crate::{
     analysis,
     emit::globals::DataSymbol,
     helpers::{encoding_size, RangeComp, RangeExt},
-    index::{DataSymbolId, Indexed},
+    index::{AnySymbolId, DataSymbolId, Indexed},
 };
 
 /// Describes how a data symbol relates to its neighboring symbols within a segment.
@@ -283,7 +283,7 @@ impl<'src> DataSegment<'src> {
     }
 
     // Keeps only symbols with id is in `indexes`.
-    pub fn retain_symbols(&mut self, indexes: &HashSet<DataSymbolId>) {
+    pub fn new_with_whitelist(mut self, indexes: &HashSet<DataSymbolId>) -> Self {
         let mut result = vec![];
 
         {
@@ -296,11 +296,11 @@ impl<'src> DataSegment<'src> {
                     SymbolRelation::BoundToPrevious { .. } => {
                         if remove != last_regular_removed {
                             // TODO: Add dep in DepGraph for BoundToPrevious symbol
-                            // panic!(
-                            //     "BUG: Data segment symbol {} has bound to symbol that was removed, but previous symbol removed: {}",
-                            //     item.index,
-                            //     last_regular_removed
-                            // );
+                            log::error!(
+                                "BUG: Data segment symbol {} has bound to symbol that was removed, but previous symbol removed: {}",
+                                item.index,
+                                last_regular_removed
+                            );
                         }
                     }
                     SymbolRelation::Regular { .. } => {
@@ -315,6 +315,7 @@ impl<'src> DataSegment<'src> {
         }
 
         self.data_parts = result;
+        self
     }
 
     pub fn data_len(&self, segment_offset: usize) -> usize {
@@ -432,7 +433,7 @@ impl<'src> DataSegment<'src> {
 
         log::debug!("Segment offset is {}", mem_start + segment_offset);
         let mut globals = Vec::new();
-        for symbol in &self.data_parts {
+        for (new_index, symbol) in self.data_parts.iter().enumerate() {
             match symbol.relation {
                 SymbolRelation::BoundToPrevious { offset, len } => {
                     // BoundToPrevious symbols are not counted in data length
@@ -477,11 +478,13 @@ impl<'src> DataSegment<'src> {
                         symbol_index: symbol.index,
                         type_info: super::globals::GlobalConstructor::POINTER_TYPE,
                     });
-                    all_relocations.extend(symbol.relocations.iter().map(|entry| {
-                        wasmparser::RelocationEntry {
+                    all_relocations.extend(symbol.relocations.iter().map(|entry| SymbolReloc {
+                        reloc_in_symbol_index: DataSymbolId::from_index(new_index),
+                        offset: entry.offset as i64,
+                        entry: wasmparser::RelocationEntry {
                             offset: entry.offset + data.len() as u32,
                             ..entry.clone()
-                        }
+                        },
                     }));
                     data.extend_from_slice(chunk);
                 }
@@ -493,21 +496,26 @@ impl<'src> DataSegment<'src> {
                 memory_offset: mem_start + segment_offset,
                 data_init,
                 data,
-                globals,
+                symbols: globals,
                 relocations: all_relocations,
             },
         )
     }
 }
 
+pub struct SymbolReloc {
+    pub reloc_in_symbol_index: DataSymbolId,
+    pub offset: i64,
+    pub entry: wasmparser::RelocationEntry,
+}
 // generate data segment and global initializers
 pub struct DataSegmentOutput {
     data_init: Option<wasm_encoder::ConstExpr>,
     // only for active segments
     memory_offset: usize,
     data: Vec<u8>,
-    globals: Vec<super::globals::DataSymbol>,
-    relocations: Vec<wasmparser::RelocationEntry>,
+    symbols: Vec<super::globals::DataSymbol>,
+    relocations: Vec<SymbolReloc>,
 }
 
 impl DataSegmentOutput {
@@ -526,10 +534,10 @@ impl DataSegmentOutput {
     pub fn as_raw(&self) -> &[u8] {
         &self.data
     }
-    pub fn globals(&self) -> &[super::globals::DataSymbol] {
-        &self.globals
+    pub fn symbols(&self) -> &[super::globals::DataSymbol] {
+        &self.symbols
     }
-    pub fn relocations(&self) -> &[wasmparser::RelocationEntry] {
+    pub fn relocations(&self) -> &[SymbolReloc] {
         &self.relocations
     }
     pub fn is_active(&self) -> bool {

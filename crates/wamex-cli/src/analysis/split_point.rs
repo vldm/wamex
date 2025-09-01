@@ -15,11 +15,23 @@ use crate::{
     read::InputModule,
 };
 
+// struct DefinedSymbolDecl {
+//     node: DepNode,
+//     exported: bool,
+// }
+// struct ModuleID(usize);
+
+// pub struct ModuleSpec {
+//     linkage_type: LinkageType,
+//     defined_symbols: Vec<DefinedSymbolDecl>,
+//     deps: BTreeMap<ModuleID, Vec<DepNode>>,
+// }
+
 // TODO: impl merge and use it in emit_modules as one of strategies to emit modules.
 // The other possible is to emit it as separate chunk and allow linkage.
 #[derive(Default)]
 pub struct OutputModuleInfo {
-    pub included_symbols: HashSet<DepNode>,
+    pub defined_symbols: HashSet<DepNode>,
     // Shared imports that should be imported from other modules.
     pub link_symbols: HashSet<DepNode>,
     // TODO: Instead of split points we need list of what "split-points" we exports, and what we imports
@@ -268,7 +280,7 @@ impl SplitProgramInfo {
             (
                 SplitModuleIdentifier::Single(named_graph.module),
                 OutputModuleInfo {
-                    included_symbols: named_graph.deps.reachable,
+                    defined_symbols: named_graph.deps.reachable,
                     link_symbols,
                     split_points,
                 },
@@ -288,7 +300,7 @@ impl SplitProgramInfo {
             split_module_contents.insert(
                 SplitModuleIdentifier::Shared(shared.module_names.clone()),
                 OutputModuleInfo {
-                    included_symbols: shared.shared_deps,
+                    defined_symbols: shared.shared_deps,
                     link_symbols: shared.linked_nodes,
                     split_points: vec![],
                 },
@@ -299,7 +311,7 @@ impl SplitProgramInfo {
             .iter()
             .enumerate()
             .flat_map(|(output_index, (_, info))| {
-                info.included_symbols
+                info.defined_symbols
                     .iter()
                     .map(move |symbol| (symbol.clone(), output_index))
             })
