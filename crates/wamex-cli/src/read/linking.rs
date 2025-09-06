@@ -3,7 +3,7 @@ use vec_map::VecMap;
 use wasmparser::{Comdat, InitFunc, Segment};
 
 use super::CustomSectionReader;
-use crate::index::{DataSegmentId, DataSymbolId, GlobalId, IdMap, IdVec, InputFuncId, SectionId};
+use crate::index::{DataSegmentId, DataSymbolId, InputGlobalId, IdMap, IdVec, InputFuncId, SectionId};
 
 #[allow(dead_code)]
 pub mod section {
@@ -65,14 +65,14 @@ pub enum SymbolIndex {
     Func(InputFuncId),
     DataDefined(DataSegmentId, DataSymbolId),
     DataUndefined(usize),
-    Global(GlobalId),
+    Global(InputGlobalId),
     Section(SectionId),
     Event(usize),
     Table(usize),
 }
 #[derive(Default, Debug)]
 pub struct LinkingSymbolsInfo<'a> {
-    pub globals: IdMap<GlobalId, section::SymInfo<'a>>,
+    pub globals: IdMap<InputGlobalId, section::SymInfo<'a>>,
     pub funcs: IdMap<InputFuncId, section::SymInfo<'a>>,
     pub events: VecMap<section::SymInfo<'a>>,
     pub sections: VecMap<section::Section>,
@@ -92,7 +92,7 @@ impl<'a> LinkingSymbolsInfo<'a> {
         for sym_info in map.into_iter() {
             let symbol_index = match sym_info? {
                 SymbolInfo::Global { name, flags, index } => {
-                    let index = GlobalId::from_index(index);
+                    let index = InputGlobalId::from_index(index);
                     info.globals.insert(index, section::SymInfo { name, flags });
                     SymbolIndex::Global(index)
                 }

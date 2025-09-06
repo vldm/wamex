@@ -11,6 +11,5 @@ web-sys = { version = "0.3" }
 thiserror = "2.0"
 
 wamex_metadata = { version = "0.1.0", path = "../wamex_metadata" }
-# TODO: use smaller serialization crate
-serde_json = { version = "1.0", features = ["preserve_order"] }
-serde = { version = "1.0", features = ["derive"] }
+bitcode = { version = "0.6.0" }
+log = "0.4"

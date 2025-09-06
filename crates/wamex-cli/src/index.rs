@@ -17,7 +17,6 @@ use crate::read::{
 pub type AnySymbolId = usize;
 pub type SectionId = usize;
 pub type OutputSymbolDataId = usize;
-pub type OutputGlobalId = u32;
 
 pub type FuncTypeId = Id<FuncType>;
 pub type InputFuncId = Id<InputFunction<'static>>;
@@ -26,7 +25,7 @@ pub type TableId = Id<Table<'static>>;
 pub type ImportId = Id<Import<'static>>;
 pub type ExportId = Id<Export<'static>>;
 pub type MemoryId = Id<MemoryType>;
-pub type GlobalId = Id<Global<'static>>;
+pub type InputGlobalId = Id<Global<'static>>;
 pub type ElementId = Id<Element<'static>>;
 pub type DataSegmentId = Id<Data<'static>>;
 pub type DataSymbolId = Id<DataInSegment<'static>>;
@@ -354,11 +353,12 @@ pub trait Defined<'src>: Indexed {
 pub trait OutputType<'src> {
     type InputType: Indexed + 'src;
     // to use InputType::IndexType we need rtn
-    fn get_input_index(&self) -> Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>;
+    fn get_input_index(&self) -> Option<Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>>;
 }
 
 /// One place for storing imports and defined items,
 /// so we can use
+#[derive(Debug)]
 pub struct ImportsOrDefined<'src, D: Defined<'src>> {
     pub imports: Vec<D::Import>,
     pub defined: Vec<D>,
@@ -375,6 +375,11 @@ impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
         &self.defined
     }
 
+    pub fn push_import(&mut self, import: D::Import) -> Id<D::StaticTypeTagForIndex> {
+        self.imports.push(import);
+        Id::from_index(self.imports.len() - 1)
+    }
+
     /// After locking, no modification is allowed.
     #[allow(private_bounds)]
     pub fn lock(self) -> WithOriginalIndex<'src, D>
@@ -387,6 +392,7 @@ impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
 }
 
 /// After building this collection, no modification is allowed.
+
 pub struct WithOriginalIndex<'src, T>
 where
     T: OutputType<'src> + Defined<'src>,
@@ -396,6 +402,19 @@ where
         Id<<T::InputType as Indexed>::StaticTypeTagForIndex>,
         Id<<T as Indexed>::StaticTypeTagForIndex>,
     >,
+}
+
+impl<'src, T: Debug> Debug for WithOriginalIndex<'src, T>
+where
+    T: OutputType<'src> + Defined<'src>,
+    T::Import: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WithOriginalIndex")
+            .field("collection", &self.collection)
+            .field("map", &self.map)
+            .finish()
+    }
 }
 
 #[allow(private_bounds)]
@@ -410,7 +429,7 @@ where
         let map = imports
             .chain(defined)
             .enumerate()
-            .map(|(i, input_id)| (input_id, Id::from_index(i)))
+            .filter_map(|(i, input_id)| input_id.map(|input_id| (input_id, Id::from_index(i))))
             .collect();
         WithOriginalIndex { collection, map }
     }
@@ -431,14 +450,14 @@ where
             self.collection
                 .imports()
                 .get(raw_output_id)
-                .map(OutputType::get_input_index)
+                .and_then(OutputType::get_input_index)
         } else {
             // Otherwise it is defined
             let defined_index = raw_output_id - self.collection.imports().len();
             self.collection
                 .defined()
                 .get(defined_index)
-                .map(OutputType::get_input_index)
+                .and_then(OutputType::get_input_index)
         }
     }
 
@@ -462,6 +481,30 @@ where
             .iter()
             .enumerate()
             .map(move |(id, defined)| (Id::from_index(id + num_imports), defined))
+    }
+
+    pub fn get_import_for_output_id(
+        &self,
+        output_id: Id<<T as Indexed>::StaticTypeTagForIndex>,
+    ) -> Option<&T::Import> {
+        let raw_output_id = output_id.as_raw_index();
+        if raw_output_id < self.collection.imports().len() {
+            self.collection.imports().get(raw_output_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_defined_for_output_id(
+        &self,
+        output_id: Id<<T as Indexed>::StaticTypeTagForIndex>,
+    ) -> Option<&T> {
+        let raw_output_id = output_id.as_raw_index();
+        if raw_output_id < self.collection.defined().len() {
+            self.collection.defined().get(raw_output_id)
+        } else {
+            None
+        }
     }
 
     pub fn iter_all_ids<'a>(

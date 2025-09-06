@@ -1,6 +1,11 @@
+use std::borrow::Cow;
+
 use wasm_encoder::GlobalType;
 
-use crate::index::DataSymbolId;
+use crate::{
+    emit::ImportedEntity,
+    index::{DataSymbolId, InputGlobalId},
+};
 
 // Init global variable that will replace all usage of DataSymbol.
 #[derive(Clone, Debug)]
@@ -14,6 +19,54 @@ pub struct DataSymbol {
 pub enum GlobalConstructor {
     DataSymbol(DataSymbol),
     TempStore(wasm_encoder::GlobalType),
+}
+
+#[derive(Debug)]
+pub enum DefinedGlobal<'a> {
+    PlainCopy {
+        input_global_id: InputGlobalId,
+        global: wasmparser::Global<'a>,
+    },
+    WithConstructor(GlobalConstructor),
+}
+
+#[derive(Debug)]
+pub enum GlobalImport<'a> {
+    Existing {
+        global_name: &'a str,
+        module_name: &'a str,
+        input_global_id: InputGlobalId,
+        global_type: wasm_encoder::GlobalType,
+    },
+    New {
+        global_name: Cow<'a, str>,
+        input_global_id: Option<InputGlobalId>,
+        global_type: wasm_encoder::GlobalType,
+    },
+}
+
+impl ImportedEntity for GlobalImport<'_> {
+    fn module_name(&self) -> Cow<'_, str> {
+        match self {
+            GlobalImport::Existing { module_name, .. } => (*module_name).into(),
+            GlobalImport::New { .. } => "__wasm_split".into(),
+        }
+    }
+    fn import_name(&self) -> &str {
+        match self {
+            GlobalImport::Existing { global_name, .. } => global_name,
+            GlobalImport::New { global_name, .. } => global_name,
+        }
+    }
+}
+
+impl GlobalImport<'_> {
+    pub fn global_type(&self) -> &wasm_encoder::GlobalType {
+        match self {
+            GlobalImport::Existing { global_type, .. } => global_type,
+            GlobalImport::New { global_type, .. } => global_type,
+        }
+    }
 }
 
 impl GlobalConstructor {

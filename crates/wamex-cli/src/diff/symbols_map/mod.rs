@@ -43,7 +43,7 @@ fn list_function_relocs(
     fn_id: InputFuncId,
 ) -> Vec<wasmparser::RelocationEntry> {
     let defined_id = module.as_defined_function_id(fn_id).unwrap();
-    let func_info = &module.source.code.defined_funcs[defined_id];
+    let func_info = &module.wasm.code.defined_funcs[defined_id];
     let range = func_info.body.range();
     let func_relocs = ModuleEmitState::get_relocations_for_range(all_relocations, &range);
     func_relocs
@@ -58,7 +58,7 @@ fn get_function_content_hash(
     fn_id: InputFuncId,
 ) -> Option<(Hash, Vec<wasmparser::RelocationEntry>)> {
     let defined_fn_id = module.as_defined_function_id(fn_id)?;
-    let mut body = module.source.code.section_payload.defined_funcs[defined_fn_id]
+    let mut body = module.wasm.code.section_payload.defined_funcs[defined_fn_id]
         .body
         .as_bytes()
         .to_vec();

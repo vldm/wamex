@@ -20,8 +20,8 @@ use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     analysis,
-    emit::{ExtraImportGlobal, ModuleEmitState},
-    index::{AnySymbolId, DefinedFuncId, GlobalId, InputFuncId, OutputGlobalId},
+    emit::{index_safety::OutputGlobalId, ModuleEmitState},
+    index::{AnySymbolId, DefinedFuncId, InputFuncId, InputGlobalId},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -45,7 +45,7 @@ impl<'a> ModifyContext<'a> {
     pub fn emit_code_with_changes<'src>(
         module_emit: &'a ModuleEmitState<'a, 'src>,
         main_module: &'a ModuleEmitState<'a, 'src>,
-        num_new_global_imports: usize,
+        global_id_mapper: impl Fn(InputGlobalId) -> Option<OutputGlobalId>,
         defined_function_id: DefinedFuncId,
         input_function_id: InputFuncId, // debug purposes
         entries: &[CodeModifyEntry],
@@ -53,13 +53,13 @@ impl<'a> ModifyContext<'a> {
         let (function_name, src_body) = {
             let func_id = InputFuncId::from_index(
                 defined_function_id.as_raw_index()
-                    + module_emit.info.import_funcs_info.imported_funcs.len(),
+                    + module_emit.src.import_info.imported_funcs.len(),
             );
             let defined_func =
-                &module_emit.info.source.code.section_payload.defined_funcs[defined_function_id];
+                &module_emit.src.wasm.code.section_payload.defined_funcs[defined_function_id];
             let name = module_emit
-                .info
-                .source
+                .src
+                .wasm
                 .names
                 .functions
                 .get(func_id)
@@ -68,11 +68,11 @@ impl<'a> ModifyContext<'a> {
             (name, defined_func.body.clone())
         };
         log::debug!(
-            "processing function: {function_name}[{input_function_id}] for [{range:?}]",
-            range = src_body.range()
+            "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {entries:?}]",
+            range = src_body.range(),
         );
 
-        log::trace!("start_body {:?}", src_body.as_bytes());
+        log::trace!("src_body {:?}", src_body.as_bytes());
         let mut entries_iter = entries.iter().peekable();
         let Some(mut entry) = entries_iter.next() else {
             // no modifications, just copy the original function body
@@ -134,13 +134,13 @@ impl<'a> ModifyContext<'a> {
                 instruction: instr.clone(),
                 writer: &mut result,
                 lib_base_id: module_emit
-                    .lib_base_import
+                    .sub_module_extra
                     .as_ref()
-                    .map(ExtraImportGlobal::global_id),
+                    .map(|m| m.lib_base_id.as_raw_index() as u32),
                 table_base_id: module_emit
-                    .table_base_import
+                    .sub_module_extra
                     .as_ref()
-                    .map(ExtraImportGlobal::global_id),
+                    .map(|m| m.table_base_id.as_raw_index() as u32),
             };
 
             log::trace!(
@@ -222,15 +222,13 @@ impl<'a> ModifyContext<'a> {
         }
 
         let reloc_info = RelocateState {
-            input_module: &module_emit.info.source,
+            input_module: &module_emit.src.wasm,
             main_module: main_module,
             emit_module: module_emit,
-            global_id_mapper: |global_id: GlobalId| {
-                Some(
-                    (global_id.as_raw_index() + num_new_global_imports) as OutputGlobalId, // currently just increase global_id
-                )
-            },
+            global_id_mapper,
         };
+        log::trace!("end_body {:?}", result);
+        log::trace!("other_relocations {:?}", other_relocations);
         // TODO: apply relocations
         for relocation in &other_relocations {
             log::trace!(
@@ -246,7 +244,7 @@ impl<'a> ModifyContext<'a> {
     fn emit_code_in_place<'src>(
         module_emit: &ModuleEmitState<'a, 'src>,
         num_new_global_imports: u32,
-        defined_function_id: GlobalId,
+        defined_function_id: InputGlobalId,
         entries: &[CodeModifyEntry],
     ) -> Result<Vec<u8>> {
         todo!()

@@ -75,7 +75,9 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
             }
             let id = ::wamex::ModuleId::new(stringify!(#module_ident));
 
-            ::wamex::load(id, false).await.unwrap();
+            let res = ::wamex::load(id.clone(), false).await;
+            gloo_console::log!(format!("Loaded module {id:?}, result: {res:?}"));
+            res.unwrap();
 
             #(#attrs)*
             #[allow(improper_ctypes_definitions)]

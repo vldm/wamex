@@ -132,11 +132,6 @@ impl<'src> DataSegment<'src> {
         let mut relocation_iter = relocations.iter().peekable();
         let mut prev = 0..0;
         for sym in symbols {
-            if sym.range.len() == 0 {
-                log::error!("Data segment has zero-size symbol: {:?}", sym);
-                // Ignore zero-size symbols since they cannot be the target of a relocation.
-                continue;
-            }
             let entries = Self::collect_and_map_while(
                 &mut relocation_iter,
                 // Save relocation entries related to this symbol
@@ -161,7 +156,7 @@ impl<'src> DataSegment<'src> {
 
             let symbol_in_data = sym.range.clone().shift_left(data_start);
 
-            let field_alignment = std::cmp::min(alignment, symbol_in_data.len());
+            let field_alignment = Self::data_symbol_alignment(alignment, symbol_in_data.len());
 
             let relation = if prev.end > symbol_in_data.start {
                 log::warn!(
@@ -330,7 +325,7 @@ impl<'src> DataSegment<'src> {
 
             // If we're not aligned, add padding
             if aligned {
-                let field_alignment = self.field_alignment(chunk.len());
+                let field_alignment = Self::data_symbol_alignment(self.alignment, chunk.len());
                 let padding = Self::calculate_padding(current_offset, field_alignment);
                 len += padding;
             }
@@ -401,9 +396,12 @@ impl<'src> DataSegment<'src> {
         }
     }
 
-    fn field_alignment(&self, chunk_size: usize) -> usize {
+    fn data_symbol_alignment(segment_alignment: usize, chunk_size: usize) -> usize {
+        if chunk_size == 0 {
+            return 1;
+        }
         let alignment = 1usize << chunk_size.trailing_zeros();
-        std::cmp::min(self.alignment, alignment)
+        std::cmp::min(segment_alignment, alignment)
     }
 
     fn calculate_padding(starting_point: usize, alignment: usize) -> usize {
@@ -433,7 +431,7 @@ impl<'src> DataSegment<'src> {
 
         log::debug!("Segment offset is {}", mem_start + segment_offset);
         let mut globals = Vec::new();
-        for (new_index, symbol) in self.data_parts.iter().enumerate() {
+        for symbol in self.data_parts.iter() {
             match symbol.relation {
                 SymbolRelation::BoundToPrevious { offset, len } => {
                     // BoundToPrevious symbols are not counted in data length
@@ -453,7 +451,8 @@ impl<'src> DataSegment<'src> {
 
                     // add padding to align data
                     if aligned {
-                        let field_alignment = self.field_alignment(chunk.len()); //std::cmp::min(self.alignment, chunk.len());
+                        let field_alignment =
+                            Self::data_symbol_alignment(self.alignment, chunk.len());
 
                         let padding = Self::calculate_padding(total_offset, field_alignment);
                         if padding > 0 {
@@ -479,7 +478,7 @@ impl<'src> DataSegment<'src> {
                         type_info: super::globals::GlobalConstructor::POINTER_TYPE,
                     });
                     all_relocations.extend(symbol.relocations.iter().map(|entry| SymbolReloc {
-                        reloc_in_symbol_index: DataSymbolId::from_index(new_index),
+                        reloc_in_symbol_index: symbol.index,
                         offset: entry.offset as i64,
                         entry: wasmparser::RelocationEntry {
                             offset: entry.offset + data.len() as u32,

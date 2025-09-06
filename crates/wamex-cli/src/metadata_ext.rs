@@ -40,7 +40,7 @@ pub trait SymbolSignatureExt {
 impl SymbolSignatureExt for SymbolSignature {
     fn from_input_function(module_info: &ModuleInfo, func_id: InputFuncId, lazy: bool) -> Self {
         let name = module_info
-            .source
+            .wasm
             .names
             .functions
             .get(func_id)
@@ -49,7 +49,7 @@ impl SymbolSignatureExt for SymbolSignature {
         let funct_type_id = module_info.get_function_type_id(func_id);
 
         let type_info = module_info
-            .source
+            .wasm
             .types
             .get(funct_type_id)
             .expect("Function type should be defined");
@@ -80,7 +80,7 @@ impl SymbolSignatureExt for SymbolSignature {
         idx: DataSymbolId,
     ) -> Self {
         let symbol = module_info
-            .source
+            .wasm
             .linking
             .get_data_in_segment(segment, idx)
             .expect("Data symbol should be defined");
@@ -255,7 +255,7 @@ pub struct Metadata {
 
 pub fn _build_module_structure(module: &ModuleInfo) -> crate::diff::symbols_map::ModuleStructure {
     let all_relocations =
-        EmitInfo::all_relocations(module.source).expect("Failed to get all relocations");
+        EmitInfo::all_relocations(module.wasm).expect("Failed to get all relocations");
 
     // TODO: reuse from emit modules
     let data_segments_symbols = module
@@ -263,7 +263,7 @@ pub fn _build_module_structure(module: &ModuleInfo) -> crate::diff::symbols_map:
         .chunk_by(|left, right| left.segment_index == right.segment_index)
         .collect::<Vec<_>>();
     let data_segments = module
-        .source
+        .wasm
         .data
         .section_payload
         .data_segments
@@ -276,7 +276,7 @@ pub fn _build_module_structure(module: &ModuleInfo) -> crate::diff::symbols_map:
                 .get(data_segment)
                 .cloned()
                 .expect("Symbols for data segment not found");
-            let segment_info = module.source.linking.segments_info[data_segment].clone();
+            let segment_info = module.wasm.linking.segments_info[data_segment].clone();
 
             DataSegment::new_inner(data.clone(), segment_info, data_symbols, data_relocs)
         })

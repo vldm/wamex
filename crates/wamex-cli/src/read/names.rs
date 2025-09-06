@@ -3,7 +3,7 @@ use vec_map::VecMap;
 
 use super::CustomSectionReader;
 use crate::index::{
-    DataSegmentId, ElementId, FuncTypeId, GlobalId, IdMap, InputFuncId, MemoryId, TableId, TagId,
+    DataSegmentId, ElementId, FuncTypeId, InputGlobalId, IdMap, InputFuncId, MemoryId, TableId, TagId,
 };
 
 // Custom sections
@@ -16,7 +16,7 @@ pub struct Names<'a> {
     pub types: IdMap<FuncTypeId, &'a str>,
     pub tables: IdMap<TableId, &'a str>,
     pub memories: IdMap<MemoryId, &'a str>,
-    pub globals: IdMap<GlobalId, &'a str>,
+    pub globals: IdMap<InputGlobalId, &'a str>,
     pub elements: IdMap<ElementId, &'a str>,
     pub data_segments: IdMap<DataSegmentId, &'a str>,
     pub tags: IdMap<TagId, &'a str>,

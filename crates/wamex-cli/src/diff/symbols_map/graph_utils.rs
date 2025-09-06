@@ -50,7 +50,7 @@ impl Child {
         use wasmparser::RelocationType::*;
         match entry.ty {
                 FunctionIndexI32 | FunctionIndexLeb => {
-                    let SymbolIndex::Func(func_id) = module.source.linking.linking_symbols.original_indexes[entry.index as usize]
+                    let SymbolIndex::Func(func_id) = module.wasm.linking.linking_symbols.original_indexes[entry.index as usize]
                     else {
                         panic!("Relocation type with wrong index information: {:?}", entry);
                     };
@@ -58,7 +58,7 @@ impl Child {
                     Child::Function(func_id)
                 }
                 MemoryAddrI32 | MemoryAddrLeb | MemoryAddrSleb => {
-                    let SymbolIndex::DataDefined(segment, idx) = module.source.linking.linking_symbols.original_indexes[entry.index as usize]
+                    let SymbolIndex::DataDefined(segment, idx) = module.wasm.linking.linking_symbols.original_indexes[entry.index as usize]
                     else {
                         panic!("Relocation type with wrong index information: {:?}", entry);
                     };

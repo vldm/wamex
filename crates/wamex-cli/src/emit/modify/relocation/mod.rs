@@ -4,8 +4,8 @@ use anyhow::{anyhow, bail, Result};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    emit::ModuleEmitState,
-    index::{DataSegmentId, DataSymbolId, GlobalId, InputFuncId, OutputGlobalId},
+    emit::{index_safety::OutputGlobalId, ModuleEmitState},
+    index::{DataSegmentId, DataSymbolId, InputFuncId, InputGlobalId},
     read::{linking::SymbolIndex, InputModule},
 };
 
@@ -19,7 +19,7 @@ pub struct RelocateState<'any, 'src, F> {
 
 impl<F> RelocateState<'_, '_, F>
 where
-    F: Fn(GlobalId) -> Option<OutputGlobalId>,
+    F: Fn(InputGlobalId) -> Option<OutputGlobalId>,
 {
     fn _get_relocation_input_function_index(
         &self,
@@ -113,7 +113,7 @@ where
         Ok(offset as usize)
     }
 
-    fn get_global_id(&self, relocation: &RelocationEntry) -> Result<OutputGlobalId> {
+    fn get_global_id(&self, relocation: &RelocationEntry) -> Result<usize> {
         let Some(SymbolIndex::Global(original_global_id)) = self
             .input_module
             .linking
@@ -129,7 +129,7 @@ where
                     "Dependency analysis error: No output global for input global {original_global_id} referenced by relocation {relocation:?}"
                 )
             })?;
-        Ok(global_id)
+        Ok(global_id.as_raw_index())
     }
 
     pub fn apply_relocation(&self, data: &mut [u8], relocation: &RelocationEntry) -> Result<()> {

@@ -27,9 +27,9 @@ impl ReachabilityGraph {
             DepNode::Function(index) => {
                 let size = index
                     .as_raw_index()
-                    .checked_sub(info.import_funcs_info.imported_funcs.len())
+                    .checked_sub(info.import_info.imported_funcs.len())
                     .map(|defined_index| {
-                        info.source.code.section_payload.defined_funcs
+                        info.wasm.code.section_payload.defined_funcs
                             [DefinedFuncId::from_index(defined_index)]
                         .body
                         .range()
@@ -39,14 +39,14 @@ impl ReachabilityGraph {
                 size
             }
             DepNode::DataSymbol(segment, idx) => {
-                info.source.linking.linking_symbols.data_in_segments[*segment][*idx].size as usize
+                info.wasm.linking.linking_symbols.data_in_segments[*segment][*idx].size as usize
             }
         };
 
         let format_dep = |dep: &DepNode| match dep {
             DepNode::Function(index) => {
                 let name = info
-                    .source
+                    .wasm
                     .names
                     .functions
                     .get(*index)
@@ -55,13 +55,13 @@ impl ReachabilityGraph {
             }
             DepNode::DataSymbol(segment, idx) => {
                 let symbol = crate::helpers::demangle_full(
-                    info.source
+                    info.wasm
                         .linking
                         .get_data_in_segment(*segment, *idx)
                         .expect("indexes should be valid")
                         .name,
                 );
-                let segment_name = info.source.names.data_segments[*segment];
+                let segment_name = info.wasm.names.data_segments[*segment];
                 format!(
                     "data[{segment}:{idx}] {segment_name}<{symbol:?}> (size={})",
                     size_fn(dep)
@@ -157,7 +157,6 @@ impl Debug for OutputModuleInfo {
                 "included_datas",
                 &debug_fmt_mostly_filled(&included_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
             )
-            .field("split_points", &self.split_points)
             .finish()
     }
 }

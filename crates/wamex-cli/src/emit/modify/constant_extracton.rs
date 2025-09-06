@@ -179,10 +179,10 @@ impl ConstantExtractionEntry {
 
         // TODO: Replace with local?
         let save_value = store.as_ref().map(|store_type| {
-            Instruction::GlobalSet(*ctx.global_tmps.get(store_type).unwrap() as u32)
+            Instruction::GlobalSet(ctx.global_tmps.get(store_type).unwrap().as_raw_index() as u32)
         });
         let restore_value = store.as_ref().map(|store_type| {
-            Instruction::GlobalGet(*ctx.global_tmps.get(store_type).unwrap() as u32)
+            Instruction::GlobalGet(ctx.global_tmps.get(store_type).unwrap().as_raw_index() as u32)
         });
 
         save_value.map(|v| v.encode(ctx.writer)); // Get <value> from stack to temp storage

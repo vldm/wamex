@@ -8,19 +8,20 @@ use js_sys::{
     Array, Function, Object, Reflect,
     WebAssembly::{self},
 };
+use log::debug;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, Response};
 
 #[derive(Debug)]
 pub struct InstantiatedModule {
-    instantiated: JsValue,
+    instantiated: WebAssembly::Instance,
     metadata: wamex_metadata::Module,
 }
 #[derive(Debug)]
 struct LinkageState {
     module_exports: BTreeMap<ModuleId, InstantiatedModule>,
-    main_module: MainModuleStruct,
+
     global_imports: Object,
 }
 
@@ -28,9 +29,50 @@ impl LinkageState {
     fn new() -> Self {
         Self {
             module_exports: Default::default(),
-            main_module: MainModuleStruct::new(),
-            global_imports: Object::new(),
+            global_imports: Self::_get_exports(wasm_bindgen::function_table()),
         }
+    }
+
+    pub fn save_loaded_module(
+        &mut self,
+        module_id: ModuleId,
+        module: InstantiatedModule,
+    ) -> Result<(), JsValue> {
+        debug!("Get exports from instantiated module");
+        let defined_exports = module.instantiated.exports();
+        debug!("Module exports: {:?}", defined_exports);
+        debug!("Store exports and module info in linkage state");
+
+        self.module_exports.insert(module_id.clone(), module);
+
+        // Extend global imports with module exports.
+        copy_fields(&self.global_imports, &defined_exports)
+    }
+
+    fn _get_exports(indirect_function_table: JsValue) -> Object {
+        let new_object = Object::new();
+        let obj = wasm_bindgen::exports().try_into().unwrap();
+        copy_fields(&new_object, &obj).unwrap();
+        let set = Reflect::set(
+            &new_object,
+            &JsValue::from_str("__indirect_function_table"),
+            &indirect_function_table,
+        )
+        .unwrap();
+        assert!(set);
+        new_object
+    }
+
+    fn modify_global<F, U>(op: F) -> U
+    where
+        F: FnOnce(&mut LinkageState) -> U,
+    {
+        LINKAGE_STATE.with(|state_cell| {
+            let mut state = state_cell.take().unwrap();
+            let res = op(&mut state);
+            state_cell.set(Some(state));
+            res
+        })
     }
 }
 
@@ -48,23 +90,7 @@ pub enum Error {
     },
 
     #[error("Failed to deserialize json: {0}")]
-    DeserializationError(#[from] serde_json::Error),
-}
-
-#[derive(Debug)]
-struct MainModuleStruct {
-    // Shared memory
-    memory: JsValue,
-    // Where to store lazy fns.
-    indirect_function_table: JsValue,
-}
-impl MainModuleStruct {
-    fn new() -> Self {
-        Self {
-            memory: wasm_bindgen::memory(),
-            indirect_function_table: wasm_bindgen::function_table(),
-        }
-    }
+    DeserializationError(#[from] Box<dyn error::Error + Send + Sync>),
 }
 
 thread_local! {
@@ -117,15 +143,14 @@ fn buffer_to_rust(buffer: JsValue) -> Result<Vec<u8>, Error> {
     Ok(vec)
 }
 
-fn extend_object(target: &Object, source: &Object) -> Result<(), JsValue> {
+fn copy_fields(target: &Object, source: &Object) -> Result<(), JsValue> {
     let entries = Object::entries(source);
     for entry in entries.iter() {
         let pair = Array::from(&entry);
         let key = pair.get(0);
         let value = pair.get(1);
 
-        #[cfg(debug_assertions)]
-        {
+        if cfg!(debug_assertions) {
             let key_str = key.as_string().unwrap_or_default();
             let existing = Reflect::get(target, &key)?;
             if !existing.is_undefined() {
@@ -140,8 +165,30 @@ fn extend_object(target: &Object, source: &Object) -> Result<(), JsValue> {
     Ok(())
 }
 
+pub fn deserialize_decl(buffer: &[u8]) -> Result<wamex_metadata::Module, Error> {
+    // {
+    //     let module: wamex_metadata::Module =
+    //         bitcode::decode(buffer).map_err(|e| Error::DeserializationError(e.into()))?;
+    //     Ok(module)
+    // }
+    Ok(Default::default())
+}
+
+fn _set_table_base(exports: &Object) -> Result<Function, Error> {
+    let values: Array = Object::values(exports);
+    let func = values
+        .iter()
+        .find_map(|v| v.dyn_into::<Function>().ok())
+        .ok_or(Error::JsError {
+            context: "No function found in exports",
+            error: JsValue::from("No function found"),
+        })?;
+    Ok(func)
+}
+
 // Load webassembly module from URL and instantiate it, link with active imports.
 pub async fn load(module_id: ModuleId, reload: bool) -> Result<(), Error> {
+    debug!("call load for module: {:?}", module_id);
     // 1. fetch module
     let buffer = fetch_buffer(module_id.module_url()).await?;
     let module = WebAssembly::Module::new(&buffer).map_err(|error| Error::JsError {
@@ -154,8 +201,8 @@ pub async fn load(module_id: ModuleId, reload: bool) -> Result<(), Error> {
     let decl_buffer = fetch_buffer(module_id.module_decl_url()).await?;
     let decl_buffer = buffer_to_rust(decl_buffer)?;
 
-    let module_decl: wamex_metadata::Module = serde_json::from_slice(&decl_buffer)?;
-    assert_eq!(module_decl.version, module_id.version);
+    let metadata = deserialize_decl(&decl_buffer)?;
+    assert_eq!(metadata.version, module_id.version);
 
     // 2. Assert module decl "deps" are satisfied.
     // 3. check if module already loaded, if reload - replace it.
@@ -168,34 +215,78 @@ pub async fn load(module_id: ModuleId, reload: bool) -> Result<(), Error> {
         state_cell.set(Some(state));
         imports
     });
-    let imports = global_imports;
-    // Reflect::set(&imports, &JsValue::from_str("env"), &Object::new())?;
-    // 5. Instantiate module.
-    let sub_module = JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
-        .await
-        .map_err(|error| Error::JsError {
-            context: "Failed to instantiate module",
+
+    let new_exports = Object::new();
+    copy_fields(&new_exports, &global_imports).map_err(|e| Error::JsError {
+        context: "Failed to copy global imports",
+        error: e,
+    })?;
+    debug!("New exports: {:?}", new_exports);
+
+    // TODO: Set size from metadata.
+    let alloc = Vec::<u8>::with_capacity(1024);
+    let start = alloc.leak();
+
+    let setted = Reflect::set(
+        &new_exports,
+        &JsValue::from_str("__lib_base"),
+        &JsValue::from(start.as_ptr() as usize),
+    )
+    .map_err(|error| Error::JsError {
+        context: "Failed to set __lib_base import",
+        error,
+    })?;
+    if !setted {
+        return Err(Error::JsError {
+            context: "Failed to set __lib_base import",
+            error: JsValue::from("Reflect::set returned false"),
+        });
+    }
+
+    //TODO: Calculate table base
+    let setted = Reflect::set(
+        &new_exports,
+        &JsValue::from_str("__table_base"),
+        &JsValue::from(0 as usize),
+    )
+    .map_err(|error| Error::JsError {
+        context: "Failed to set __table_base import",
+        error,
+    })?;
+    if !setted {
+        return Err(Error::JsError {
+            context: "Failed to set __table_base import",
+            error: JsValue::from("Reflect::set returned false"),
+        });
+    }
+
+    let imports = Object::new();
+
+    Reflect::set(&imports, &JsValue::from_str("__wasm_split"), &new_exports).map_err(|error| {
+        Error::JsError {
+            context: "Failed to set __wasm_split imports",
             error,
-        })?;
+        }
+    })?;
+
+    debug!("Instantiate module, imports: {:?}", imports);
+    // 5. Instantiate module.
     let sub_module_instance: WebAssembly::Instance =
-        Reflect::get(&sub_module, &JsValue::from_str("instance"))
+        JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
+            .await
             .map_err(|error| Error::JsError {
-                context: "Failed to get instance from instantiated module",
+                context: "Failed to instantiate module",
                 error,
             })?
             .into();
-    let defined_exports = sub_module_instance.exports();
+
+    let instantiated = InstantiatedModule {
+        instantiated: sub_module_instance.clone(),
+        metadata,
+    };
 
     // 6. Store exports and module info in linkage state.
-    LINKAGE_STATE
-        .with(|state_cell| {
-            let state = state_cell.take().expect("Linkage state already taken");
-
-            // Extend global imports with module exports.
-            let result = extend_object(&state.global_imports, &defined_exports);
-            state_cell.set(Some(state));
-            result
-        })
+    LinkageState::modify_global(|state| state.save_loaded_module(module_id, instantiated))
         .map_err(|e| Error::JsError {
             context: "Failed to extend global imports",
             error: e,
@@ -237,9 +328,9 @@ impl ModuleId {
     }
     pub fn module_decl_url(&self) -> String {
         if let Some(url) = &self.module_url_path {
-            format!("{}/{}.decl.json", url, self.name)
+            format!("{}/{}.decl", url, self.name)
         } else {
-            format!("{}.decl.json", self.name)
+            format!("{}.decl", self.name)
         }
     }
 }

@@ -9,12 +9,15 @@ use wasm_encoder::{InstructionSink, MemArg};
 use wasmparser::RelocationType;
 
 use crate::{
-    emit::modify::{
-        relocation::{self, encode},
-        CustomModify, DataModifyEntry, GlobalSymbolOp, ModifyEntry, RelocationContext,
+    emit::{
+        index_safety::OutputGlobalId,
+        modify::{
+            relocation::{self, encode},
+            CustomModify, DataModifyEntry, GlobalSymbolOp, ModifyEntry, RelocationContext,
+        },
     },
     helpers::RangeExt,
-    index::{AnySymbolId, GlobalId, InputFuncId, OutputGlobalId},
+    index::{AnySymbolId, InputFuncId, InputGlobalId},
     read::linking::SymbolIndex,
 };
 
@@ -123,11 +126,11 @@ impl StartFnGen {
 
         let dst_offset = data_entry.storage.calculate();
 
-        instr.global_get(lib_base_id as u32);
+        instr.global_get(lib_base_id.as_raw_index() as u32);
         instr.i32_const(src_offset);
         instr.i32_add();
 
-        instr.global_get(lib_base_id as u32);
+        instr.global_get(lib_base_id.as_raw_index() as u32);
         instr.i32_const(dst_offset);
         instr.i32_add();
 
@@ -139,8 +142,11 @@ impl StartFnGen {
     }
 }
 
-type RelocateState<'any, 'src> =
-    relocation::RelocateState<'any, 'src, Box<dyn Fn(GlobalId) -> Option<OutputGlobalId>>>;
+type RelocateState<'any, 'src> = relocation::RelocateState<
+    'any,
+    'src,
+    Box<dyn Fn(InputGlobalId) -> Option<OutputGlobalId> + 'any>,
+>;
 
 pub struct StartFnModifyContext<'any, 'src> {
     // Sink of buffer where data segment is already stored

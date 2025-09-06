@@ -113,6 +113,10 @@ macro_rules! test_list_contain {
 
 #[test]
 fn test_correct_imports_exports() {
+    let _ = env_logger::Builder::new()
+        .filter(None, log::LevelFilter::Trace)
+        .parse_env("RUST_LOG")
+        .try_init();
     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
 
     src.push("test-data");
@@ -161,7 +165,7 @@ fn test_correct_imports_exports() {
     let static_str_exports = list_exports(&static_str);
 
     test_list_contain! {
-        static_str_imports => &["lib_base_id", "__stack_pointer", "memory", "_ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h6dc9611e5a260cc8E"];
+        static_str_imports => &["__lib_base", "__stack_pointer", "memory", "_ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h6dc9611e5a260cc8E"];
         static_str_exports => static_str::EXPORTS;
         static_str_imports => @NOT string_from_static::IMPORTS, static_str::IMPORTS;
         static_str_exports => @NOT string_from_static::EXPORTS
@@ -175,7 +179,7 @@ fn test_correct_imports_exports() {
     let string_from_static_imports = list_imports(&string_from_static);
     let string_from_static_exports = list_exports(&string_from_static);
     test_list_contain! {
-        string_from_static_imports => &["lib_base_id", "__stack_pointer", "memory", "_ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h6dc9611e5a260cc8E", "_ZN5alloc7raw_vec12handle_error17hffd4f9c6873ec0fbE"];
+        string_from_static_imports => &["__lib_base", "__stack_pointer", "memory", "_ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h6dc9611e5a260cc8E", "_ZN5alloc7raw_vec12handle_error17hffd4f9c6873ec0fbE"];
         string_from_static_exports => string_from_static::EXPORTS;
         string_from_static_imports => @NOT string_from_static::IMPORTS, static_str::IMPORTS;
         string_from_static_exports => @NOT static_str::EXPORTS

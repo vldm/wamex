@@ -862,7 +862,7 @@ F(4671) -> F(4663)
                 break;
             };
 
-            let mut file = File::create("/home/vladimir/work/wasm-split/reduced.txt").unwrap();
+            let mut file = File::create("./reduced.txt").unwrap();
             let mut source = new_prefix.join("\n");
             source.push_str(&suffix);
 

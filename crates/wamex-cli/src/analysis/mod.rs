@@ -11,7 +11,7 @@ use crate::{
     helpers::RangeExt,
     index::{
         AnySymbolId, DataSegmentId, DataSymbolId, DefinedFuncId, ElementId, ExportId, FuncTypeId,
-        IdMap, IdVec, ImportId, InputFuncId, TableId,
+        IdMap, IdVec, ImportId, InputFuncId, InputGlobalId, TableId,
     },
     read::{self, linking::section::DataInSegment},
 };
@@ -22,10 +22,13 @@ pub mod split_point;
 mod testing;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct ImportFuncsInfo {
+pub struct ImportInfo {
     // List of imported functions
     pub imported_funcs: Vec<ImportId>,
     pub imported_func_map: IdMap<ImportId, InputFuncId>,
+
+    pub imported_globals: Vec<ImportId>,
+    pub imported_global_map: IdMap<ImportId, InputGlobalId>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,11 +45,12 @@ pub struct DataSymbol<'a, 'src> {
 /// and info about imported functions
 #[derive(Clone)]
 pub struct ModuleInfo<'a, 'src> {
-    pub import_funcs_info: ImportFuncsInfo,
+    pub import_info: ImportInfo,
     // Symbol table with data entries sorted by offsets
+    // TODO: also re-build symbol table?
     pub data_symbols: Vec<DataSymbol<'a, 'src>>,
 
-    pub source: &'a read::InputModule<'src>,
+    pub wasm: &'a read::InputModule<'src>,
     pub export_map: HashMap<(isize, AnySymbolId), (ExportId, &'a str)>,
 
     pub indirect_function_table_id: (TableId, ElementId),
@@ -60,22 +64,37 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
             &module.linking.linking_symbols.data_in_segments,
         )?;
         //TODO: Maybe we should use `IdMap` here?
-        let imported_funcs: Vec<ImportId> = module
-            .imports
-            .iter()
-            .filter_map(|(import_id, import)| match import.ty {
-                TypeRef::Func(_) => Some(import_id),
-                _ => None,
-            })
-            .collect();
+        let mut imported_funcs: Vec<ImportId> = Vec::new();
+        let mut imported_globals: Vec<ImportId> = Vec::new();
+
+        for (import_id, import) in module.imports.iter() {
+            match import.ty {
+                TypeRef::Global(_) => {
+                    imported_globals.push(import_id);
+                    continue;
+                }
+                TypeRef::Func(_) => {
+                    imported_funcs.push(import_id);
+                }
+                _ => {}
+            }
+        }
         let imported_func_map = imported_funcs
             .iter()
             .enumerate()
             .map(|(func_id, &import_id)| (import_id, InputFuncId::from_index(func_id)))
             .collect();
-        let import_funcs_info = ImportFuncsInfo {
+        let imported_global_map = imported_globals
+            .iter()
+            .enumerate()
+            .map(|(global_id, &import_id)| (import_id, InputGlobalId::from_index(global_id)))
+            .collect();
+
+        let import_funcs_info = ImportInfo {
             imported_funcs,
             imported_func_map,
+            imported_globals,
+            imported_global_map,
         };
         let export_map = module
             .exports
@@ -146,9 +165,9 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
             .ok_or_else(|| anyhow!("No element segment with __indirect_function_table found"))?;
 
         Ok(ModuleInfo {
-            import_funcs_info,
+            import_info: import_funcs_info,
             data_symbols,
-            source: module,
+            wasm: module,
             export_map,
             indirect_function_list,
             indirect_function_table_id: (table_id, indirect_element_id),
@@ -171,23 +190,23 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
     pub fn function_id_iter<'any>(
         &'any self,
     ) -> impl Iterator<Item = InputFuncId> + use<'any, 'src> {
-        (0..self.import_funcs_info.imported_funcs.len())
+        (0..self.import_info.imported_funcs.len())
             .map(InputFuncId::from_index)
             .chain(
-                self.source
+                self.wasm
                     .code
                     .section_payload
                     .defined_funcs
                     .iter()
                     .enumerate()
                     .map(|(index, _)| {
-                        InputFuncId::from_index(index + self.import_funcs_info.imported_funcs.len())
+                        InputFuncId::from_index(index + self.import_info.imported_funcs.len())
                     }),
             )
     }
 
     pub fn is_imported_function(&self, func_id: InputFuncId) -> bool {
-        func_id.as_raw_index() < self.import_funcs_info.imported_funcs.len()
+        func_id.as_raw_index() < self.import_info.imported_funcs.len()
     }
 
     pub fn as_defined_function_id(&self, func_id: InputFuncId) -> Option<DefinedFuncId> {
@@ -197,7 +216,7 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
             Some(DefinedFuncId::from_index(
                 func_id
                     .as_raw_index()
-                    .checked_sub(self.import_funcs_info.imported_funcs.len())
+                    .checked_sub(self.import_info.imported_funcs.len())
                     .expect("Function ID is out of bounds") as u32,
             ))
         }
@@ -206,20 +225,26 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
     pub fn get_function_type_id(&self, func_id: InputFuncId) -> FuncTypeId {
         let Some(defined_index) = self.as_defined_function_id(func_id) else {
             // It's import function - recover from import id.
-            let import_id = self.import_funcs_info.imported_funcs[func_id.as_raw_index()];
-            let TypeRef::Func(ty) = self.source.imports[import_id].ty else {
+            let import_id = self.import_info.imported_funcs[func_id.as_raw_index()];
+            let TypeRef::Func(ty) = self.wasm.imports[import_id].ty else {
                 panic!("Expected function type")
             };
             return FuncTypeId::from_index(ty);
         };
         // It's a defined function.
-        self.source.defined_func_type_id(defined_index)
+        self.wasm.defined_func_type_id(defined_index)
     }
 
     pub fn get_function_import_id(&self, func_id: InputFuncId) -> Option<ImportId> {
-        self.import_funcs_info
+        self.import_info
             .imported_funcs
             .get(func_id.as_raw_index())
+            .copied()
+    }
+    pub fn get_global_import_id(&self, global_id: InputGlobalId) -> Option<ImportId> {
+        self.import_info
+            .imported_globals
+            .get(global_id.as_raw_index())
             .copied()
     }
 
@@ -230,8 +255,13 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
     }
 
     pub fn find_function_id_by_name(&self, name: &str) -> Option<InputFuncId> {
-        let func = self.source.names.functions.iter().find(|f| *f.1 == name)?;
+        let func = self.wasm.names.functions.iter().find(|f| *f.1 == name)?;
         Some(func.0)
+    }
+
+    pub fn find_global_id_by_name(&self, name: &str) -> Option<InputGlobalId> {
+        let global = self.wasm.names.globals.iter().find(|f| *f.1 == name)?;
+        Some(global.0)
     }
 
     pub fn find_data_symbol_containing_range(
@@ -248,13 +278,13 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
 
     pub fn find_function_id_containing_range(&self, range: Range<usize>) -> Result<InputFuncId> {
         let func_index = Self::find_by_range(
-            &self.source.code.section_payload.defined_funcs.as_slice(),
+            &self.wasm.code.section_payload.defined_funcs.as_slice(),
             &range,
             |defined_func| defined_func.body.range(),
         )
         .with_context(|| format!("No match for function relocation range {range:?}"))?;
         Ok(InputFuncId::from_index(
-            func_index + self.import_funcs_info.imported_funcs.len(),
+            func_index + self.import_info.imported_funcs.len(),
         ))
     }
 
@@ -306,11 +336,6 @@ fn get_data_symbols<'a, 'src>(
 
         let data_segment_start = data_segment.range.end - data_segment.data.len();
         for (symbol_index, symbol) in symbols.iter() {
-            if symbol.size == 0 {
-                log::warn!("Data segment has zero-size symbol: {:?}", symbol);
-                // Ignore zero-size symbols since they cannot be the target of a relocation.
-                continue;
-            }
             if symbol
                 .offset
                 .checked_add(symbol.size)
@@ -354,7 +379,7 @@ fn get_data_symbols<'a, 'src>(
 impl<'a, 'src> Debug for ModuleInfo<'a, 'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModuleInfo")
-            .field("import_funcs_info", &self.import_funcs_info)
+            .field("import_funcs_info", &self.import_info)
             .field("data_symbols", &self.data_symbols)
             .finish()
     }

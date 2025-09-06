@@ -15,18 +15,6 @@ use crate::{
     read::InputModule,
 };
 
-// struct DefinedSymbolDecl {
-//     node: DepNode,
-//     exported: bool,
-// }
-// struct ModuleID(usize);
-
-// pub struct ModuleSpec {
-//     linkage_type: LinkageType,
-//     defined_symbols: Vec<DefinedSymbolDecl>,
-//     deps: BTreeMap<ModuleID, Vec<DepNode>>,
-// }
-
 // TODO: impl merge and use it in emit_modules as one of strategies to emit modules.
 // The other possible is to emit it as separate chunk and allow linkage.
 #[derive(Default)]
@@ -107,7 +95,7 @@ pub fn find_split_points(
                 bail!("Expected exported function but received: {export:?}");
             };
             let &import_func = info
-                .import_funcs_info
+                .import_info
                 .imported_func_map
                 .get(import_id)
                 .ok_or_else(|| {
@@ -195,10 +183,10 @@ impl SplitProgramInfo {
         split_points: &[SplitPoint],
     ) -> HashSet<DepNode> {
         let mut roots: HashSet<DepNode> = HashSet::new();
-        if let Some(id) = info.source.code.section_payload.start_func {
+        if let Some(id) = info.wasm.code.section_payload.start_func {
             roots.insert(DepNode::Function(id));
         }
-        for (_id, export) in info.source.exports.iter() {
+        for (_id, export) in info.wasm.exports.iter() {
             let wasmparser::Export {
                 index,
                 kind: wasmparser::ExternalKind::Func,
