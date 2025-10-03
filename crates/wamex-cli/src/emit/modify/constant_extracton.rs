@@ -14,8 +14,6 @@ use wasmparser::{Operator, RelocationType};
 use super::{ModifyContext, StoreType};
 use crate::{
     emit::modify::{CustomModify, GlobalSymbolOp, RelocationContext},
-    helpers::RangeExt,
-    index::AnySymbolId,
 };
 
 // Represents a data relocation entry with additional information about global variable.
@@ -186,7 +184,7 @@ impl ConstantExtractionEntry {
         });
 
         save_value.map(|v| v.encode(ctx.writer)); // Get <value> from stack to temp storage
-        Instruction::GlobalGet(lib_base_id).encode(ctx.writer);
+        Instruction::GlobalGet(lib_base_id.as_raw_index() as u32).encode(ctx.writer);
         Instruction::I32Add.encode(ctx.writer); // add offset from global_index variable to the dyn_offset part of instruction
         restore_value.map(|v| v.encode(ctx.writer)); // Recover back <value> to stack
         ix.encode(ctx.writer); // And now push modified original instruction
@@ -275,13 +273,13 @@ impl CustomModify for ConstantExtractionEntry {
                 let Some(lib_base_id) = ctx.lib_base_id else {
                     bail!("replace_const_get_with_global_get for main module is not supported");
                 };
-                self.replace_const_get_with_global_get(lib_base_id, ctx)?
+                self.replace_const_get_with_global_get(lib_base_id.as_raw_index() as u32, ctx)?
             }
             RelocationType::TableIndexSleb => {
                 let Some(table_base_id) = ctx.table_base_id else {
                     bail!("replace_const_get_with_global_get for main module is not supported");
                 };
-                self.replace_const_get_with_global_get(table_base_id, ctx)?
+                self.replace_const_get_with_global_get(table_base_id.as_raw_index() as u32, ctx)?
             }
             _ => {
                 bail!("Unsupported relocation type")

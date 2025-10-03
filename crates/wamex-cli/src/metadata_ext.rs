@@ -180,6 +180,8 @@ impl ModuleExt for Module {
             metadata.insert(
                 module_name,
                 Module {
+                    num_bytes: 0,
+                    num_indirect_funcs: 0,
                     version,
                     provides,
                     deps,

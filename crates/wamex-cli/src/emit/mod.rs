@@ -11,6 +11,7 @@ use globals::GlobalConstructor;
 use index_safety::OutputFuncId;
 use modify::{init_each_store_var, GlobalSymbolOp, ModifyContext, StoreType};
 use serde_json::map::Entry;
+use wamex_metadata::{BumpVersion, DemangledName, ExportedSymbol};
 use wasm_encoder::{reencode::Reencode, GlobalType};
 use wasmparser::{Data, RelocationEntry, RelocationType, TypeRef};
 
@@ -18,7 +19,9 @@ use crate::{
     analysis::{
         self,
         dep_graph::DepNode,
-        split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo},
+        split_point::{
+            self, ModuleIdentifier, SplitModuleIdentifier, SplitPoint, SplitProgramInfo,
+        },
     },
     emit::{
         globals::{DataSymbol, DefinedGlobal, GlobalImport},
@@ -1517,7 +1520,7 @@ impl<'src> EmitInfo<'src> {
 pub fn emit_modules<'a, 'src>(
     module: &'a analysis::ModuleInfo<'a, 'src>,
     program_info: &SplitProgramInfo,
-    emit_fn: &dyn Fn(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
+    emit_fn: &dyn Fn(&SplitModuleIdentifier, wamex_metadata::Module, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let emit_info = EmitInfo::new(&module, program_info)?;
     let modules_ids_iter = program_info.output_modules.iter().enumerate().filter_map(
@@ -1536,7 +1539,7 @@ pub fn emit_modules<'a, 'src>(
 
     let linkage_type = LinkageType::OriginalLayout;
 
-    let mut main_module = modules_ids_iter
+    let main_module = modules_ids_iter
         .clone()
         .find(|(_, id)| matches!(id, ModuleIdentifier::Main))
         .map(|(output_module_index, _)| {
@@ -1574,6 +1577,17 @@ pub fn emit_modules<'a, 'src>(
         .map(|(state, id)| (state, id))
         .chain(Some((&main_module, &ModuleIdentifier::Main)))
     {
+        //TODO: remove find
+        let split_points = program_info
+            .output_modules
+            .iter()
+            .find(|(id, _)| match id {
+                SplitModuleIdentifier::Single(id) => id == identifier,
+                SplitModuleIdentifier::Shared(_) => false,
+            })
+            .map(|(_, module)| &module.split_points)
+            .expect("Split points for module not found");
+        let metadata = generate_metadata(state, &split_points);
         let mut encoder = wasm_encoder::Module::new();
         state
             .generate(&main_module, &mut encoder)
@@ -1581,6 +1595,7 @@ pub fn emit_modules<'a, 'src>(
 
         emit_fn(
             &SplitModuleIdentifier::Single(identifier.clone()),
+            metadata,
             encoder.as_slice(),
         )
         .with_context(|| format!("Error emitting {:?}", identifier))?;
@@ -1589,39 +1604,93 @@ pub fn emit_modules<'a, 'src>(
     Ok(())
 }
 
-// data transformation:
-// 1. add global symbol
-// 2. init segment at (global.get $env.lib_memory_base)
-// 3. implement fn that init global symbols
-//
-// example:
+fn generate_metadata(
+    module: &ModuleEmitState<'_, '_>,
+    split_points: &[SplitPoint],
+) -> wamex_metadata::Module {
+    let provides = module
+        .functions
+        .defined()
+        .filter_map(|(func_id, func)| {
+            if !func.export {
+                return None;
+            }
+            let name = module.get_function_name(func_id);
+            let lazy = split_points
+                .iter()
+                .any(|sp| sp.export_func == func.input_func_id);
 
-//```wat
-// (module
-//   (type $t0 (func))
-//   (type $t1 (func (param i32) (result i32)))
-//   (memory (;0;) 17)
-//   (global $__stack_pointer (;0;) (mut i32) i32.const 1048576)
-//   (func $getter (type $t1) (param $p0 i32) (result i32)
-//     i32.const 100
-//     i32.load)
-//   (export "getter" (func $getter))
-//   (data $d0 (i32.const 100) "Hello, world!"))
+            let func_type_id = module.get_function_type(func_id);
 
-//```
-// Result:
-// ```wat
-// (module
-//   (type $t0 (func))
-//   (type $t1 (func (param i32) (result i32)))
-//   (import "env" "__lib_base" (global $__lib_base i32))
-//   (import "env" "__stack_pointer" (global $__stack_pointer i32))
-//   (import "env" "memory" (memory $memory 1))
-//   (func $getter (type $t1) (param $p0 i32) (result i32)
-//     global.get $greeting
-//   )
-//   ;; THIS CODE IS NOT WORK with wat2wasm CLI so use `wasm-tools parse` instead
-//   (global $greeting i32 global.get $__lib_base i32.const 0 i32.add) ;; 0 is local offset
-//   (export "getter" (func $getter))
-//   (data $d0 (global.get $__lib_base) "Hello, world!"))
-//```
+            let func_type = &module.src.wasm.types[func_type_id];
+
+            let (params, results) = func_type_to_metadata_parts(func_type);
+            let signature = wamex_metadata::SymbolSignature::Function {
+                name: DemangledName::new(&name, false),
+                lazy,
+                params,
+                results,
+            };
+            Some(wamex_metadata::ExportedSymbol {
+                signature,
+                // TODO: Set version
+                version: wamex_metadata::BumpVersion::new(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut requires = BTreeMap::new();
+
+    for (_id, import) in module.functions.imports() {
+        let module_name: Cow<'_, str> = import.module_name();
+        let name = import.import_name();
+        let input_func_id = import.input_func_id();
+        let func_type_id = module.src.get_function_type_id(input_func_id);
+
+        let func_type = &module.src.wasm.types[func_type_id];
+
+        let (params, results) = func_type_to_metadata_parts(func_type);
+        let signature = wamex_metadata::SymbolSignature::Function {
+            name: DemangledName::new(name, false),
+            lazy: false,
+            params,
+            results,
+        };
+        requires
+            .entry(module_name.to_string())
+            .or_insert_with(Vec::new)
+            .push(ExportedSymbol {
+                signature,
+                version: BumpVersion::new(),
+            });
+    }
+
+    let num_bytes = module
+        .data
+        .iter()
+        .map(|(_, data)| data.as_raw().len())
+        .sum::<usize>() as u32;
+    let num_indirect_funcs = module.indirect_functions.table_entries.len() as u32;
+    wamex_metadata::Module {
+        version: BumpVersion::new(),
+        num_bytes,
+        num_indirect_funcs,
+        provides: provides,
+        deps: requires,
+    }
+}
+
+fn func_type_to_metadata_parts(
+    ty: &wasmparser::FuncType,
+) -> (Vec<wamex_metadata::Type>, Vec<wamex_metadata::Type>) {
+    let params = ty
+        .params()
+        .iter()
+        .map(|p| p.try_into().unwrap())
+        .collect::<Vec<_>>();
+    let results = ty
+        .results()
+        .iter()
+        .map(|r| r.try_into().unwrap())
+        .collect::<Vec<_>>();
+    (params, results)
+}

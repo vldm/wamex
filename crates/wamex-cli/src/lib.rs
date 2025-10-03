@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -21,6 +22,7 @@ mod diff;
 mod read;
 
 pub use read::InputModule;
+use wamex_metadata::BumpVersion;
 
 use crate::analysis::split_point::SplitModuleIdentifier;
 
@@ -124,89 +126,6 @@ pub fn main(args: Cli) -> Result<()> {
         Command::Diff(args) => diff(args)?,
         Command::Roundtrip(args) => roundtrip(args)?,
     };
-
-    //     let mut javascript = String::new();
-    //     javascript.push_str(
-    //         r#"import { initSync } from "./main.js";
-    // function makeLoad(url, deps) {
-    //   let alreadyLoaded = false;
-    //   return async(callbackIndex, callbackData) => {
-    //     if (alreadyLoaded) return;
-    //     for (let dep of deps) {
-    //       await dep();
-    //     }
-    //     let mainExports = undefined;
-    //       try {
-    //         const response = await fetch(url);
-    //         mainExports = initSync(undefined, undefined);
-    //         const imports = {
-    //           env: {
-    //             memory: mainExports.memory,
-    //           },
-    //           __wasm_split: {
-    //             __indirect_function_table: mainExports.__indirect_function_table,
-    //             __stack_pointer: mainExports.__stack_pointer,
-    //             __tls_base: mainExports.__tls_base,
-    //             memory: mainExports.memory,
-    //           },
-    //         };
-    //         const module = await WebAssembly.instantiateStreaming(response, imports);
-    //         alreadyLoaded = true;
-    //         if (callbackIndex === undefined) return;
-    //         mainExports.__indirect_function_table.get(callbackIndex)(
-    //           callbackData,
-    //           true,
-    //         );
-    //       } catch (e) {
-    //         if (callbackIndex === undefined) throw e;
-    //         console.error("Failed to load " + url.href, e);
-    //         if (mainExports === undefined) {
-    //           mainExports = initSync(undefined, undefined);
-    //         }
-    //         mainExports.__indirect_function_table.get(callbackIndex)(
-    //           callbackData,
-    //           false,
-    //         );
-    //       }
-    //   };
-    // }
-    // "#,
-    //     );
-    //     let mut split_deps = HashMap::<String, Vec<String>>::new();
-    //     for (name, _) in split_program_info.output_modules.iter() {
-    //         let SplitModuleIdentifier::Chunk(splits) = name else {
-    //             continue;
-    //         };
-    //         for split in splits {
-    //             split_deps
-    //                 .entry(split.clone())
-    //                 .or_default()
-    //                 .push(name.name());
-    //         }
-    //         javascript.push_str(format!(
-    //             "const __wasm_split_load_{name} = makeLoad(new URL(\"./{name}.wasm\", import.meta.url), []);\n",
-    //             name = name.name(),
-    //         ).as_str())
-    //     }
-    //     for (identifier, _) in split_program_info.output_modules.iter().rev() {
-    //         if matches!(identifier, SplitModuleIdentifier::Chunk(_)) {
-    //             continue;
-    //         }
-    //         let name = identifier.name();
-    //         javascript.push_str(format!(
-    //             "export const __wasm_split_load_{name} = makeLoad(new URL(\"./{name}.wasm\", import.meta.url), [{deps}]);\n",
-    //             name = name,
-    //             deps = split_deps
-    //             .remove(&name)
-    //             .unwrap_or_default()
-    //             .iter()
-    //             .map(|x| format!("__wasm_split_load_{x}"))
-    //             .collect::<Vec<_>>()
-    //             .join(", "),
-    //         ).as_str())
-    //     }
-
-    //     std::fs::write(args.output.join("__wasm_split.js"), javascript)?;
     Ok(())
 }
 pub fn roundtrip(args: Roundtrip) -> Result<()> {
@@ -223,6 +142,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         "Roundtrip should produce single module",
     );
     crate::emit::emit_modules(&info, &split_program_info, &|_: &SplitModuleIdentifier,
+                                                            _: wamex_metadata::Module,
                                                             data: &[u8]|
      -> Result<()> {
         std::fs::write(&args.output, data)?;
@@ -254,11 +174,20 @@ pub fn split(args: Split) -> Result<()> {
     crate::emit::emit_modules(
         &info,
         &split_program_info,
-        &|identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+        &|identifier: &SplitModuleIdentifier,
+          metadata: wamex_metadata::Module,
+          data: &[u8]|
+         -> Result<()> {
             let output_filename = identifier.name() + ".wasm";
-            let output_path = args.output.join(output_filename);
             std::fs::create_dir_all(&args.output)?;
-            std::fs::write(output_path, data)?;
+            std::fs::write(args.output.join(output_filename), data)?;
+
+            let decl_filename = identifier.name() + ".decl";
+
+            std::fs::write(
+                args.output.join(decl_filename),
+                rkyv::to_bytes::<rancor::Error>(&metadata)?,
+            )?;
             Ok(())
         },
     )?;

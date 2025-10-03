@@ -103,7 +103,6 @@ that was implemented in the original prototype. Sub module should contain two fu
                 ]
             }
         },
-        
     },
     "sub_module": {
         "version": "hash",

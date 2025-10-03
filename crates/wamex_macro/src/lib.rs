@@ -1,11 +1,27 @@
 use digest::Digest;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
-use syn::{parse_macro_input, Ident, ItemFn, Signature};
+use syn::{
+    parse::{self, Parse, ParseStream},
+    parse_macro_input, parse_quote,
+    token::Comma,
+    Ident, ItemFn, Path, ReturnType, Signature, Token,
+};
+
+struct SplitArgs {
+    module_name: Ident,
+}
+
+impl Parse for SplitArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let module_name = input.parse()?;
+        Ok(Self { module_name })
+    }
+}
 
 #[proc_macro_attribute]
 pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
-    let module_ident = parse_macro_input!(args as Ident);
+    let SplitArgs { module_name } = parse_macro_input!(args as SplitArgs);
     let item_fn = parse_macro_input!(input as ItemFn);
 
     let vis = item_fn.vis;
@@ -17,19 +33,42 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
     );
 
     let impl_import_ident =
-        format_ident!("__wasm_split_00{module_ident}00_import_{unique_identifier}_{name}");
+        format_ident!("__wasm_split_00{module_name}00_import_{unique_identifier}_{name}");
     let impl_export_ident =
-        format_ident!("__wasm_split_00{module_ident}00_export_{unique_identifier}_{name}");
+        format_ident!("__wasm_split_00{module_name}00_export_{unique_identifier}_{name}");
 
-    let import_sig = Signature {
+    let mut import_sig = Signature {
         ident: impl_import_ident.clone(),
         asyncness: None,
         ..item_fn.sig.clone()
     };
-    let export_sig = Signature {
+    let mut export_sig = Signature {
         ident: impl_export_ident.clone(),
         asyncness: None,
         ..item_fn.sig.clone()
+    };
+
+    let stmts = &item_fn.block.stmts;
+    let is_async = item_fn.sig.asyncness.is_some();
+    // Convert async fn to fn returning Pin<Box<dyn Future>>
+    let body = if is_async {
+        let ty = match &item_fn.sig.output {
+            ReturnType::Default => quote! { () },
+            ReturnType::Type(_, ty) => quote! { #ty },
+        };
+        let async_output: ReturnType = parse_quote! {
+            -> ::core::pin::Pin<Box<dyn ::core::future::Future<Output = #ty>>>
+        };
+        export_sig.output = async_output.clone();
+        import_sig.output = async_output;
+
+        quote! {
+            Box::pin(async move {
+                #(#stmts)*
+            })
+        }
+    } else {
+        quote! { #(#stmts)* }
     };
 
     let mut wrapper_sig = item_fn.sig;
@@ -55,38 +94,39 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     let attrs = item_fn.attrs;
-
-    let stmts = &item_fn.block.stmts;
+    let import_call_expr = if is_async {
+        quote! {
+            #impl_import_ident( #(#args),* ).await
+        }
+    } else {
+        quote! {
+            #impl_import_ident( #(#args),* )
+        }
+    };
 
     quote! {
+        #(#attrs)*
         #vis #wrapper_sig {
-            // thread_local! {
-            //     static #split_loader_ident: ::wamex::LazySplitLoader = unsafe { ::wamex::LazySplitLoader::new(#load_module_ident) };
-            // }
 
-            #[link(wasm_import_module = "./__wasm_split.js")]
+            // This import will be replaced so we can place any module name here
+            #[link(wasm_import_module = "./__wamex_link.rs")]
             extern "C" {
-                // #[no_mangle]
-                // fn #load_module_ident (name: *const u8, name_len: usize, data: *const ::std::ffi::c_void) -> ();
 
                 #[allow(improper_ctypes)]
                 #[no_mangle]
                 #import_sig;
             }
-            let id = ::wamex::ModuleId::new(stringify!(#module_ident));
+            let id = ::wamex::ModuleId::new(stringify!(#module_name));
 
-            let res = ::wamex::load(id.clone(), false).await;
-            gloo_console::log!(format!("Loaded module {id:?}, result: {res:?}"));
-            res.unwrap();
+            ::wamex::load(id.clone(), false).await.unwrap();
 
-            #(#attrs)*
             #[allow(improper_ctypes_definitions)]
             #[no_mangle]
             pub extern "C" #export_sig {
-                #(#stmts)*
+                #body
             }
 
-            unsafe { #impl_import_ident( #(#args),* ) }
+            unsafe { #import_call_expr }
         }
     }
     .into()

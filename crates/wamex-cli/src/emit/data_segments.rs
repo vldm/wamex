@@ -8,7 +8,7 @@ use crate::{
     analysis,
     emit::globals::DataSymbol,
     helpers::{encoding_size, RangeComp, RangeExt},
-    index::{AnySymbolId, DataSymbolId, Indexed},
+    index::{DataSymbolId, Indexed},
 };
 
 /// Describes how a data symbol relates to its neighboring symbols within a segment.

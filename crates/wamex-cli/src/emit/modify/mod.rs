@@ -12,16 +12,15 @@ mod start_fn_gen;
 
 use std::{collections::HashMap, ops::Range};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use constant_extracton::ConstantExtractionEntry;
 pub use relocation::RelocateState;
 pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
 use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
-    analysis,
     emit::{index_safety::OutputGlobalId, ModuleEmitState},
-    index::{AnySymbolId, DefinedFuncId, InputFuncId, InputGlobalId},
+    index::{DefinedFuncId, InputFuncId, InputGlobalId},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -38,8 +37,8 @@ pub struct ModifyContext<'a> {
     pub global_tmps: &'a HashMap<StoreType, OutputGlobalId>,
     pub instruction: wasmparser::Operator<'a>,
     pub writer: &'a mut Vec<u8>,
-    pub lib_base_id: Option<u32>,
-    pub table_base_id: Option<u32>,
+    pub lib_base_id: Option<OutputGlobalId>,
+    pub table_base_id: Option<OutputGlobalId>,
 }
 impl<'a> ModifyContext<'a> {
     pub fn emit_code_with_changes<'src>(
@@ -133,14 +132,11 @@ impl<'a> ModifyContext<'a> {
                 global_tmps: &module_emit.global_tmp_store,
                 instruction: instr.clone(),
                 writer: &mut result,
-                lib_base_id: module_emit
-                    .sub_module_extra
-                    .as_ref()
-                    .map(|m| m.lib_base_id.as_raw_index() as u32),
+                lib_base_id: module_emit.sub_module_extra.as_ref().map(|m| m.lib_base_id),
                 table_base_id: module_emit
                     .sub_module_extra
                     .as_ref()
-                    .map(|m| m.table_base_id.as_raw_index() as u32),
+                    .map(|m| m.table_base_id),
             };
 
             log::trace!(

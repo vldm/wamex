@@ -16,7 +16,6 @@ use crate::{
             CustomModify, DataModifyEntry, GlobalSymbolOp, ModifyEntry, RelocationContext,
         },
     },
-    helpers::RangeExt,
     index::{AnySymbolId, InputFuncId, InputGlobalId},
     read::linking::SymbolIndex,
 };
