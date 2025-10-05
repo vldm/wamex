@@ -13,48 +13,68 @@ use wasmparser::{Operator, RelocationType};
 
 use super::{ModifyContext, StoreType};
 use crate::{
-    emit::modify::{CustomModify, GlobalSymbolOp, RelocationContext},
+    emit::{
+        index_safety::OutputGlobalId,
+        modify::{
+            relocation::{DataSymbolTag, FunctionTableIndex},
+            CustomModify, RelocationContext, SymbolOffset, SymbolOp,
+        },
+    },
+    index::AnySymbolId,
 };
 
 // Represents a data relocation entry with additional information about global variable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstantExtractionEntry {
-    pub(super) relocation_type: RelocationType,
-    pub(super) got_offset: GlobalSymbolOp,
-    /// Addend to add to the address, or `0` if not applicable. The value must
-    /// be consistent with the `self.ty.addend_kind()`.
-    pub(super) addend: i64,
-    pub(super) range: Range<usize>,
+    pub(super) entry: wasmparser::RelocationEntry,
+    // pub(super) relocation_type: RelocationType,
+    // pub(super) referenced_symbol_index: AnySymbolId,
+    // /// Addend to add to the address, or `0` if not applicable. The value must
+    // /// be consistent with the `self.ty.addend_kind()`.
+    // pub(super) addend: i64,
+    // pub(super) range: Range<usize>,
 }
 
 impl ConstantExtractionEntry {
     // Simple replace of i32.const with global.get + i32.add
     // Retuns size of the replacement
-    pub fn replace_const_get_with_global_get(
+    pub fn replace_const_get_with_global_get<V>(
         &self,
-        global_index: u32,
-        ctx: ModifyContext<'_>,
-    ) -> Result<()> {
+        symbol_offset: SymbolOp<V>,
+        ctx: ModifyContext<'_, '_>,
+    ) -> Result<()>
+    where
+        V: TryInto<usize>, // can be usize or i64 (both should be >= 0)
+    {
         ensure!(
             matches!(ctx.instruction, Operator::I32Const { .. }),
             "Unsupported relocation operand"
         );
 
-        let GlobalSymbolOp::GotOffset { offset } = self.got_offset else {
-            log::trace!("Skipping replace to GOT for func:{}", ctx.function_name);
-            <Instruction<'_> as TryFrom<_>>::try_from(ctx.instruction)?.encode(ctx.writer);
-            return Ok(());
+        let SymbolOp::GotBased {
+            got: got_global_index,
+            value: got_offset,
+        } = symbol_offset
+        else {
+            bail!(
+                "replace_const_get_with_global_get called with static offset symbol {:?}",
+                self.entry
+            );
         };
-        let result_ix = Instruction::GlobalGet(global_index);
+        let got_offset = got_offset
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Offset is too large to fit in usize"))?;
+
+        let result_ix = Instruction::GlobalGet(got_global_index.as_raw_index() as u32);
         log::trace!(
             "Replacing func[{name}:{range:?}] {src_ix:?} with {result_ix:?}, addend {addend}",
-            addend = self.addend,
-            range = self.range,
+            addend = self.entry.addend,
+            range = self.range(),
             name = ctx.function_name,
             src_ix = ctx.instruction
         );
         result_ix.encode(ctx.writer);
-        let offset = offset as i32 + self.addend as i32;
+        let offset = got_offset as i32 + self.entry.addend as i32;
 
         Instruction::I32Const(offset).encode(ctx.writer);
         Instruction::I32Add.encode(ctx.writer);
@@ -79,21 +99,28 @@ impl ConstantExtractionEntry {
     // < i32.load_u8 <extra_offset>                                             // original i32.load_u8 with <offset of data symbol in memory>
 
     /// Returns size of the replacement.
-    pub fn replace_memory_offset_with_global_get(&self, ctx: ModifyContext<'_>) -> Result<()> {
-        let GlobalSymbolOp::GotOffset { offset } = self.got_offset else {
-            log::trace!("Skipping replace to GOT for func:{}", ctx.function_name);
-            <Instruction<'_> as TryFrom<_>>::try_from(ctx.instruction)?.encode(ctx.writer);
-            return Ok(());
+    pub fn replace_memory_offset_with_global_get(
+        &self,
+        symbol_offset: SymbolOffset,
+        ctx: ModifyContext<'_, '_>,
+    ) -> Result<()> {
+        let SymbolOffset::GotBased {
+            got: got_global_index,
+            value: got_offset,
+        } = symbol_offset
+        else {
+            bail!(
+                "replace_memory_offset_with_global_get called with static offset symbol {:?}",
+                self.entry
+            );
         };
-        let offset = (offset as i64 + self.addend) as u64;
+
+        let offset = (got_offset as i64 + self.entry.addend) as u64;
 
         let fix_offset = |memarg: wasmparser::MemArg| wasm_encoder::MemArg {
             align: memarg.align as u32,
             memory_index: memarg.memory,
             offset,
-        };
-        let Some(lib_base_id) = ctx.lib_base_id else {
-            bail!("replace_memory_offset_with_global_get for main module is not supported");
         };
 
         let (store, ix) = match ctx.instruction {
@@ -172,7 +199,7 @@ impl ConstantExtractionEntry {
         log::trace!(
             "Replacing func[{name}:{range:?}] {ix:?} with {store:?} ix",
             name = ctx.function_name,
-            range = self.range,
+            range = self.range(),
         );
 
         // TODO: Replace with local?
@@ -184,7 +211,7 @@ impl ConstantExtractionEntry {
         });
 
         save_value.map(|v| v.encode(ctx.writer)); // Get <value> from stack to temp storage
-        Instruction::GlobalGet(lib_base_id.as_raw_index() as u32).encode(ctx.writer);
+        Instruction::GlobalGet(got_global_index.as_raw_index() as u32).encode(ctx.writer);
         Instruction::I32Add.encode(ctx.writer); // add offset from global_index variable to the dyn_offset part of instruction
         restore_value.map(|v| v.encode(ctx.writer)); // Recover back <value> to stack
         ix.encode(ctx.writer); // And now push modified original instruction
@@ -225,34 +252,27 @@ impl ConstantExtractionEntry {
 
 impl CustomModify for ConstantExtractionEntry {
     type Context<'any, 'src>
-        = ModifyContext<'any>
+        = ModifyContext<'any, 'src>
     where
         'src: 'any;
     fn try_from_entry(
         entry: &wasmparser::RelocationEntry,
         context: &RelocationContext,
-    ) -> Result<Option<Self>>
-    {
+    ) -> Result<Option<Self>> {
         Self::check_whitelisted_code_relocation(entry)?;
         Ok(match entry.ty {
             RelocationType::MemoryAddrLeb
             | RelocationType::MemoryAddrSleb
-            | RelocationType::TableIndexSleb
-                if context.dyn_relocate => 
-            {
+            | RelocationType::TableIndexSleb if context.dyn_relocate =>{
                 Some(Self {
-                    relocation_type: entry.ty,
-                    got_offset: context.referenced_symbol
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Relocation {entry:?} does not refer to a valid data symbol"
-                            )
-                        })?,
-                    
-                    addend: entry.addend,
-                    range: entry.relocation_range(),
+                    entry: entry.clone(),
                 })
             }
+            // RelocationType::TableIndexSleb => {
+            //     // TODO: It's just regular relocation?
+            //     log::error!("TableIndexSleb relocation found in code section, which is currently not implemented");
+            //     return Ok(None);
+            // }
             RelocationType::TableIndexI32  // in instruction Sleb or Leb are used I32 is used only in data segment ?
             | RelocationType::MemoryAddrI32
             => {
@@ -263,23 +283,28 @@ impl CustomModify for ConstantExtractionEntry {
     }
 
     fn range(&self) -> Range<usize> {
-        self.range.clone()
+        self.entry.relocation_range()
     }
 
-    fn try_apply(&self, ctx: ModifyContext<'_>) -> Result<()> {
-        match self.relocation_type {
-            RelocationType::MemoryAddrLeb => self.replace_memory_offset_with_global_get(ctx)?,
+    fn try_apply(&self, ctx: ModifyContext<'_, '_>) -> Result<()> {
+        match self.entry.ty {
+            RelocationType::MemoryAddrLeb => {
+                let symbol_offset = ctx
+                    .relocation_state
+                    .get_entry_symbol_op::<DataSymbolTag>(&self.entry)?;
+                self.replace_memory_offset_with_global_get(symbol_offset, ctx)?
+            }
             RelocationType::MemoryAddrSleb => {
-                let Some(lib_base_id) = ctx.lib_base_id else {
-                    bail!("replace_const_get_with_global_get for main module is not supported");
-                };
-                self.replace_const_get_with_global_get(lib_base_id.as_raw_index() as u32, ctx)?
+                let symbol_offset = ctx
+                    .relocation_state
+                    .get_entry_symbol_op::<DataSymbolTag>(&self.entry)?;
+                self.replace_const_get_with_global_get(symbol_offset, ctx)?
             }
             RelocationType::TableIndexSleb => {
-                let Some(table_base_id) = ctx.table_base_id else {
-                    bail!("replace_const_get_with_global_get for main module is not supported");
-                };
-                self.replace_const_get_with_global_get(table_base_id.as_raw_index() as u32, ctx)?
+                let symbol_offset = ctx
+                    .relocation_state
+                    .get_entry_symbol_op::<FunctionTableIndex>(&self.entry)?;
+                self.replace_const_get_with_global_get(symbol_offset, ctx)?
             }
             _ => {
                 bail!("Unsupported relocation type")

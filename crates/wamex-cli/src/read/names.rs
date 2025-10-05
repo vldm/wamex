@@ -3,7 +3,8 @@ use vec_map::VecMap;
 
 use super::CustomSectionReader;
 use crate::index::{
-    DataSegmentId, ElementId, FuncTypeId, InputGlobalId, IdMap, InputFuncId, MemoryId, TableId, TagId,
+    DataSegmentId, ElementId, FuncTypeId, IdMap, InputFuncId, InputGlobalId, MemoryId, TableId,
+    TagId,
 };
 
 // Custom sections

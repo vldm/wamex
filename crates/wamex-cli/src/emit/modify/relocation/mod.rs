@@ -1,113 +1,231 @@
 pub mod encode;
 
+use std::fmt::Debug;
+
 use anyhow::{anyhow, bail, Result};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    emit::{index_safety::OutputGlobalId, ModuleEmitState},
-    index::{DataSegmentId, DataSymbolId, InputFuncId, InputGlobalId},
+    emit::{
+        index_safety::{OutputFuncId, OutputGlobalId},
+        modify::SymbolOp,
+        ModuleEmitState,
+    },
+    index::{AnySymbolId, DataSegmentId, DataSymbolId, Id, InputFuncId, InputGlobalId},
     read::{linking::SymbolIndex, InputModule},
 };
 
-#[derive(Clone)]
-pub struct RelocateState<'any, 'src, F> {
-    pub input_module: &'any InputModule<'src>,
-    pub main_module: &'any ModuleEmitState<'any, 'src>,
-    pub global_id_mapper: F,
-    pub emit_module: &'any ModuleEmitState<'any, 'src>,
+pub trait EntryTypeTag {
+    type OutputValue;
+    // Index or offset of symbol in corresponding module
+    fn get_mapped_value(
+        input_module: &InputModule<'_>,
+        state: &ModuleEmitState,
+        src_symbol: AnySymbolId,
+    ) -> Option<Self::OutputValue>;
+    fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId>;
 }
 
-impl<F> RelocateState<'_, '_, F>
-where
-    F: Fn(InputGlobalId) -> Option<OutputGlobalId>,
-{
-    fn _get_relocation_input_function_index(
-        &self,
-        relocation: &RelocationEntry,
-    ) -> Result<InputFuncId> {
-        let Some(SymbolIndex::Func(input_func_id)) = self
-            .input_module
+pub enum FunctionId {}
+pub enum FunctionTableIndex {}
+pub enum DataSymbolTag {}
+
+impl FunctionId {
+    fn get_input_function_id(
+        input_module: &InputModule<'_>,
+        src_symbol: AnySymbolId,
+    ) -> Option<InputFuncId> {
+        let Some(SymbolIndex::Func(input_func_id)) = input_module
             .linking
             .linking_symbols
             .original_indexes
-            .get(relocation.index as usize)
+            .get(src_symbol as usize)
         else {
-            bail!("Relocation {relocation:?} does not refer to a valid function");
+            return None;
         };
-        Ok(*input_func_id)
+        Some(*input_func_id)
     }
+}
 
-    fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let input_func_id = self._get_relocation_input_function_index(relocation)?;
-        let Some(output_func_id) = self.emit_module.functions.get_output_id(input_func_id) else {
-            bail!(
-                "Dependency analysis error: \
-                 No output function for input function {input_func_id} \
-                 referenced by relocation {relocation:?}"
-            );
+impl EntryTypeTag for FunctionId {
+    type OutputValue = OutputFuncId;
+    fn get_mapped_value(
+        input_module: &InputModule<'_>,
+        state: &ModuleEmitState,
+        src_symbol: AnySymbolId,
+    ) -> Option<Self::OutputValue> {
+        let input_func_id = FunctionId::get_input_function_id(input_module, src_symbol)?;
+        let Some(output_func_id) = state.functions.get_output_id(input_func_id) else {
+            return None;
         };
-        Ok(output_func_id.as_raw_index() as usize)
+        Some(output_func_id)
     }
-
-    fn get_relocated_function_table_index(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let input_func_id = self._get_relocation_input_function_index(relocation)?;
-
-        let Some(&table_index) = self
-            .emit_module
+    fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId> {
+        state.sub_module_extra.as_ref().map(|e| e.lib_base_id)
+    }
+}
+impl EntryTypeTag for FunctionTableIndex {
+    type OutputValue = usize;
+    fn get_mapped_value(
+        input_module: &InputModule<'_>,
+        state: &ModuleEmitState,
+        src_symbol: AnySymbolId,
+    ) -> Option<Self::OutputValue> {
+        let input_func_id = FunctionId::get_input_function_id(input_module, src_symbol)?;
+        let Some(&table_index) = state
             .indirect_functions
             .function_table_index
             .get(&input_func_id)
         else {
-            bail!(
-                "Dependency analysis error: \
-                     No indirect function table index \
-                     for input function {input_func_id} \
-                     referenced by relocation {relocation:?}"
-            )
+            return None;
         };
-        Ok(table_index)
+        Some(table_index)
     }
+    fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId> {
+        FunctionId::get_got(state)
+    }
+}
 
-    fn _get_relocation_memory_symbol(
-        &self,
-        relocation: &RelocationEntry,
-    ) -> Result<(DataSegmentId, DataSymbolId)> {
-        let Some(SymbolIndex::DataDefined(segment_id, data_index)) = self
-            .input_module
+impl DataSymbolTag {
+    fn get_symbol_offset(
+        state: &ModuleEmitState,
+        segment_id: &DataSegmentId,
+        data_symbol_id: &DataSymbolId,
+    ) -> Option<<DataSymbolTag as EntryTypeTag>::OutputValue> {
+        let (segment_id, data_index): &(DataSegmentId, usize) = state
+            .input_data_to_output_id
+            .get(&(*segment_id, *data_symbol_id))?;
+        let segment = state.data.get(*segment_id)?;
+        let data = segment.symbols().get(*data_index)?;
+        if !segment.is_active() {
+            return None;
+        }
+        Some(segment.memory_offset() as i64 + data.data_offset as i64)
+    }
+}
+impl EntryTypeTag for DataSymbolTag {
+    type OutputValue = i64;
+    fn get_mapped_value(
+        input_module: &InputModule<'_>,
+        state: &ModuleEmitState,
+        src_symbol: AnySymbolId,
+    ) -> Option<Self::OutputValue> {
+        let Some(SymbolIndex::DataDefined(segment_id, data_index)) = input_module
             .linking
             .linking_symbols
             .original_indexes
-            .get(relocation.index as usize)
+            .get(src_symbol as usize)
         else {
-            bail!("Relocation {relocation:?} does not refer to a valid memory");
+            return None;
         };
-        Ok((*segment_id, *data_index))
+
+        DataSymbolTag::get_symbol_offset(state, segment_id, data_index)
+    }
+    fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId> {
+        state.sub_module_extra.as_ref().map(|e| e.lib_base_id)
+    }
+}
+
+#[derive(Clone)]
+pub struct RelocateState<'any, 'src> {
+    pub input_module: &'any InputModule<'src>,
+    pub main_module: &'any ModuleEmitState<'any, 'src>,
+    pub global_id_mapper: &'any dyn Fn(InputGlobalId) -> Option<OutputGlobalId>,
+    pub emit_module: &'any ModuleEmitState<'any, 'src>,
+}
+
+impl Debug for RelocateState<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RelocateState")
+            .field("input_module", &"InputModule { ... }")
+            .field("main_module", &"ModuleEmitState { ... }")
+            .field("emit_module", &"ModuleEmitState { ... }")
+            .finish()
+    }
+}
+
+impl RelocateState<'_, '_> {
+    pub fn get_entry_symbol_op<T: EntryTypeTag>(
+        &self,
+        relocation: &RelocationEntry,
+    ) -> Result<SymbolOp<T::OutputValue>> {
+        // TODO: reverse order (dyn then static)?
+        if let Some(value) = T::get_mapped_value(
+            &self.input_module,
+            &self.main_module,
+            relocation.index as AnySymbolId,
+        ) {
+            return Ok(SymbolOp::StaticOffset { value });
+        }
+
+        let Some(value) = T::get_mapped_value(
+            self.input_module,
+            &self.emit_module,
+            relocation.index as AnySymbolId,
+        ) else {
+            bail!(
+                "Symbol within relocation {relocation:?} not found in either main or emit module"
+            );
+        };
+        Ok(SymbolOp::GotBased {
+            got: T::get_got(&self.emit_module).ok_or_else(|| {
+                anyhow!(
+                    "No GOT global for symbol {src:?} in emit module",
+                    src = relocation.index
+                )
+            })?,
+            value,
+        })
+    }
+
+    pub fn get_data_symbol_op(
+        &self,
+        segment_id: DataSegmentId,
+        data_symbol_id: DataSymbolId,
+    ) -> Result<SymbolOp<<DataSymbolTag as EntryTypeTag>::OutputValue>> {
+        if let Some(value) =
+            DataSymbolTag::get_symbol_offset(self.main_module, &segment_id, &data_symbol_id)
+        {
+            return Ok(SymbolOp::StaticOffset { value });
+        }
+        let Some(value) =
+            DataSymbolTag::get_symbol_offset(self.emit_module, &segment_id, &data_symbol_id)
+        else {
+            bail!(
+                "Symbol {segment_id:?}: {data_symbol_id:?} not found in either main or emit module"
+            )
+        };
+        Ok(SymbolOp::GotBased {
+            got: DataSymbolTag::get_got(&self.emit_module).ok_or_else(|| {
+                anyhow!("No GOT global for symbol {segment_id:?}: {data_symbol_id:?}")
+            })?,
+            value,
+        })
+    }
+
+    fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
+        let result = self.get_entry_symbol_op::<FunctionId>(relocation)?;
+        Ok(result
+            .as_static()
+            .expect("Relocation should only process static symbols")
+            .as_raw_index())
+    }
+
+    fn get_relocated_function_table_index(&self, relocation: &RelocationEntry) -> Result<usize> {
+        let result = self.get_entry_symbol_op::<FunctionTableIndex>(relocation)?;
+        Ok(*result
+            .as_static()
+            .expect("Relocation should only process static symbols"))
     }
 
     fn get_relocated_memory_offset(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let (segment_id, data_index) = self._get_relocation_memory_symbol(relocation)?;
-        let (segment_id, data_index): &(DataSegmentId, usize) = self
-            .main_module
-            .input_data_to_output_id
-            .get(&(segment_id, data_index))
-            .ok_or_else(|| {
-                anyhow!(
-                    "Dependency analysis error: No output data segment for input segment {segment_id} and data {data_index} referenced by relocation {relocation:?}"
-                )
-            })?;
-        let Some(segment) = self.main_module.data.get(*segment_id) else {
-            bail!("No data segment with id {segment_id} for relocation {relocation:?}");
-        };
-        let Some(data) = segment.symbols().get(*data_index) else {
-            bail!("No data with index {data_index} in segment {segment_id} for relocation {relocation:?}");
-        };
-        if !segment.is_active() {
-            bail!("Relocation {relocation:?} refers to passive data segment {segment_id}");
-        }
+        let mut offset = *self
+            .get_entry_symbol_op::<DataSymbolTag>(relocation)?
+            .as_static()
+            .expect("Relocation should only process static symbols");
         if relocation.addend < 0 {
             log::warn!("Relocation {relocation:?} has negative addend");
         }
-        let mut offset: i64 = segment.memory_offset() as i64 + data.data_offset as i64;
         offset += relocation.addend;
 
         Ok(offset as usize)

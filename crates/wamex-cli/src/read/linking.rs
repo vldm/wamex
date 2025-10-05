@@ -1,9 +1,13 @@
+use std::{collections::BTreeMap, fmt::Debug};
+
 use anyhow::Result;
 use vec_map::VecMap;
 use wasmparser::{Comdat, InitFunc, Segment};
 
 use super::CustomSectionReader;
-use crate::index::{DataSegmentId, DataSymbolId, InputGlobalId, IdMap, IdVec, InputFuncId, SectionId};
+use crate::index::{
+    DataSegmentId, DataSymbolId, IdMap, IdVec, InputFuncId, InputGlobalId, SectionId,
+};
 
 #[allow(dead_code)]
 pub mod section {
@@ -70,7 +74,28 @@ pub enum SymbolIndex {
     Event(usize),
     Table(usize),
 }
-#[derive(Default, Debug)]
+
+impl Debug for LinkingSymbolsInfo<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let original_indexes_map: BTreeMap<_, _> = self
+            .original_indexes
+            .iter()
+            .enumerate()
+            .map(|(i, idx)| (i, idx))
+            .collect();
+        f.debug_struct("LinkingSymbolsInfo")
+            .field("globals", &self.globals)
+            .field("funcs", &self.funcs)
+            .field("events", &self.events)
+            .field("sections", &self.sections)
+            .field("tables", &self.tables)
+            .field("data_in_segments", &self.data_in_segments)
+            .field("undefined_data", &self.undefined_data)
+            .field("original_indexes", &original_indexes_map)
+            .finish()
+    }
+}
+#[derive(Default)]
 pub struct LinkingSymbolsInfo<'a> {
     pub globals: IdMap<InputGlobalId, section::SymInfo<'a>>,
     pub funcs: IdMap<InputFuncId, section::SymInfo<'a>>,

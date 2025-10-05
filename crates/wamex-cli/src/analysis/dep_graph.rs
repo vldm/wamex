@@ -162,7 +162,7 @@ impl<'a> SymbolTable for InputModule<'a> {
                 None
             }
             _ => {
-                // log::error!("{symbol_index:?} is not supported symol dep");
+                // log::error!("{symbol_index:?}: {linking_index} is not supported symbol dep");
                 None
             }
         }

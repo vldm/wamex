@@ -10,7 +10,7 @@ mod constant_extracton;
 mod relocation;
 mod start_fn_gen;
 
-use std::{collections::HashMap, ops::Range};
+use std::{any::Any, collections::HashMap, ops::Range};
 
 use anyhow::{bail, Result};
 use constant_extracton::ConstantExtractionEntry;
@@ -20,35 +20,71 @@ use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     emit::{index_safety::OutputGlobalId, ModuleEmitState},
-    index::{DefinedFuncId, InputFuncId, InputGlobalId},
+    index::{AnySymbolId, DefinedFuncId, InputFuncId, InputGlobalId},
 };
 
+// #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+// pub enum GlobalSymbolOp {
+//     /// Data symbol offset extracted as GOT + Offset
+//     GotOffset { dyn_offset: u32 },
+//     /// Keep original constant value untouched
+//     StaticOffset { absolute_offset: u32 },
+// }
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum GlobalSymbolOp {
-    /// Data symbol offset extracted as GOT + Offset
-    GotOffset { offset: u32 },
-    /// Keep original constant value untouched
-    StaticOffset { offset: u32 },
+enum SymbolOp<V> {
+    // Is symbol relative to GOT base (which is stored in global variable)
+    GotBased { got: OutputGlobalId, value: V },
+    // Symbol is on static offset (main module)
+    StaticOffset { value: V },
 }
 
-#[derive(Debug)]
-pub struct ModifyContext<'a> {
-    pub function_name: &'a str,
-    pub global_tmps: &'a HashMap<StoreType, OutputGlobalId>,
-    pub instruction: wasmparser::Operator<'a>,
-    pub writer: &'a mut Vec<u8>,
-    pub lib_base_id: Option<OutputGlobalId>,
-    pub table_base_id: Option<OutputGlobalId>,
+impl<V> SymbolOp<V> {
+    pub fn as_static(&self) -> Option<&V> {
+        match self {
+            SymbolOp::StaticOffset { value } => Some(value),
+            SymbolOp::GotBased { .. } => None,
+        }
+    }
 }
-impl<'a> ModifyContext<'a> {
-    pub fn emit_code_with_changes<'src>(
-        module_emit: &'a ModuleEmitState<'a, 'src>,
-        main_module: &'a ModuleEmitState<'a, 'src>,
+
+type SymbolOffset = SymbolOp<i64>;
+type SymbolIndex = SymbolOp<usize>;
+
+#[derive(Debug)]
+pub struct ModifyContext<'any, 'src> {
+    // Function name for debug purposes
+    pub function_name: &'any str,
+    // Temporary globals for constant extraction
+    pub global_tmps: &'any HashMap<StoreType, OutputGlobalId>,
+    relocation_state: RelocateState<'any, 'src>,
+    // Current instruction
+    pub instruction: wasmparser::Operator<'any>,
+
+    // TODO: remove
+    // // Submodule GOT and Table base globals
+    // pub lib_base_id: Option<OutputGlobalId>,
+    // pub table_base_id: Option<OutputGlobalId>,
+
+    // output writer
+    pub writer: &'any mut Vec<u8>,
+}
+impl<'any, 'src> ModifyContext<'any, 'src> {
+    pub fn emit_code_with_changes(
+        module_emit: &'any ModuleEmitState<'any, 'src>,
+        main_module: &'any ModuleEmitState<'any, 'src>,
         global_id_mapper: impl Fn(InputGlobalId) -> Option<OutputGlobalId>,
         defined_function_id: DefinedFuncId,
         input_function_id: InputFuncId, // debug purposes
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
+        let reloc_info = RelocateState {
+            input_module: &module_emit.src.wasm,
+            main_module: main_module,
+            emit_module: module_emit,
+            global_id_mapper: &global_id_mapper,
+        };
+
         let (function_name, src_body) = {
             let func_id = InputFuncId::from_index(
                 defined_function_id.as_raw_index()
@@ -132,11 +168,7 @@ impl<'a> ModifyContext<'a> {
                 global_tmps: &module_emit.global_tmp_store,
                 instruction: instr.clone(),
                 writer: &mut result,
-                lib_base_id: module_emit.sub_module_extra.as_ref().map(|m| m.lib_base_id),
-                table_base_id: module_emit
-                    .sub_module_extra
-                    .as_ref()
-                    .map(|m| m.table_base_id),
+                relocation_state: reloc_info.clone(),
             };
 
             log::trace!(
@@ -217,12 +249,6 @@ impl<'a> ModifyContext<'a> {
             entry = next_entry;
         }
 
-        let reloc_info = RelocateState {
-            input_module: &module_emit.src.wasm,
-            main_module: main_module,
-            emit_module: module_emit,
-            global_id_mapper,
-        };
         log::trace!("end_body {:?}", result);
         log::trace!("other_relocations {:?}", other_relocations);
         // TODO: apply relocations
@@ -237,8 +263,8 @@ impl<'a> ModifyContext<'a> {
     }
 
     // Same as emit_code_with_changes, but avoid deserializing.
-    fn emit_code_in_place<'src>(
-        module_emit: &ModuleEmitState<'a, 'src>,
+    fn emit_code_in_place(
+        module_emit: &ModuleEmitState<'any, 'src>,
         num_new_global_imports: u32,
         defined_function_id: InputGlobalId,
         entries: &[CodeModifyEntry],
@@ -292,8 +318,6 @@ pub type DataModifyEntry = ModifyEntry<start_fn_gen::DataEntry>;
 
 pub struct RelocationContext {
     pub dyn_relocate: bool,
-    // If relocation is targeted a data symbol - information about this symbol
-    pub referenced_symbol: Option<GlobalSymbolOp>,
     // If relocation entry is in data segment - this is information about symbol
     pub containing_symbol: Option<DataSymbolWithOffset>,
 }
