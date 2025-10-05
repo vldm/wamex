@@ -20,3 +20,21 @@ pub fn string_from_static() -> Pin<Box<String>> {
 pub async fn async_string() -> String {
     async { "ASYNC STRING".to_string() }.await
 }
+
+fn impl_dyn_fns() -> String {
+    "DYN FNS".to_string()
+}
+
+#[cfg_attr(feature = "split", wasm_split(multiple_dyn_fns))]
+pub fn multiple_dyn_fns(first_part: bool) -> String {
+    if first_part {
+        dyn_fns_inner(&|| impl_dyn_fns().split(' ').next().unwrap().to_string())
+    } else {
+        dyn_fns_inner(&impl_dyn_fns)
+    }
+}
+
+#[inline(never)]
+pub fn dyn_fns_inner(func: &dyn Fn() -> String) -> String {
+    func()
+}

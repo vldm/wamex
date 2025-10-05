@@ -16,7 +16,7 @@ use crate::{
     emit::{
         index_safety::OutputGlobalId,
         modify::{
-            relocation::{DataSymbolTag, FunctionTableIndex},
+            relocation::{DataSymbolTag, FunctionIndexTag},
             CustomModify, RelocationContext, SymbolOffset, SymbolOp,
         },
     },
@@ -303,7 +303,7 @@ impl CustomModify for ConstantExtractionEntry {
             RelocationType::TableIndexSleb => {
                 let symbol_offset = ctx
                     .relocation_state
-                    .get_entry_symbol_op::<FunctionTableIndex>(&self.entry)?;
+                    .get_entry_symbol_op::<FunctionIndexTag>(&self.entry)?;
                 self.replace_const_get_with_global_get(symbol_offset, ctx)?
             }
             _ => {

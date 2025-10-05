@@ -115,7 +115,7 @@ pub fn find_split_points(
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
 
     for (key, _) in export_map.iter() {
-        anyhow::bail!("No corresponding import for split export {key:?}");
+        anyhow::bail!("No corresponding import for split export {key:?} hash {key_hash:?}. Maybe split module is defined but not used.", key_hash = key.1,key = key.0);
     }
 
     Ok(split_points)

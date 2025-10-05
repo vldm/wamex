@@ -32,7 +32,7 @@ use crate::{
 // }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum SymbolOp<V> {
+pub enum SymbolOp<V> {
     // Is symbol relative to GOT base (which is stored in global variable)
     GotBased { got: OutputGlobalId, value: V },
     // Symbol is on static offset (main module)
@@ -46,10 +46,19 @@ impl<V> SymbolOp<V> {
             SymbolOp::GotBased { .. } => None,
         }
     }
+    pub fn map<U, F: FnOnce(V) -> U>(self, f: F) -> SymbolOp<U> {
+        match self {
+            SymbolOp::GotBased { got, value } => SymbolOp::GotBased {
+                got,
+                value: f(value),
+            },
+            SymbolOp::StaticOffset { value } => SymbolOp::StaticOffset { value: f(value) },
+        }
+    }
 }
 
 type SymbolOffset = SymbolOp<i64>;
-type SymbolIndex = SymbolOp<usize>;
+type SymbolUOffset = SymbolOp<usize>;
 
 #[derive(Debug)]
 pub struct ModifyContext<'any, 'src> {
@@ -103,7 +112,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
             (name, defined_func.body.clone())
         };
         log::debug!(
-            "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {entries:?}]",
+            "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {entries:#?}]",
             range = src_body.range(),
         );
 

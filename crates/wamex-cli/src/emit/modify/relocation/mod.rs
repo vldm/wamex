@@ -6,12 +6,8 @@ use anyhow::{anyhow, bail, Result};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    emit::{
-        index_safety::{OutputFuncId, OutputGlobalId},
-        modify::SymbolOp,
-        ModuleEmitState,
-    },
-    index::{AnySymbolId, DataSegmentId, DataSymbolId, Id, InputFuncId, InputGlobalId},
+    emit::{index_safety::OutputGlobalId, modify::SymbolOp, ModuleEmitState},
+    index::{AnySymbolId, DataSegmentId, DataSymbolId, InputFuncId, InputGlobalId},
     read::{linking::SymbolIndex, InputModule},
 };
 
@@ -26,11 +22,10 @@ pub trait EntryTypeTag {
     fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId>;
 }
 
-pub enum FunctionId {}
-pub enum FunctionTableIndex {}
+pub enum FunctionIndexTag {}
 pub enum DataSymbolTag {}
 
-impl FunctionId {
+impl FunctionIndexTag {
     fn get_input_function_id(
         input_module: &InputModule<'_>,
         src_symbol: AnySymbolId,
@@ -47,31 +42,14 @@ impl FunctionId {
     }
 }
 
-impl EntryTypeTag for FunctionId {
-    type OutputValue = OutputFuncId;
-    fn get_mapped_value(
-        input_module: &InputModule<'_>,
-        state: &ModuleEmitState,
-        src_symbol: AnySymbolId,
-    ) -> Option<Self::OutputValue> {
-        let input_func_id = FunctionId::get_input_function_id(input_module, src_symbol)?;
-        let Some(output_func_id) = state.functions.get_output_id(input_func_id) else {
-            return None;
-        };
-        Some(output_func_id)
-    }
-    fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId> {
-        state.sub_module_extra.as_ref().map(|e| e.lib_base_id)
-    }
-}
-impl EntryTypeTag for FunctionTableIndex {
+impl EntryTypeTag for FunctionIndexTag {
     type OutputValue = usize;
     fn get_mapped_value(
         input_module: &InputModule<'_>,
         state: &ModuleEmitState,
         src_symbol: AnySymbolId,
     ) -> Option<Self::OutputValue> {
-        let input_func_id = FunctionId::get_input_function_id(input_module, src_symbol)?;
+        let input_func_id = FunctionIndexTag::get_input_function_id(input_module, src_symbol)?;
         let Some(&table_index) = state
             .indirect_functions
             .function_table_index
@@ -82,7 +60,7 @@ impl EntryTypeTag for FunctionTableIndex {
         Some(table_index)
     }
     fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId> {
-        FunctionId::get_got(state)
+        state.sub_module_extra.as_ref().map(|e| e.lib_base_id)
     }
 }
 
@@ -204,25 +182,30 @@ impl RelocateState<'_, '_> {
     }
 
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let result = self.get_entry_symbol_op::<FunctionId>(relocation)?;
-        Ok(result
-            .as_static()
-            .expect("Relocation should only process static symbols")
-            .as_raw_index())
+        let Some(input_func_id) = FunctionIndexTag::get_input_function_id(
+            self.input_module,
+            relocation.index as AnySymbolId,
+        ) else {
+            bail!("Relocation {relocation:?} does not refer to a valid function")
+        };
+        let Some(output_func_id) = self.emit_module.functions.get_output_id(input_func_id) else {
+            bail!("Cannot find output function for input function {input_func_id} referenced by relocation {relocation:?}")
+        };
+        Ok(output_func_id.as_raw_index())
     }
 
     fn get_relocated_function_table_index(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let result = self.get_entry_symbol_op::<FunctionTableIndex>(relocation)?;
+        let result = self.get_entry_symbol_op::<FunctionIndexTag>(relocation)?;
         Ok(*result
             .as_static()
-            .expect("Relocation should only process static symbols"))
+            .unwrap_or_else(||panic!("Relocation should only process static symbols, got {result:?}, for entry {relocation:?}")))
     }
 
     fn get_relocated_memory_offset(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let mut offset = *self
-            .get_entry_symbol_op::<DataSymbolTag>(relocation)?
+        let result = self.get_entry_symbol_op::<DataSymbolTag>(relocation)?;
+        let mut offset = *result
             .as_static()
-            .expect("Relocation should only process static symbols");
+            .unwrap_or_else(||panic!("Relocation should only process static symbols, got {result:?}, for entry {relocation:?}"));
         if relocation.addend < 0 {
             log::warn!("Relocation {relocation:?} has negative addend");
         }

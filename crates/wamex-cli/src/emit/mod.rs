@@ -435,7 +435,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .original_indexes
             .get(symbol)
         {
-            Some(SymbolIndex::Func(f)) => used_funcs.contains(f),
+            Some(SymbolIndex::Func(f)) => {
+                let result = used_funcs.contains(f);
+                log::debug!("is_symbol_local: {f} -> {result}");
+                result
+            }
             Some(SymbolIndex::DataDefined(segment_id, symbol_id)) => data_to_define
                 .get(segment_id)
                 .map(|set| set.contains(symbol_id))
@@ -1517,7 +1521,7 @@ pub fn emit_modules<'a, 'src>(
     let output_modules = modules_ids_iter
         .into_iter()
         .map(|(output_module_index, id)| {
-            log::debug!("Emitting sub module {id:?}");
+            log::debug!("Calculating module {id:?}");
             (
                 ModuleEmitState::produce_state(
                     module,
@@ -1543,6 +1547,7 @@ pub fn emit_modules<'a, 'src>(
         .expect("Main module not found");
 
     for (state, identifier) in &output_modules {
+        log::debug!("Generating module {identifier:?}");
         //TODO: remove find
         let split_points = program_info
             .output_modules

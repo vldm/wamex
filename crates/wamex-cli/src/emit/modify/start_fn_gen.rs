@@ -10,9 +10,9 @@ use wasmparser::{RelocationEntry, RelocationType};
 
 use crate::{
     emit::modify::{
-        relocation::{encode, DataSymbolTag},
+        relocation::{encode, DataSymbolTag, FunctionIndexTag},
         CustomModify, DataModifyEntry, ModifyEntry, RelocateState, RelocationContext, SymbolOffset,
-        SymbolOp,
+        SymbolOp, SymbolUOffset,
     },
     index::{AnySymbolId, DataSegmentId, DataSymbolId, InputFuncId},
     read::linking::SymbolIndex,
@@ -38,7 +38,7 @@ pub struct DataEntry {
 #[derive(Debug, Clone)]
 pub struct DataEntryWithOffsets {
     storage: SymbolOffset,
-    relocated_symbol_offset: SymbolOffset,
+    relocated_symbol_offset: SymbolUOffset,
 }
 
 pub struct StartFnGen {
@@ -60,8 +60,15 @@ impl StartFnGen {
             let ModifyEntry::Custom(data_entry) = entry else {
                 continue;
             };
-            let relocated_symbol_offset =
-                relocate.get_entry_symbol_op::<DataSymbolTag>(&data_entry.relocation)?;
+            let relocated_symbol_offset = match data_entry.relocation.ty {
+                RelocationType::MemoryAddrI32 => relocate
+                    .get_entry_symbol_op::<DataSymbolTag>(&data_entry.relocation)
+                    .map(|v| v.map(|v| v.try_into().unwrap())),
+                RelocationType::TableIndexI32 => {
+                    relocate.get_entry_symbol_op::<FunctionIndexTag>(&data_entry.relocation)
+                }
+                _ => panic!("Unsupported relocation type {:?}", data_entry.relocation.ty),
+            }?;
             let storage = relocate.get_data_symbol_op(
                 data_entry.storage.storage_segment_id,
                 data_entry.storage.storage_symbol_id,

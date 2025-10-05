@@ -9,6 +9,10 @@ pub async fn print_lazy_loaded_string(data: &str) -> Result<String, JsError> {
         format!("{}", sub::static_str().await)
     } else if data == "string" {
         format!("{}", sub::string_from_static().await)
+    } else if data == "async" {
+        format!("{}", sub::async_string().await)
+    } else if data == "dyn" {
+        format!("{}", sub::multiple_dyn_fns(true).await)
     } else {
         format!("{}", data)
     };
