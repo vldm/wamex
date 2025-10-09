@@ -69,12 +69,21 @@ impl StartFnGen {
                 }
                 _ => panic!("Unsupported relocation type {:?}", data_entry.relocation.ty),
             }?;
-            let storage = relocate.get_data_symbol_op(
-                data_entry.storage.storage_segment_id,
-                data_entry.storage.storage_symbol_id,
-            )?;
+            let storage = relocate
+                .get_data_symbol_op(
+                    data_entry.storage.storage_segment_id,
+                    data_entry.storage.storage_symbol_id,
+                )?
+                .map(|v| v + data_entry.storage.storage_offset_in_data);
+
+            log::warn!(
+                "Data symbol storage: {:?}, entry: {:?}",
+                storage,
+                data_entry
+            );
             data_inits.push(DataEntryWithOffsets {
                 storage,
+
                 relocated_symbol_offset,
             });
         }
@@ -106,6 +115,17 @@ impl StartFnGen {
         // value = (GOT+src) | src
         // *(GOT+dst) = value
 
+        let SymbolOp::GotBased {
+            got: dst_got,
+            value: dst_offset,
+        } = data_entry.storage
+        else {
+            panic!("Data relocation storage should always be in GOT")
+        };
+        instr.global_get(dst_got.as_raw_index() as u32);
+        instr.i32_const(dst_offset.try_into().unwrap());
+        instr.i32_add();
+
         match data_entry.relocated_symbol_offset {
             SymbolOp::GotBased {
                 got: src_got,
@@ -119,17 +139,6 @@ impl StartFnGen {
                 instr.i32_const(src_offset.try_into().unwrap());
             }
         };
-
-        let SymbolOp::GotBased {
-            got: dst_got,
-            value: dst_offset,
-        } = data_entry.storage
-        else {
-            panic!("Data relocation storage should always be in GOT")
-        };
-        instr.global_get(dst_got.as_raw_index() as u32);
-        instr.i32_const(dst_offset.try_into().unwrap());
-        instr.i32_add();
 
         instr.i32_store(MemArg {
             offset: 0,
@@ -179,7 +188,7 @@ impl CustomModify for DataEntry {
         start..(start + 4)
     }
     fn try_apply(&self, ctx: Self::Context<'_, '_>) -> Result<()> {
-        const DUMMY_ADDR: u32 = 0xDEADBEEF;
+        const DUMMY_ADDR: u32 = 0xefbeadde; // Dead Beef in little endian
         let relocation_range = self.range();
         let target = &mut ctx.data_segment[relocation_range];
 

@@ -23,14 +23,6 @@ use crate::{
     index::{AnySymbolId, DefinedFuncId, InputFuncId, InputGlobalId},
 };
 
-// #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-// pub enum GlobalSymbolOp {
-//     /// Data symbol offset extracted as GOT + Offset
-//     GotOffset { dyn_offset: u32 },
-//     /// Keep original constant value untouched
-//     StaticOffset { absolute_offset: u32 },
-// }
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SymbolOp<V> {
     // Is symbol relative to GOT base (which is stored in global variable)

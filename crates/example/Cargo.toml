@@ -17,7 +17,7 @@ wasm-bindgen-futures = "0.4.42"
 wasm-streams = "0.4.0"
 wamex = { path = "../wamex", optional = true }
 wasm-log = "0.3"
-
+hex = "0.4"
 
 [features]
 default = ["split"]

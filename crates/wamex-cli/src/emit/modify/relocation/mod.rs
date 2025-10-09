@@ -60,7 +60,7 @@ impl EntryTypeTag for FunctionIndexTag {
         Some(table_index)
     }
     fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId> {
-        state.sub_module_extra.as_ref().map(|e| e.lib_base_id)
+        state.sub_module_extra.as_ref().map(|e| e.table_base_id)
     }
 }
 

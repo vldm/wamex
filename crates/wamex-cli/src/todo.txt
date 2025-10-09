@@ -1,23 +1,20 @@
-0. remove ex imports from main.
 1. Implement a strategy outside `ModuleEmitState::produce_state` to allow different modes
-2. Extract the CLI routine into a separate crate
 3. Process "Unnamed" data segments ?
 4. Recreate relocations
-5. Generate the linking, names, and relocations sections
-6. Reimplement js glue code
+5. Generate the linking, and relocations sections
 7. implement "streaming" code copy during emit, without instructions parsing
 8. process only relocation entry specific for section
 9. Cleanup exports from sub-modules 
 10. Add imports for data symbols.
 
 
-- Use mut global and init in start fn
-- Patch code from call -> call indirect table.
-
 - Add dep in DepGraph for BoundToPrevious symbol
 - impl tests for Structure recovery (partially done)
 - Convert relocations with negative appends to relocations to previous symbol
-- Reimplement "__indirect_function_table" - merging of this table into one main table (instead of using table for each module) 
-offset of table can be calculated dynamically and applied.
-- Replace GLOBAL VAR for each symbol to GOT + offset pattern
-- Correct global relocations
+- Correct global relocations to external sub-modules
+
+Roadmap:
+1. sub-modules "non-lazy" deps.
+1.1 Extract "shared" modules in a separate module
+2. wasm-link code reduction
+2.1 extend twiggy report for line -> code mapping

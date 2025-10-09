@@ -10,21 +10,18 @@ pub use data_segments::{DataSegment, DataSegmentOutput, NamedData, SymbolRelatio
 use globals::GlobalConstructor;
 use index_safety::OutputFuncId;
 use modify::{init_each_store_var, ModifyContext, StoreType};
-use serde_json::map::Entry;
 use wamex_metadata::{BumpVersion, DemangledName, ExportedSymbol};
 use wasm_encoder::{reencode::Reencode, GlobalType};
-use wasmparser::{Data, RelocationEntry, RelocationType, TypeRef};
+use wasmparser::{RelocationEntry, TypeRef};
 
 use crate::{
     analysis::{
         self,
         dep_graph::DepNode,
-        split_point::{
-            self, ModuleIdentifier, SplitModuleIdentifier, SplitPoint, SplitProgramInfo,
-        },
+        split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitPoint, SplitProgramInfo},
     },
     emit::{
-        globals::{DataSymbol, DefinedGlobal, GlobalImport},
+        globals::{DefinedGlobal, GlobalImport},
         index_safety::OutputGlobalId,
         modify::{RelocateState, StartFnGen},
     },
@@ -34,7 +31,7 @@ use crate::{
         ImportsOrDefined, Indexed, InputFuncId, InputGlobalId, MemoryId, OutputSymbolDataId,
         WithOriginalIndex,
     },
-    read::{self, linking::SymbolIndex, InputModule},
+    read::{linking::SymbolIndex, InputModule},
 };
 
 mod data_segments;
@@ -161,8 +158,6 @@ impl PartialOrd for DefinedFunction {
 struct SubModuleExtra {
     lib_base_id: OutputGlobalId,
     table_base_id: OutputGlobalId,
-
-    entrypoints_range: Range<u32>,
     entrypoints: Vec<InputFuncId>,
 }
 impl SubModuleExtra {
@@ -405,12 +400,16 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let mut data_segment_outputs = IdVec::new();
 
-        let first_segment = data_segments
-            .iter()
-            .next()
-            .expect("There should be at least one data segment")
-            .1;
-        let mem_start = first_segment.memory_offset();
+        let mem_start = if main_module {
+            let first_segment = data_segments
+                .iter()
+                .next()
+                .expect("There should be at least one data segment")
+                .1;
+            first_segment.memory_offset()
+        } else {
+            0
+        };
 
         // offset of current segment.
         let mut segment_mem_offset = 0;
@@ -559,7 +558,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             emit_info.split_point_fns.len()
         );
         let indirect_functions = IndirectFunctionEmitInfo::new(
-            emit_info.split_point_fns.len() as u64,
+            main_module.then(|| emit_info.split_point_fns.len() as u64),
             indirect_function_table,
         );
 
@@ -579,41 +578,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 .iter()
                 .map(|sp| sp.export_func)
                 .collect::<Vec<_>>();
-            let entrypoints_range = emit_info
-                .split_point_fns
-                .iter()
-                .enumerate()
-                .find_map(|(i, func_id)| {
-                    if Some(*func_id) == entrypoints.first().copied() {
-                        let start = i as u32;
-                        let end = start + entrypoints.len() as u32;
-                        Some(start..end)
-                    } else {
-                        None
-                    }
-                })
-                .expect("Entrypoints should be in split_point_fns");
-
-            debug_assert_eq!(
-                entrypoints_range.len() as usize,
-                entrypoints.len(),
-                "All entrypoints should be in split_point_fns"
-            );
-            for (func_id, idx) in entrypoints.iter().zip(entrypoints_range.clone()) {
-                let expected_func_id = emit_info
-                    .split_point_fns
-                    .get(idx as usize)
-                    .copied()
-                    .expect("Entrypoint should be in split_point_fns");
-                debug_assert_eq!(*func_id, expected_func_id, "Wrong order for entrypoints");
-            }
 
             SubModuleExtra {
                 lib_base_id: lib_base,
                 table_base_id: table_base,
-                // start_fn,
                 entrypoints,
-                entrypoints_range,
             }
         });
 
@@ -688,7 +657,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         self.generate_global_section(output_module)?;
         self.generate_export_section(output_module);
         self.generate_start_function_section(output_module)?;
-        self.generate_element_section(main_module, output_module)?;
+        self.generate_element_section(output_module)?;
 
         let code_relocs = self.generate_code_section(main_module, output_module)?;
         let data_relocs = self.generate_data_section(main_module, output_module)?;
@@ -1006,11 +975,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     // [_, _, _, _, ...,    s1_FIX_entry1,    s1_FIX_entry2,    _,                 _,     _,     s1_FIX_f1, s1_FIX_f2, ...]
     // Note that original s1_f1 and s1_f2 are not removed, because other submodules may use them.
     // And only after calling linker::unload we can reuse these entries.
-    fn generate_element_section(
-        &self,
-        main_module: &'any ModuleEmitState<'any, 'src>,
-        output_module: &mut wasm_encoder::Module,
-    ) -> Result<()> {
+    fn generate_element_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         let mut section = wasm_encoder::ElementSection::new();
 
         let element_start = if let Some(sub_module_extra) = &self.sub_module_extra {
@@ -1024,39 +989,39 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let func_ids = self._function_ids_for_element_section()?;
         Self::_generate_element_section_segment(&mut section, &element_start, func_ids);
 
-        let start_of_lazy_fns = main_module.indirect_functions.table_entries.len() as i32 + 1;
-
         // generate empty entries for lazy entrypoints
         match &self.sub_module_extra {
             None => {
                 let abort_fn_id = 0u32; // TODO: Place real abort function
-                let num_lazy_entries = main_module.indirect_functions.num_extra_stubs;
+                let num_lazy_entries = self.indirect_functions.num_extra_stubs;
+                let start_of_lazy_fns = self.indirect_functions.table_entries.len() as i32 + 1;
 
                 let stub_vec = vec![abort_fn_id; num_lazy_entries as usize];
                 let element_start = wasm_encoder::ConstExpr::i32_const(start_of_lazy_fns);
                 Self::_generate_element_section_segment(&mut section, &element_start, stub_vec);
             }
             Some(sub_module) => {
-                let entry_point_offset =
-                    start_of_lazy_fns + sub_module.entrypoints_range.start as i32;
+                if let LinkageType::DynamicLinking { table_offset, .. } = &self.linkage_type {
+                    let entry_point_offset = *table_offset as i32;
 
-                let lazy_entrypoints = sub_module
-                    .entrypoints
-                    .iter()
-                    .map(|input_func_id| {
-                        let output_func_id = self
-                            ._get_output_func_id(*input_func_id)
-                            .expect("Function should be defined");
-                        output_func_id.as_raw_index() as u32
-                    })
-                    .collect::<Vec<_>>();
-                let element_start = wasm_encoder::ConstExpr::i32_const(entry_point_offset);
+                    let lazy_entrypoints = sub_module
+                        .entrypoints
+                        .iter()
+                        .map(|input_func_id| {
+                            let output_func_id = self
+                                ._get_output_func_id(*input_func_id)
+                                .expect("Function should be defined");
+                            output_func_id.as_raw_index() as u32
+                        })
+                        .collect::<Vec<_>>();
+                    let element_start = wasm_encoder::ConstExpr::i32_const(entry_point_offset);
 
-                Self::_generate_element_section_segment(
-                    &mut section,
-                    &element_start,
-                    lazy_entrypoints,
-                );
+                    Self::_generate_element_section_segment(
+                        &mut section,
+                        &element_start,
+                        lazy_entrypoints,
+                    );
+                }
             }
         }
         output_module.section(&section);
@@ -1218,7 +1183,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             code_relocs.extend(relocs?);
         }
 
-        if let Some(sub) = &self.sub_module_extra {
+        if let Some(_) = &self.sub_module_extra {
             let relocate = RelocateState {
                 input_module: self.src.wasm,
                 main_module: main_module,
@@ -1357,17 +1322,19 @@ pub struct IndirectFunctionEmitInfo {
 }
 
 impl IndirectFunctionEmitInfo {
-    fn new(num_extra_stubs: u64, table_entries: Vec<InputFuncId>) -> Self {
+    fn new(num_extra_stubs: Option<u64>, table_entries: Vec<InputFuncId>) -> Self {
+        // main module has 1 stub at start
+        let num_stub_at_start = if num_extra_stubs.is_some() { 1 } else { 0 };
         let function_table_index: HashMap<_, _> = table_entries
             .iter()
             .enumerate()
-            .map(|(i, func_id)| (*func_id, i + 1))
+            .map(|(i, func_id)| (*func_id, i + num_stub_at_start))
             .collect();
 
         Self {
             table_entries,
             function_table_index,
-            num_extra_stubs,
+            num_extra_stubs: num_extra_stubs.unwrap_or(0),
         }
     }
     fn calculate_indirect_function_table_type(&self) -> wasm_encoder::TableType {
@@ -1395,6 +1362,7 @@ pub struct EmitInfo<'src> {
     // Imports (corresponding to split points) to exclude from all modules.
     pub split_point_imports: BTreeSet<ImportId>,
     pub split_point_fns: Vec<InputFuncId>,
+    pub module_split_points: HashMap<SplitModuleIdentifier, (u32, u32)>,
 }
 
 impl<'src> EmitInfo<'src> {
@@ -1405,7 +1373,13 @@ impl<'src> EmitInfo<'src> {
         let all_relocations = Self::all_relocations(module.wasm)?;
         let mut split_point_imports = BTreeSet::<ImportId>::new();
         let mut split_point_fns = Vec::new();
-        for (_, output_module) in program_info.output_modules.iter() {
+        let mut module_split_points = HashMap::new();
+        for (module_index, (id, output_module)) in program_info.output_modules.iter().enumerate() {
+            module_split_points.insert(
+                id.clone(),
+                (module_index as u32, output_module.split_points.len() as u32),
+            );
+
             for split_point in output_module.split_points.iter() {
                 split_point_imports.insert(split_point.import);
                 split_point_fns.push(split_point.export_func);
@@ -1465,6 +1439,7 @@ impl<'src> EmitInfo<'src> {
             split_point_imports,
             split_point_fns,
             src_data_segments: data_segments,
+            module_split_points,
         })
     }
 
@@ -1516,12 +1491,65 @@ pub fn emit_modules<'a, 'src>(
         log::debug!("Shared_modules_info {id:?}: {output_module:?}");
     }
 
-    let linkage_type = LinkageType::OriginalLayout;
+    // let linkage_type = LinkageType::OriginalLayout;
+    let dyn_linkage = true; // TODO: from args
 
-    let output_modules = modules_ids_iter
+    let main_module = modules_ids_iter
+        .clone()
         .into_iter()
+        .find_map(|(output_module_index, id)| {
+            if id == ModuleIdentifier::Main {
+                Some((output_module_index, id))
+            } else {
+                None
+            }
+        })
         .map(|(output_module_index, id)| {
             log::debug!("Calculating module {id:?}");
+            let linkage_type = if dyn_linkage {
+                // Main module has no entrypoints.
+                LinkageType::DynamicLinking {
+                    table_offset: 0,
+                    table_num_entrypoints: 0,
+                }
+            } else {
+                LinkageType::OriginalLayout
+            };
+            (
+                ModuleEmitState::produce_state(
+                    module,
+                    &emit_info,
+                    program_info,
+                    output_module_index,
+                    linkage_type,
+                ),
+                id,
+            )
+        })
+        .expect("Main module not found");
+
+    let sub_modules = modules_ids_iter
+        .into_iter()
+        .filter(|(_output_module_index, id)| *id != ModuleIdentifier::Main)
+        .map(|(output_module_index, id)| {
+            log::debug!("Calculating module {id:?}");
+            let stubs_start = main_module.0.indirect_functions.table_entries.len();
+
+            let (table_offset, table_num_entrypoints) = *emit_info
+                .module_split_points
+                .get(&SplitModuleIdentifier::Single(id.clone()))
+                .expect("Module split points not found");
+
+            let linkage_type = if dyn_linkage {
+                LinkageType::DynamicLinking {
+                    table_offset: stubs_start as u32 + table_offset,
+                    table_num_entrypoints,
+                }
+            } else {
+                LinkageType::OriginalLayout
+            };
+
+            log::error!("linkage_type: {linkage_type:?}");
             (
                 ModuleEmitState::produce_state(
                     module,
@@ -1535,18 +1563,7 @@ pub fn emit_modules<'a, 'src>(
         })
         .collect::<Vec<_>>();
 
-    let main_module = output_modules
-        .iter()
-        .find_map(|(state, identifier)| {
-            if *identifier == ModuleIdentifier::Main {
-                Some(state)
-            } else {
-                None
-            }
-        })
-        .expect("Main module not found");
-
-    for (state, identifier) in &output_modules {
+    for (state, identifier) in sub_modules.iter().chain(std::iter::once(&main_module)) {
         log::debug!("Generating module {identifier:?}");
         //TODO: remove find
         let split_points = program_info
@@ -1561,7 +1578,7 @@ pub fn emit_modules<'a, 'src>(
         let metadata = generate_metadata(state, &split_points);
         let mut encoder = wasm_encoder::Module::new();
         state
-            .generate(&main_module, &mut encoder)
+            .generate(&main_module.0, &mut encoder)
             .with_context(|| format!("Error generating {:?}", identifier))?;
 
         emit_fn(
