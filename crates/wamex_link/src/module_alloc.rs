@@ -16,6 +16,7 @@ pub struct AllocState {
 #[derive(Debug)]
 pub struct RawAllocEntry {
     memory_start: *const u8,
+    memory_alignment: u32,
     memory_size: u32,
     table_start: u32,
     table_size: u32,
@@ -33,8 +34,6 @@ unsafe impl Send for RawAllocEntry {}
 
 unsafe impl Sync for RawAllocEntry {}
 
-const DEFAULT_ALIGNMENT: usize = core::mem::align_of::<u32>();
-
 impl AllocState {
     pub fn new(table: WebAssembly::Table) -> Self {
         AllocState {
@@ -42,9 +41,16 @@ impl AllocState {
             free_tables: Vec::new(),
         }
     }
-    pub fn alloc(&mut self, bytes: u32, table_size: u32) -> Result<RawAllocEntry, Error> {
+    pub fn alloc(
+        &mut self,
+        bytes: u32,
+        mem_alignment: u32,
+        table_size: u32,
+    ) -> Result<RawAllocEntry, Error> {
         let mem = unsafe {
-            alloc::alloc::alloc(Layout::from_size_align(bytes as usize, DEFAULT_ALIGNMENT).unwrap())
+            alloc::alloc::alloc(
+                Layout::from_size_align(bytes as usize, mem_alignment as usize).unwrap(),
+            )
         };
 
         let table_offset = self.try_find_free_table(table_size).unwrap_or_else(|| {
@@ -57,6 +63,7 @@ impl AllocState {
 
         Ok(RawAllocEntry {
             memory_start: mem,
+            memory_alignment: mem_alignment,
             memory_size: bytes,
             table_start: table_offset,
             table_size,
@@ -67,7 +74,11 @@ impl AllocState {
         unsafe {
             alloc::alloc::dealloc(
                 entry.memory_start as *mut u8,
-                Layout::from_size_align(entry.memory_size as usize, DEFAULT_ALIGNMENT).unwrap(),
+                Layout::from_size_align(
+                    entry.memory_size as usize,
+                    entry.memory_alignment as usize,
+                )
+                .unwrap(),
             );
         }
         self.push_free_table(entry.table_start..entry.table_start + entry.table_size);

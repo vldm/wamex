@@ -10,9 +10,11 @@ web-sys = { version = "0.3", features = ["Request", "Response", "Window"] }
 js-sys = "0.3"
 
 thiserror = "2.0"
-wamex_metadata = { version = "0.1.0", path = "../wamex_metadata" }
+wamex_metadata = { version = "0.1.0", path = "../wamex_metadata", features = [
+    "parser",
+] }
+wasmparser = "0.238.0"
 
-rkyv = { version = "0.8.0" }
 # Under debug feature
 log = { version = "0.4", optional = true }
 

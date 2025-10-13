@@ -4,7 +4,9 @@
 //!
 //!
 
-use std::{collections::BTreeMap, hash::Hasher};
+use std::{collections::BTreeMap, fmt::Display, hash::Hasher};
+
+pub mod dylink0;
 
 #[cfg(feature = "bitcode")]
 use bitcode::{Decode, Encode};
@@ -29,9 +31,23 @@ impl BumpVersion {
     pub fn new() -> Self {
         BumpVersion { version: 0 }
     }
+    pub fn from_bytes(arr: &[u8; 4]) -> Self {
+        BumpVersion {
+            version: u32::from_le_bytes(*arr),
+        }
+    }
+    pub fn encode(&self, sink: &mut Vec<u8>) {
+        sink.extend(&self.version.to_le_bytes());
+    }
 
     pub fn bump(&mut self) {
         self.version += 1;
+    }
+}
+
+impl Display for BumpVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "v{}", self.version)
     }
 }
 

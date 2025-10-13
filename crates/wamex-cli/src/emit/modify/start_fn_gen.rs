@@ -184,7 +184,8 @@ impl CustomModify for DataEntry {
     }
 
     fn range(&self) -> Range<usize> {
-        let start = self.storage.storage_offset_in_data.try_into().unwrap();
+        // relocation store absolute offset in data segment
+        let start = self.relocation.offset.try_into().unwrap();
         start..(start + 4)
     }
     fn try_apply(&self, ctx: Self::Context<'_, '_>) -> Result<()> {

@@ -7,6 +7,7 @@ use js_sys::{
     Object, Reflect,
     WebAssembly::{self},
 };
+use wamex_metadata::BumpVersion;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, Response};
@@ -47,6 +48,7 @@ pub enum Error {
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Hash, Clone)]
 pub struct ModuleId {
     name: String,
+    version: Option<BumpVersion>,
     module_url_path: Option<String>,
 }
 
@@ -54,31 +56,35 @@ impl ModuleId {
     pub fn new(name: &str) -> Self {
         ModuleId {
             name: name.to_string(),
+            version: None,
             module_url_path: None,
         }
     }
     pub fn new_with_url(name: &str, module_url_path: &str) -> Self {
         ModuleId {
             name: name.to_string(),
+            version: None,
             module_url_path: Some(module_url_path.to_string()),
         }
     }
     pub fn module_name(&self) -> &str {
         &self.name
     }
-    pub fn module_url(&self) -> String {
-        if let Some(url) = &self.module_url_path {
-            format!("{}/{}.wasm", url, self.name)
+
+    pub fn build_url(&self) -> String {
+        let url = if let Some(url) = &self.module_url_path {
+            format!("{}/", url)
         } else {
-            format!("{}.wasm", self.name)
-        }
-    }
-    pub fn module_decl_url(&self) -> String {
-        if let Some(url) = &self.module_url_path {
-            format!("{}/{}.decl", url, self.name)
+            String::new()
+        };
+        let version = if let Some(version) = &self.version {
+            format!("-{}", version)
         } else {
-            format!("{}.decl", self.name)
-        }
+            String::new()
+        };
+
+        let name = &self.name;
+        format!("{}/{}{}.wasm", url, name, version)
     }
 }
 #[derive(Debug)]
@@ -259,12 +265,10 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     // 1. fetch ModuleDecl
     // TODO: use custom section instead of separate fetch?
     // let array = WebAssembly::Module::custom_sections(&module, "__wamex_metadata");
-    let module_fut = fetch_buffer(module_id.module_url());
-    let decl_buffer = fetch_buffer(module_id.module_decl_url()).await?;
-    let decl_buffer = deserialize::buffer_to_rust(decl_buffer);
-    let metadata = deserialize::deserialize_decl(&decl_buffer)?;
+    let module_fut = fetch_buffer(module_id.build_url());
+    // let decl_buffer = fetch_buffer(module_id.module_decl_url()).await?;
+    // let decl_buffer = deserialize::buffer_to_rust(decl_buffer);
 
-    debug!("Fetched module metadata: {:?}", metadata);
     // 2. Assert module decl "deps" are satisfied.
 
     // 3. fetch module
@@ -274,6 +278,22 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
         error,
     })?;
 
+    // TODO: move this logic into subroutine
+    let results = WebAssembly::Module::custom_sections(&module, "dylink.0");
+    if results.length() != 1 {
+        return Err(Error::DeserializationError(
+            "No dylink.0 section found".into(),
+        ));
+    }
+
+    let array = deserialize::buffer_to_rust(results.get(0));
+    let metadata = deserialize::deserialize_metadata(&array)?;
+
+    debug!("Fetched module metadata: {:?}", metadata);
+
+    let version = Default::default(); // deserialize::parse_version(&module)?;
+
+    debug!("Module version: {:?}", version);
     // 4. Create imports object (we can reuse global one?)
     // TODO: Limit only for needed imports?
 
@@ -285,12 +305,13 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
 
     debug!(
         "Allocating memory:{} and fn_table:{} for module",
-        metadata.num_bytes, metadata.num_indirect_funcs
+        metadata.memory_size, metadata.table_size
     );
     let entry = LinkageState::global(|state| {
         state.alloc_state.alloc(
-            metadata.num_bytes.to_native(),
-            metadata.num_indirect_funcs.to_native(),
+            metadata.memory_size,
+            metadata.memory_alignment,
+            metadata.table_size,
         )
     })?;
 
@@ -313,7 +334,7 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
 
     let instantiated = InstantiatedModule {
         instantiated: sub_module_instance.clone(),
-        version: deserialize::rkyv_deserialize(&metadata.version)?,
+        version,
         alloc_guard: GuardedAllocEntry::new(entry),
         needs_update: false,
     };

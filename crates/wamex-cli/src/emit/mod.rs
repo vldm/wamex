@@ -645,6 +645,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         main_module: &'any ModuleEmitState<'any, 'src>,
         output_module: &mut wasm_encoder::Module,
     ) -> Result<()> {
+        self.generate_dylink0_section(output_module)?;
         // Encode type section
         self.generate_type_section(output_module)?;
         self.generate_import_section(main_module, output_module);
@@ -1246,8 +1247,36 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         output_module.section(&features.encode_custom_section());
         Ok(())
     }
-    // linking| names
 
+    fn generate_dylink0_section(
+        &'any self,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<()> {
+        if !self.is_main() {
+            let data = wamex_metadata::dylink0::Dylink0Section {
+                memory_alignment: std::mem::size_of::<u32>() as u32, // as power of 2
+                memory_size: self
+                    .data
+                    .iter()
+                    .last()
+                    .map(|(_, seg)| seg.memory_offset() + seg.as_raw().len())
+                    .unwrap_or_default() as u32,
+                table_size: self.indirect_functions.table_entries.len() as u32,
+                table_alignment: 0,
+                //TODO: calculate deps.
+                needed_libraries: vec![],
+                import_info: vec![],
+            };
+            let section = wasm_encoder::CustomSection {
+                name: "dylink.0".into(),
+                data: data.encode_section().into(),
+            };
+            output_module.section(&section);
+        }
+        Ok(())
+    }
+
+    // linking| names
     fn generate_compiler_tools_sections(
         &self,
         output_module: &mut wasm_encoder::Module,
@@ -1474,7 +1503,7 @@ impl<'src> EmitInfo<'src> {
 pub fn emit_modules<'a, 'src>(
     module: &'a analysis::ModuleInfo<'a, 'src>,
     program_info: &SplitProgramInfo,
-    emit_fn: &dyn Fn(&SplitModuleIdentifier, wamex_metadata::Module, &[u8]) -> anyhow::Result<()>,
+    emit_fn: &dyn Fn(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let emit_info = EmitInfo::new(&module, program_info)?;
     let modules_ids_iter = program_info.output_modules.iter().enumerate().filter_map(
@@ -1575,7 +1604,6 @@ pub fn emit_modules<'a, 'src>(
             })
             .map(|(_, module)| &module.split_points)
             .expect("Split points for module not found");
-        let metadata = generate_metadata(state, &split_points);
         let mut encoder = wasm_encoder::Module::new();
         state
             .generate(&main_module.0, &mut encoder)
@@ -1583,88 +1611,12 @@ pub fn emit_modules<'a, 'src>(
 
         emit_fn(
             &SplitModuleIdentifier::Single(identifier.clone()),
-            metadata,
             encoder.as_slice(),
         )
         .with_context(|| format!("Error emitting {:?}", identifier))?;
     }
 
     Ok(())
-}
-
-fn generate_metadata(
-    module: &ModuleEmitState<'_, '_>,
-    split_points: &[SplitPoint],
-) -> wamex_metadata::Module {
-    let provides = module
-        .functions
-        .defined()
-        .filter_map(|(func_id, func)| {
-            if !func.export {
-                return None;
-            }
-            let name = module.get_function_name(func_id);
-            let lazy = split_points
-                .iter()
-                .any(|sp| sp.export_func == func.input_func_id);
-
-            let func_type_id = module.get_function_type(func_id);
-
-            let func_type = &module.src.wasm.types[func_type_id];
-
-            let (params, results) = func_type_to_metadata_parts(func_type);
-            let signature = wamex_metadata::SymbolSignature::Function {
-                name: DemangledName::new(&name, false),
-                lazy,
-                params,
-                results,
-            };
-            Some(wamex_metadata::ExportedSymbol {
-                signature,
-                // TODO: Set version
-                version: wamex_metadata::BumpVersion::new(),
-            })
-        })
-        .collect::<Vec<_>>();
-    let mut requires = BTreeMap::new();
-
-    for (_id, import) in module.functions.imports() {
-        let module_name: Cow<'_, str> = import.module_name();
-        let name = import.import_name();
-        let input_func_id = import.input_func_id();
-        let func_type_id = module.src.get_function_type_id(input_func_id);
-
-        let func_type = &module.src.wasm.types[func_type_id];
-
-        let (params, results) = func_type_to_metadata_parts(func_type);
-        let signature = wamex_metadata::SymbolSignature::Function {
-            name: DemangledName::new(name, false),
-            lazy: false,
-            params,
-            results,
-        };
-        requires
-            .entry(module_name.to_string())
-            .or_insert_with(Vec::new)
-            .push(ExportedSymbol {
-                signature,
-                version: BumpVersion::new(),
-            });
-    }
-
-    let num_bytes = module
-        .data
-        .iter()
-        .map(|(_, data)| data.as_raw().len())
-        .sum::<usize>() as u32;
-    let num_indirect_funcs = module.indirect_functions.table_entries.len() as u32;
-    wamex_metadata::Module {
-        version: BumpVersion::new(),
-        num_bytes,
-        num_indirect_funcs,
-        provides: provides,
-        deps: requires,
-    }
 }
 
 fn func_type_to_metadata_parts(

@@ -142,7 +142,6 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         "Roundtrip should produce single module",
     );
     crate::emit::emit_modules(&info, &split_program_info, &|_: &SplitModuleIdentifier,
-                                                            _: wamex_metadata::Module,
                                                             data: &[u8]|
      -> Result<()> {
         std::fs::write(&args.output, data)?;
@@ -174,20 +173,11 @@ pub fn split(args: Split) -> Result<()> {
     crate::emit::emit_modules(
         &info,
         &split_program_info,
-        &|identifier: &SplitModuleIdentifier,
-          metadata: wamex_metadata::Module,
-          data: &[u8]|
-         -> Result<()> {
+        &|identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             let output_filename = identifier.name() + ".wasm";
             std::fs::create_dir_all(&args.output)?;
             std::fs::write(args.output.join(output_filename), data)?;
 
-            let decl_filename = identifier.name() + ".decl";
-
-            std::fs::write(
-                args.output.join(decl_filename),
-                rkyv::to_bytes::<rancor::Error>(&metadata)?,
-            )?;
             Ok(())
         },
     )?;
