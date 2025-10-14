@@ -51,7 +51,7 @@ pub struct ModuleInfo<'a, 'src> {
     pub data_symbols: Vec<DataSymbol<'a, 'src>>,
 
     pub wasm: &'a read::InputModule<'src>,
-    pub export_map: HashMap<(isize, AnySymbolId), (ExportId, &'a str)>,
+    pub export_map: HashMap<(isize, AnySymbolId), (ExportId, &'src str)>,
 
     pub indirect_function_table_id: (TableId, ElementId),
     pub indirect_function_list: Vec<InputFuncId>,

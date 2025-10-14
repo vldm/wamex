@@ -18,3 +18,15 @@ Roadmap:
 1.1 Extract "shared" modules in a separate module
 2. wasm-link code reduction
 2.1 extend twiggy report for line -> code mapping
+3. storage globals -> to local vars.
+4. emit symbol info 
+5. emit debug info 
+6. emit linking info
+
+
+Document:
+1. constant exraction 
+2. extended const need in segment allocation
+3. start fn generator (aka relocation)
+4. export wasm-bindgen imported fns (externref shrims stubs)
+5. 

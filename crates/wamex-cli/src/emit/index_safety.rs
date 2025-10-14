@@ -2,8 +2,9 @@ use super::{DefinedFunction, Indexed};
 use crate::{
     emit::{
         globals::{DefinedGlobal, GlobalImport},
-        ImportedFunction,
+        DefinedFunctionKind, ImportedFunction,
     },
+    index::OutputMapType,
     read::code::InputFunction,
 };
 
@@ -21,8 +22,12 @@ impl<'src> crate::index::OutputType<'src> for DefinedFunction {
     type InputType = InputFunction<'src>;
     fn get_input_index(
         &self,
-    ) -> Option<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
-        Some(self.input_func_id)
+    ) -> OutputMapType<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
+        if matches!(self.kind, DefinedFunctionKind::ImportStub { .. }) {
+            // Import stubs is not a real function in input module.
+            return OutputMapType::OutputHasInput(self.input_func_id);
+        }
+        OutputMapType::BidirectionalMap(self.input_func_id)
     }
 }
 
@@ -30,8 +35,8 @@ impl<'src> crate::index::OutputType<'src> for ImportedFunction<'src> {
     type InputType = InputFunction<'src>;
     fn get_input_index(
         &self,
-    ) -> Option<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
-        Some(self.input_func_id())
+    ) -> OutputMapType<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
+        OutputMapType::BidirectionalMap(self.input_func_id())
     }
 }
 
@@ -47,14 +52,15 @@ impl<'src> crate::index::Defined<'src> for DefinedGlobal<'src> {
 }
 impl<'src> crate::index::OutputType<'src> for DefinedGlobal<'src> {
     type InputType = wasmparser::Global<'src>;
+
     fn get_input_index(
         &self,
-    ) -> Option<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
+    ) -> OutputMapType<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
         match self {
             DefinedGlobal::PlainCopy {
                 input_global_id, ..
-            } => Some(*input_global_id),
-            DefinedGlobal::WithConstructor(_) => None,
+            } => OutputMapType::BidirectionalMap(*input_global_id),
+            DefinedGlobal::WithConstructor(_) => OutputMapType::None,
         }
     }
 }
@@ -63,14 +69,14 @@ impl<'src> crate::index::OutputType<'src> for GlobalImport<'src> {
     type InputType = wasmparser::Global<'src>;
     fn get_input_index(
         &self,
-    ) -> Option<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
+    ) -> OutputMapType<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
         match self {
             GlobalImport::Existing {
                 input_global_id, ..
-            } => Some(*input_global_id),
+            } => OutputMapType::BidirectionalMap(*input_global_id),
             GlobalImport::New {
                 input_global_id, ..
-            } => *input_global_id,
+            } => OutputMapType::bidirectional_from_option(*input_global_id),
         }
     }
 }

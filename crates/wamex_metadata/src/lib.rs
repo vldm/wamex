@@ -36,8 +36,8 @@ impl BumpVersion {
             version: u32::from_le_bytes(*arr),
         }
     }
-    pub fn encode(&self, sink: &mut Vec<u8>) {
-        sink.extend(&self.version.to_le_bytes());
+    pub fn encode(&self) -> [u8; 4] {
+        self.version.to_le_bytes()
     }
 
     pub fn bump(&mut self) {

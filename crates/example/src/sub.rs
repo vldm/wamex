@@ -34,6 +34,11 @@ pub fn multiple_dyn_fns(first_part: bool) -> String {
     }
 }
 
+#[cfg_attr(feature = "split", wasm_split(dep_dyn))]
+pub async fn dep_dyn() -> String {
+    multiple_dyn_fns(false).await
+}
+
 #[inline(never)]
 pub fn dyn_fns_inner(func: &dyn Fn() -> String) -> String {
     func()

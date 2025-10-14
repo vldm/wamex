@@ -52,10 +52,10 @@ impl ImportedEntity for GlobalImport<'_> {
             GlobalImport::New { .. } => "__wasm_split".into(),
         }
     }
-    fn import_name(&self) -> &str {
+    fn import_name(&self) -> Cow<'_, str> {
         match self {
-            GlobalImport::Existing { global_name, .. } => global_name,
-            GlobalImport::New { global_name, .. } => global_name,
+            GlobalImport::Existing { global_name, .. } => (*global_name).into(),
+            GlobalImport::New { global_name, .. } => global_name.clone(),
         }
     }
 }

@@ -182,9 +182,14 @@ impl LinkageState {
         copy_fields(&self.global_imports, &defined_exports)
     }
 
+    // fn debug_object
+
     fn _get_main_exports(indirect_function_table: &JsValue) -> Object {
         let new_object = Object::new();
-        let obj = wasm_bindgen::exports().try_into().unwrap();
+        let obj = wasm_bindgen::exports();
+
+        log::debug!("Main exports value: {:?}", obj);
+        let obj = obj.try_into().unwrap();
         copy_fields(&new_object, &obj).unwrap();
         let set = Reflect::set(
             &new_object,
@@ -243,9 +248,10 @@ async fn fetch_buffer(url: String) -> Result<JsValue, Error> {
 }
 
 pub async fn load(module_id: ModuleId, reload: bool) -> Result<bool, String> {
-    load_inner(module_id, reload)
-        .await
-        .map_err(|e| e.to_string())
+    load_inner(module_id, reload).await.map_err(|e| {
+        log::error!("Error loading module: {}", e);
+        e.to_string()
+    })
 }
 
 // Load webassembly module from URL and instantiate it, link with active imports.
@@ -291,7 +297,7 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
 
     debug!("Fetched module metadata: {:?}", metadata);
 
-    let version = Default::default(); // deserialize::parse_version(&module)?;
+    let version = deserialize::parse_version(&module)?;
 
     debug!("Module version: {:?}", version);
     // 4. Create imports object (we can reuse global one?)
@@ -323,14 +329,20 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
 
     debug!("Instantiate module, imports: {:?}", imports);
     // 5. Instantiate module.
+
+    let fut_res = JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
+        .await
+        .map_err(|error| Error::JsError {
+            context: "Failed to instantiate module",
+            error,
+        })?;
+
+    // can be instance or TypeError|LinkError|CompileError|RuntimeError
     let sub_module_instance: WebAssembly::Instance =
-        JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
-            .await
-            .map_err(|error| Error::JsError {
-                context: "Failed to instantiate module",
-                error,
-            })?
-            .into();
+        fut_res.dyn_into().map_err(|error| Error::JsError {
+            context: "Failed to cast module instance",
+            error,
+        })?;
 
     let instantiated = InstantiatedModule {
         instantiated: sub_module_instance.clone(),
@@ -338,6 +350,8 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
         alloc_guard: GuardedAllocEntry::new(entry),
         needs_update: false,
     };
+
+    debug!("Saving module: {:?}", instantiated);
 
     // 6. Store exports and module info in linkage state.
     LinkageState::global(|state| state.save_loaded_module(module_id, instantiated))?;

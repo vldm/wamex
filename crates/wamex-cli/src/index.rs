@@ -350,10 +350,45 @@ pub trait Defined<'src>: Indexed {
     type Import;
 }
 
+pub enum OutputMapType<Input> {
+    /// Each output type can be mapped to an input type and vice versa.
+    BidirectionalMap(Input),
+    /// Only Output -> Input mapping is guaranteed.
+    OutputHasInput(Input),
+    // The output is a new type that has no corresponding input.
+    None,
+}
+
+impl<Input> OutputMapType<Input> {
+    pub fn bidirectional_from_option(input: Option<Input>) -> Self {
+        match input {
+            Some(input) => OutputMapType::BidirectionalMap(input),
+            None => OutputMapType::None,
+        }
+    }
+    pub fn to_bidirectional(self) -> Option<Input> {
+        match self {
+            OutputMapType::BidirectionalMap(input) => Some(input),
+            _ => None,
+        }
+    }
+    pub fn has_input(self) -> Option<Input> {
+        match self {
+            OutputMapType::BidirectionalMap(input) | OutputMapType::OutputHasInput(input) => {
+                Some(input)
+            }
+            OutputMapType::None => None,
+        }
+    }
+}
+
 pub trait OutputType<'src> {
     type InputType: Indexed + 'src;
+
     // to use InputType::IndexType we need rtn
-    fn get_input_index(&self) -> Option<Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>>;
+    fn get_input_index(
+        &self,
+    ) -> OutputMapType<Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>>;
 }
 
 /// One place for storing imports and defined items,
@@ -429,7 +464,11 @@ where
         let map = imports
             .chain(defined)
             .enumerate()
-            .filter_map(|(i, input_id)| input_id.map(|input_id| (input_id, Id::from_index(i))))
+            .filter_map(|(i, input_id)| {
+                input_id
+                    .to_bidirectional()
+                    .map(|input_id| (input_id, Id::from_index(i)))
+            })
             .collect();
         WithOriginalIndex { collection, map }
     }
@@ -450,14 +489,14 @@ where
             self.collection
                 .imports()
                 .get(raw_output_id)
-                .and_then(OutputType::get_input_index)
+                .and_then(|v| v.get_input_index().has_input())
         } else {
             // Otherwise it is defined
             let defined_index = raw_output_id - self.collection.imports().len();
             self.collection
                 .defined()
                 .get(defined_index)
-                .and_then(OutputType::get_input_index)
+                .and_then(|v| v.get_input_index().has_input())
         }
     }
 
@@ -500,8 +539,10 @@ where
         output_id: Id<<T as Indexed>::StaticTypeTagForIndex>,
     ) -> Option<&T> {
         let raw_output_id = output_id.as_raw_index();
-        if raw_output_id < self.collection.defined().len() {
-            self.collection.defined().get(raw_output_id)
+        if raw_output_id > self.collection.imports().len() {
+            self.collection
+                .defined()
+                .get(raw_output_id - self.collection.imports().len())
         } else {
             None
         }

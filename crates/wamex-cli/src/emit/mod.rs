@@ -66,7 +66,7 @@ pub enum LinkageType {
 }
 
 trait ImportedEntity {
-    fn import_name(&self) -> &str;
+    fn import_name(&self) -> Cow<'_, str>;
     fn module_name(&self) -> Cow<'_, str>;
 }
 
@@ -76,10 +76,12 @@ enum DefinedFunctionKind {
         // List of modifications that should be applied to this function.
         modification_list: Vec<modify::CodeModifyEntry>,
     },
-    Stub {
+    IndirectStub {
         /// Index of extra table entry after main module entries.
         table_index_offset: u32,
     },
+    // Stub function generated for imported functions
+    ImportStub {},
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,16 +112,16 @@ enum ImportFunctionKind<'a> {
     },
 }
 impl ImportedEntity for ImportedFunction<'_> {
-    fn import_name(&self) -> &str {
+    fn import_name(&self) -> Cow<'_, str> {
         match self.kind {
             ImportFunctionKind::Existing {
                 import_function_name,
                 ..
-            } => import_function_name,
+            } => import_function_name.into(),
             ImportFunctionKind::New {
                 mangled_function_name,
                 ..
-            } => mangled_function_name,
+            } => format!("__wamex_{}", mangled_function_name).into(),
         }
     }
 
@@ -143,7 +145,18 @@ impl ImportedFunction<'_> {
 // ignore relocations field in order
 impl Ord for DefinedFunction {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.input_func_id.cmp(&other.input_func_id) {
+        let tag = match self.kind {
+            DefinedFunctionKind::Copied { .. } => 0,
+            DefinedFunctionKind::IndirectStub { .. } => 1,
+            DefinedFunctionKind::ImportStub { .. } => 2,
+        };
+        let other_tag = match other.kind {
+            DefinedFunctionKind::Copied { .. } => 0,
+            DefinedFunctionKind::IndirectStub { .. } => 1,
+            DefinedFunctionKind::ImportStub { .. } => 2,
+        };
+
+        match (tag, self.input_func_id).cmp(&(other_tag, other.input_func_id)) {
             std::cmp::Ordering::Equal => self.export.cmp(&other.export),
             ord => return ord,
         }
@@ -168,6 +181,7 @@ impl SubModuleExtra {
 // 'any are used because associated types are invariant, and used in default impls for Indexed Vec/Map impls.
 pub struct ModuleEmitState<'any, 'src> {
     functions: WithOriginalIndex<'src, DefinedFunction>,
+
     // Global variables:
     // - lib_base_id for library base address (import)
     // - existing globals from src module
@@ -191,6 +205,7 @@ pub struct ModuleEmitState<'any, 'src> {
     // Indirect function table Functions from original table that are used in this module.
     pub indirect_functions: IndirectFunctionEmitInfo,
     pub linkage_type: LinkageType,
+    pub incremental_version: BumpVersion,
 }
 
 const MEMORY_INDEX: u32 = 0; //TODO: Support multiple memories
@@ -204,13 +219,16 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         linkage_type: LinkageType,
     ) -> ModuleEmitState<'any, 'src> {
-        let output_module_info = &program_info.output_modules[output_module_index].1;
+        let (output_module_id, output_module_info) =
+            &program_info.output_modules[output_module_index];
 
         log::debug!("output_module_info: {output_module_info:#?}");
         // We need to include definitions for all of the `defined_symbols`.
         let mut funcs_to_define = HashSet::<(InputFuncId, bool)>::new();
         let mut import_functions = Vec::new();
-        let mut funcs_stubs = Vec::new();
+
+        let mut indirect_funcs_stubs = Vec::new();
+        let mut import_funcs_stubs = Vec::new();
 
         let main_module = output_module_index == 0;
 
@@ -237,25 +255,14 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 continue;
             }
             used_funcs.insert(func_id);
-            if let Some(import_id) = module_info.get_function_import_id(func_id) {
-                let import_fn = module_info.wasm.imports[import_id];
 
-                if emit_info.split_point_imports.contains(&import_id) {
-                    funcs_stubs.push((func_id, import_id));
-                    continue;
-                }
-                import_functions.push(ImportedFunction {
-                    input_func_id: func_id,
-                    kind: ImportFunctionKind::Existing {
-                        module_name: import_fn.module,
-                        import_function_name: import_fn.name,
-                    },
-                });
-            } else {
+            let need_export = {
                 // if any module linked to current function
                 let static_export = program_info
                     .output_modules
                     .iter()
+                    //filter shared and self
+                    .filter(|(id, _)| matches!(id, SplitModuleIdentifier::Single(_) if id != output_module_id))
                     .any(|(_, output_module)| {
                         output_module
                             .link_symbols
@@ -266,7 +273,29 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     .split_points
                     .iter()
                     .any(|split_point| split_point.export_func == func_id);
-                let need_export = static_export || lazy_export;
+                static_export || lazy_export
+            };
+
+            if let Some(import_id) = module_info.get_function_import_id(func_id) {
+                let import_fn = module_info.wasm.imports[import_id];
+
+                if emit_info.split_point_imports.contains(&import_id) {
+                    indirect_funcs_stubs.push((func_id, import_id, need_export));
+                    continue;
+                }
+
+                import_functions.push(ImportedFunction {
+                    input_func_id: func_id,
+                    kind: ImportFunctionKind::Existing {
+                        module_name: import_fn.module,
+                        import_function_name: import_fn.name,
+                    },
+                });
+
+                if need_export {
+                    import_funcs_stubs.push(func_id);
+                }
+            } else {
                 funcs_to_define.insert((func_id, need_export));
             }
         }
@@ -281,6 +310,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     .map(|func_id| ImportedFunction {
                         input_func_id: func_id,
                         kind: ImportFunctionKind::New {
+                            // TODO: support multiple dep modules
                             link_module: 0,
                             output_function_index: 0,
                             mangled_function_name: module_info
@@ -507,21 +537,33 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             })
             .collect();
 
-        defined_functions.extend(funcs_stubs.iter().map(|(input_func_id, import_entry)| {
-            let table_index = program_info
-                .output_modules
+        defined_functions.extend(indirect_funcs_stubs.iter().map(
+            |(input_func_id, import_entry, need_export)| {
+                let table_index = program_info
+                    .output_modules
+                    .iter()
+                    .flat_map(|(_, m)| &m.split_points)
+                    .position(|sp| sp.import == *import_entry)
+                    .unwrap() as u32;
+                DefinedFunction {
+                    export: *need_export,
+                    input_func_id: *input_func_id,
+                    kind: DefinedFunctionKind::IndirectStub {
+                        table_index_offset: table_index + 1,
+                    },
+                }
+            },
+        ));
+
+        defined_functions.extend(
+            import_funcs_stubs
                 .iter()
-                .flat_map(|(_, m)| &m.split_points)
-                .position(|sp| sp.import == *import_entry)
-                .unwrap() as u32;
-            DefinedFunction {
-                export: true, // TODO: check if it is linked to other modules?
-                input_func_id: *input_func_id,
-                kind: DefinedFunctionKind::Stub {
-                    table_index_offset: table_index + 1,
-                },
-            }
-        }));
+                .map(|input_func_id| DefinedFunction {
+                    export: true,
+                    input_func_id: *input_func_id,
+                    kind: DefinedFunctionKind::ImportStub {},
+                }),
+        );
 
         import_functions.sort();
         defined_functions.sort();
@@ -546,6 +588,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .collect();
 
         let funcs = ImportsOrDefined::new(import_functions, defined_functions).lock();
+
         let indirect_function_table: Vec<_> = module_info
             .indirect_function_list
             .iter()
@@ -614,6 +657,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             indirect_functions,
             functions: funcs,
             linkage_type,
+            incremental_version: Default::default(),
         }
     }
 
@@ -728,7 +772,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 for (id, item) in self.globals.imports() {
                     section.import(
                         item.module_name().as_ref(),
-                        item.import_name(),
+                        item.import_name().as_ref(),
                         *item.global_type(),
                     );
                 }
@@ -774,24 +818,42 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         self.src.get_function_type_id(input_func_id)
     }
     // Get name of output function by index.
-    fn get_function_name(&self, index: OutputFuncId) -> String {
+    // Used in generating exports and names section.
+    // TODO: Use for generating import sections as well?
+    fn get_function_name(&self, index: OutputFuncId, exported: bool) -> Cow<'src, str> {
         let input_func_id = self._get_input_func_id(index);
-        self.src
+        let mut name = self
+            .src
             .wasm
             .names
             .functions
             .get(input_func_id)
-            .map(|name| name.to_string())
-            .unwrap_or_else(|| format!("func_{index}"))
+            .map(|name| (*name).into())
+            .unwrap_or_else(|| format!("func_{index}").into());
+
+        let namespace = exported
+            || matches!(
+                self.functions
+                    .get_defined_for_output_id(index)
+                    .map(|def| &def.kind),
+                // modify name for import stubs to avoid conflicts
+                Some(DefinedFunctionKind::ImportStub { .. })
+                    | Some(DefinedFunctionKind::IndirectStub { .. })
+            );
+
+        if namespace {
+            name = format!("__wamex_{}", name).into()
+        }
+        name
     }
 
-    fn get_global_name(&self, index: InputGlobalId) -> String {
+    fn get_global_name(&self, index: InputGlobalId) -> Cow<'src, str> {
         self.src
             .wasm
             .names
             .globals
             .get(index)
-            .map(|name| name.to_string())
+            .map(|name| (*name).into())
             .or_else(|| {
                 self.src
                     .export_map
@@ -799,9 +861,9 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         wasmparser::ExternalKind::Global as isize,
                         index.as_raw_index(), // TODO: convert indexes?
                     ))
-                    .map(|(_, name)| name.to_string())
+                    .map(|(_, name)| (*name).into())
             })
-            .unwrap_or_else(|| format!("__global_{index}"))
+            .unwrap_or_else(|| format!("__global_{index}").into())
     }
 
     fn get_memory_name(&self, index: MemoryId) -> String {
@@ -845,12 +907,13 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             if !func.export {
                 continue;
             }
-            let name = self.get_function_name(func_id);
-            if existing_exports.contains(name.as_str()) {
+            let mut name = self.get_function_name(func_id, true);
+
+            if existing_exports.contains(&name) {
                 continue;
             }
             section.export(
-                name.as_str(),
+                &name,
                 wasm_encoder::ExportKind::Func,
                 func_id.as_raw_index() as u32,
             );
@@ -861,15 +924,15 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             let white_list = SubModuleExtra::MAIN_GLOBAL_EXPORTS;
             for (global_index, _) in self.src.wasm.globals.iter() {
                 let name = self.get_global_name(global_index);
-                if existing_exports.contains(name.as_str()) {
+                if existing_exports.contains(&name) {
                     continue;
                 }
-                if !white_list.contains(&name.as_str()) {
+                if !white_list.contains(&&*name) {
                     continue;
                 }
                 // TODO: fix global id?
                 section.export(
-                    name.as_str(),
+                    &name,
                     wasm_encoder::ExportKind::Global,
                     global_index.as_raw_index() as u32,
                 );
@@ -1086,7 +1149,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     // i32.const table_index
     // call_indirect (type type_id) (table 0)
     // end
-    fn _generate_stub_function(
+    fn _generate_indirect_stub_function(
         &'any self,
         section: &mut wasm_encoder::CodeSection,
         input_func_id: InputFuncId,
@@ -1109,6 +1172,41 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         // TODO: Add relocations for call_indirect
         Ok(vec![])
     }
+
+    // Import fns can't be exported directy because wasm convert their type to externrefs.
+    // So instead generate stub function that will call the imported function.
+
+    // func [param i32 i32 ...] (result i32):
+    // local.get 0
+    // local.get 1
+    // ...
+    // call import_func_index
+    // end
+    fn _generate_import_call_stub(
+        &'any self,
+        section: &mut wasm_encoder::CodeSection,
+        input_func_id: InputFuncId,
+    ) -> Result<Vec<RelocationEntry>> {
+        let func_type_id = &self.src.get_function_type_id(input_func_id);
+        let func_type = &self.src.wasm.types[*func_type_id];
+
+        let import_fn = self
+            ._get_output_func_id(input_func_id)
+            .expect("Imported function should have output id");
+
+        let mut func = wasm_encoder::Function::new([]);
+        for (param_i, _param_type) in func_type.params().iter().enumerate() {
+            func.instruction(&wasm_encoder::Instruction::LocalGet(param_i as u32));
+        }
+        func.instruction(&wasm_encoder::Instruction::Call(
+            import_fn.as_raw_index() as u32
+        ));
+        func.instruction(&wasm_encoder::Instruction::End);
+        section.function(&func);
+        // TODO: Add relocations for call/type_ids
+        Ok(vec![])
+    }
+
     fn _generate_defined_function(
         &'any self,
         section: &mut wasm_encoder::CodeSection,
@@ -1159,10 +1257,10 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let mut code_relocs = Vec::new();
         for (_id, output_func) in self.functions.defined() {
             let relocs = match &output_func.kind {
-                DefinedFunctionKind::Stub { table_index_offset } => {
+                DefinedFunctionKind::IndirectStub { table_index_offset } => {
                     let num_entrypoints = self.indirect_functions.function_table_index.len() as u32;
                     // TODO: generate stubs for imported functions.
-                    self._generate_stub_function(
+                    self._generate_indirect_stub_function(
                         &mut section,
                         output_func.input_func_id,
                         num_entrypoints + *table_index_offset,
@@ -1178,6 +1276,9 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         output_func.input_func_id,
                         modification_list,
                     )
+                }
+                DefinedFunctionKind::ImportStub {} => {
+                    self._generate_import_call_stub(&mut section, output_func.input_func_id)
                 }
             };
 
@@ -1283,24 +1384,18 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         shifted_code_relocs: Vec<RelocationEntry>,
         shifted_data_relocs: Vec<RelocationEntry>,
     ) -> Result<()> {
-        // let names = wasm_encoder::CustomSection{
-        //     name: "name".into(),
-        //     data: self.info.source.names.encode().into(),
+        let wamex_version = wasm_encoder::CustomSection {
+            name: "__wamex_version".into(),
+            data: self.incremental_version.encode().to_vec().into(),
+        };
+
+        output_module.section(&wamex_version);
 
         let mut functions = wasm_encoder::NameMap::new();
         for output_id in self.functions.iter_all_ids() {
-            let input_id = self._get_input_func_id(output_id);
-            let name = self.src.wasm.names.functions.get(input_id).cloned();
-            let tmp;
-            let name = match name {
-                Some(name) => name,
-                None => {
-                    tmp = format!("func_{output_id}");
-                    &tmp
-                }
-            };
+            let name = self.get_function_name(output_id, false);
 
-            functions.append(output_id.as_raw_index() as u32, name);
+            functions.append(output_id.as_raw_index() as u32, &name);
         }
 
         let mut names = wasm_encoder::NameSection::new();

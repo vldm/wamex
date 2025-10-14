@@ -1,11 +1,9 @@
 use digest::Digest;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
+use quote::{format_ident, quote};
 use syn::{
-    parse::{self, Parse, ParseStream},
-    parse_macro_input, parse_quote,
-    token::Comma,
-    Ident, ItemFn, Path, ReturnType, Signature, Token,
+    parse::{Parse, ParseStream},
+    parse_macro_input, parse_quote, Ident, ItemFn, ReturnType, Signature,
 };
 
 struct SplitArgs {
