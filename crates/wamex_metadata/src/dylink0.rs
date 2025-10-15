@@ -26,11 +26,16 @@ pub struct Dylink0Section<'src> {
 }
 
 impl<'src> Dylink0Section<'src> {
+    #[allow(dead_code)]
     const WASM_DYLINK_MEM_INFO: u8 = 1;
+    #[allow(dead_code)]
     const WASM_DYLINK_NEEDED: u8 = 2;
-    // const WASM_DYLINK_EXPORT_INFO: u8 = 3;
+    #[allow(dead_code)]
+    const WASM_DYLINK_EXPORT_INFO: u8 = 3;
+    #[allow(dead_code)]
     const WASM_DYLINK_IMPORT_INFO: u8 = 4;
-    // const WASM_DYLINK_RUNTIME_PATH: u8 = 5;
+    #[allow(dead_code)]
+    const WASM_DYLINK_RUNTIME_PATH: u8 = 5;
 
     #[cfg(feature = "encoder")]
     pub fn encode_section(&self) -> Vec<u8> {

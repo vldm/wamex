@@ -78,12 +78,7 @@ impl DataSymbolTag {
         if !segment.is_active() {
             return None;
         }
-        log::error!(
-            "OFFSETS: {:?} offset in memory: {:?}, data: {:?}",
-            segment_id,
-            segment.memory_offset(),
-            data
-        );
+
         Some(segment.memory_offset() as i64 + data.data_offset as i64)
     }
 }

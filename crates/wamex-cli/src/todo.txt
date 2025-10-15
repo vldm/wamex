@@ -30,3 +30,7 @@ Document:
 3. start fn generator (aka relocation)
 4. export wasm-bindgen imported fns (externref shrims stubs)
 5. 
+
+
+! static_export return true for main imported function.
+

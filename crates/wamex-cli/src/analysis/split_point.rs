@@ -226,29 +226,6 @@ impl SplitProgramInfo {
     ) -> anyhow::Result<SplitProgramInfo> {
         let split_points_by_module = Self::merge_split_points_by_name(&split_points[..]);
 
-        fn iter_parents(
-            info: &analysis::ModuleInfo,
-            parents: &DepGraph,
-            seen: &mut HashSet<DepNode>,
-            node: DepNode,
-            gap: usize,
-        ) {
-            for parent in parents.get(&node).into_iter().flatten() {
-                if seen.contains(&parent) {
-                    continue;
-                }
-                seen.insert(parent.clone());
-                let name = if let DepNode::Function(id) = parent {
-                    format!("{}", info.wasm.names.functions.get(*id).unwrap_or(&""))
-                } else {
-                    String::new()
-                };
-                log::error!("DEPDYN{}{:?}{name}", "!".repeat(gap), parent);
-
-                iter_parents(info, parents, seen, *parent, gap + 2);
-            }
-        }
-
         let main_roots = Self::get_main_module_roots(info, &split_points);
 
         // graph root -> dep -> dep
@@ -266,14 +243,7 @@ impl SplitProgramInfo {
             }
 
             let split_functions = ReachabilityGraph::find_reachable_deps(dep_graph, &roots);
-            if module_name == "dep_dyn" {
-                let parents = split_functions.parents.clone();
-                // print parents of specific node:
-                let node = DepNode::Function(InputFuncId::from_index(17)); // describe
 
-                let mut seen = HashSet::new();
-                iter_parents(info, &parents, &mut seen, node, 0);
-            }
             named_modules.push(NamedGraph::new(
                 ModuleIdentifier::Split(module_name.clone()),
                 split_functions,
@@ -282,18 +252,6 @@ impl SplitProgramInfo {
 
         // Calculate shared deps.
         let shared_deps = NamedGraph::calculate_shared_modules(&mut named_modules, dep_graph);
-
-        log::error!("Dep after cleanup");
-        for named in named_modules.iter() {
-            if named.module == ModuleIdentifier::Split("dep_dyn".into()) {
-                let parents = named.deps.parents.clone();
-                // print parents of specific node:
-                let node = DepNode::Function(InputFuncId::from_index(17)); // describe
-
-                let mut seen = HashSet::new();
-                iter_parents(info, &parents, &mut seen, node, 0);
-            }
-        }
 
         let mut split_module_contents = BTreeMap::<SplitModuleIdentifier, OutputModuleInfo>::new();
 

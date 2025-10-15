@@ -10,6 +10,7 @@ pub use data_segments::{DataSegment, DataSegmentOutput, NamedData, SymbolRelatio
 use globals::GlobalConstructor;
 use index_safety::OutputFuncId;
 use modify::{init_each_store_var, ModifyContext, StoreType};
+use ptree::output;
 use wamex_metadata::{BumpVersion, DemangledName, ExportedSymbol};
 use wasm_encoder::{reencode::Reencode, GlobalType};
 use wasmparser::{RelocationEntry, TypeRef};
@@ -219,8 +220,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         linkage_type: LinkageType,
     ) -> ModuleEmitState<'any, 'src> {
-        let (output_module_id, output_module_info) =
-            &program_info.output_modules[output_module_index];
+        let output_module_info = &program_info.output_modules[output_module_index].1;
 
         log::debug!("output_module_info: {output_module_info:#?}");
         // We need to include definitions for all of the `defined_symbols`.
@@ -258,16 +258,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
             let need_export = {
                 // if any module linked to current function
-                let static_export = program_info
-                    .output_modules
-                    .iter()
-                    //filter shared and self
-                    .filter(|(id, _)| matches!(id, SplitModuleIdentifier::Single(_) if id != output_module_id))
-                    .any(|(_, output_module)| {
-                        output_module
-                            .link_symbols
-                            .contains(&DepNode::Function(func_id))
-                    });
+                let static_export = emit_info.is_imported(&DepNode::Function(func_id));
                 // Or it is linked indirectly via split points
                 let lazy_export = output_module_info
                     .split_points
@@ -276,13 +267,10 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 static_export || lazy_export
             };
 
-            if let Some(import_id) = module_info.get_function_import_id(func_id) {
+            if emit_info.is_entrypoint_import_func(&func_id) {
+                indirect_funcs_stubs.push((func_id, need_export));
+            } else if let Some(import_id) = module_info.get_function_import_id(func_id) {
                 let import_fn = module_info.wasm.imports[import_id];
-
-                if emit_info.split_point_imports.contains(&import_id) {
-                    indirect_funcs_stubs.push((func_id, import_id, need_export));
-                    continue;
-                }
 
                 import_functions.push(ImportedFunction {
                     input_func_id: func_id,
@@ -538,20 +526,12 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .collect();
 
         defined_functions.extend(indirect_funcs_stubs.iter().map(
-            |(input_func_id, import_entry, need_export)| {
-                let table_index = program_info
-                    .output_modules
-                    .iter()
-                    .flat_map(|(_, m)| &m.split_points)
-                    .position(|sp| sp.import == *import_entry)
-                    .unwrap() as u32;
-                DefinedFunction {
-                    export: *need_export,
-                    input_func_id: *input_func_id,
-                    kind: DefinedFunctionKind::IndirectStub {
-                        table_index_offset: table_index + 1,
-                    },
-                }
+            |(input_func_id, need_export)| DefinedFunction {
+                export: *need_export,
+                input_func_id: *input_func_id,
+                kind: DefinedFunctionKind::IndirectStub {
+                    table_index_offset: emit_info.entrypoint_index(input_func_id).unwrap(),
+                },
             },
         ));
 
@@ -596,12 +576,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .copied()
             .collect();
 
-        debug_assert_eq!(
-            emit_info.split_point_imports.len(),
-            emit_info.split_point_fns.len()
-        );
         let indirect_functions = IndirectFunctionEmitInfo::new(
-            main_module.then(|| emit_info.split_point_fns.len() as u64),
+            main_module.then(|| emit_info.num_entrypoints()),
             indirect_function_table,
         );
 
@@ -1258,7 +1234,9 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         for (_id, output_func) in self.functions.defined() {
             let relocs = match &output_func.kind {
                 DefinedFunctionKind::IndirectStub { table_index_offset } => {
-                    let num_entrypoints = self.indirect_functions.function_table_index.len() as u32;
+                    // +1 for empty first entry
+                    let num_entrypoints =
+                        self.indirect_functions.function_table_index.len() as u32 + 1;
                     // TODO: generate stubs for imported functions.
                     self._generate_indirect_stub_function(
                         &mut section,
@@ -1474,6 +1452,16 @@ impl IndirectFunctionEmitInfo {
         }
     }
 }
+
+#[derive(Debug)]
+struct ModuleDecl {
+    pub split_points: Vec<SplitPoint>,
+    pub imported_nodes: HashSet<DepNode>,
+
+    // offset in indirect_function table where this module's entrypoints start
+    split_points_offset: u32,
+}
+
 #[derive(Debug)]
 pub struct EmitInfo<'src> {
     // All relocations, ordered by offset, which are relative to the start of
@@ -1484,29 +1472,84 @@ pub struct EmitInfo<'src> {
     pub src_data_segments: IdVec<DataSegment<'src>>,
 
     // Imports (corresponding to split points) to exclude from all modules.
-    pub split_point_imports: BTreeSet<ImportId>,
-    pub split_point_fns: Vec<InputFuncId>,
-    pub module_split_points: HashMap<SplitModuleIdentifier, (u32, u32)>,
+    pub split_point_imports: BTreeSet<InputFuncId>,
+    pub modules_decl: HashMap<ModuleIdentifier, ModuleDecl>,
 }
 
 impl<'src> EmitInfo<'src> {
+    // Return range in indirect_function table corresponding to module.
+    // Use stubs_start offset to convert to final table indexes.
+    // Returns None if module is not found.
+    fn module_entrypoints_range_shifted(
+        &self,
+        stubs_start: u32,
+        module_id: &ModuleIdentifier,
+    ) -> Option<Range<u32>> {
+        self.modules_decl.get(&module_id).map(|r| {
+            let start = stubs_start + r.split_points_offset;
+            let end = stubs_start + r.split_points_offset + r.split_points.len() as u32;
+            start..end
+        })
+    }
+    fn entrypoint_index(&self, entrypoint_func: &InputFuncId) -> Option<u32> {
+        self.modules_decl.values().find_map(|module| {
+            module
+                .split_points
+                .iter()
+                .position(|sp| &sp.import_func == entrypoint_func)
+                .map(|pos| module.split_points_offset + pos as u32)
+        })
+    }
+
+    fn is_entrypoint_import_func(&self, import_fn: &InputFuncId) -> bool {
+        self.split_point_imports.contains(import_fn)
+    }
+
+    fn num_entrypoints(&self) -> u64 {
+        self.split_point_imports.len() as u64
+    }
+
+    /// Check if dependency is imported by any module except main.
+    fn is_imported(&self, dep: &DepNode) -> bool {
+        self.modules_decl.iter().any(|(key, module)| {
+            *key != ModuleIdentifier::Main && module.imported_nodes.contains(dep)
+        })
+    }
+
     fn new(
         module: &analysis::ModuleInfo<'_, 'src>,
         program_info: &SplitProgramInfo,
     ) -> Result<Self> {
         let all_relocations = Self::all_relocations(module.wasm)?;
-        let mut split_point_imports = BTreeSet::<ImportId>::new();
-        let mut split_point_fns = Vec::new();
-        let mut module_split_points = HashMap::new();
+        let mut split_point_imports = BTreeSet::new();
+        let mut modules_decl = HashMap::new();
         for (module_index, (id, output_module)) in program_info.output_modules.iter().enumerate() {
-            module_split_points.insert(
+            let SplitModuleIdentifier::Single(id) = id else {
+                assert!(
+                    output_module.split_points.is_empty(),
+                    "Expected no split points on shared module"
+                );
+                continue;
+            };
+
+            let imported_nodes = output_module
+                .link_symbols
+                .iter()
+                .filter(|node| !output_module.defined_symbols.contains(node))
+                .cloned()
+                .collect::<HashSet<_>>();
+
+            modules_decl.insert(
                 id.clone(),
-                (module_index as u32, output_module.split_points.len() as u32),
+                ModuleDecl {
+                    split_points: output_module.split_points.clone(),
+                    split_points_offset: module_index as u32,
+                    imported_nodes,
+                },
             );
 
             for split_point in output_module.split_points.iter() {
-                split_point_imports.insert(split_point.import);
-                split_point_fns.push(split_point.export_func);
+                split_point_imports.insert(split_point.import_func);
             }
         }
 
@@ -1561,9 +1604,8 @@ impl<'src> EmitInfo<'src> {
         Ok(EmitInfo {
             all_relocations,
             split_point_imports,
-            split_point_fns,
             src_data_segments: data_segments,
-            module_split_points,
+            modules_decl,
         })
     }
 
@@ -1657,17 +1699,16 @@ pub fn emit_modules<'a, 'src>(
         .filter(|(_output_module_index, id)| *id != ModuleIdentifier::Main)
         .map(|(output_module_index, id)| {
             log::debug!("Calculating module {id:?}");
-            let stubs_start = main_module.0.indirect_functions.table_entries.len();
+            let stubs_start = main_module.0.indirect_functions.table_entries.len() + 1;
 
-            let (table_offset, table_num_entrypoints) = *emit_info
-                .module_split_points
-                .get(&SplitModuleIdentifier::Single(id.clone()))
+            let table_range = emit_info
+                .module_entrypoints_range_shifted(stubs_start as u32, &id)
                 .expect("Module split points not found");
 
             let linkage_type = if dyn_linkage {
                 LinkageType::DynamicLinking {
-                    table_offset: stubs_start as u32 + table_offset,
-                    table_num_entrypoints,
+                    table_offset: table_range.start,
+                    table_num_entrypoints: table_range.len() as u32,
                 }
             } else {
                 LinkageType::OriginalLayout
@@ -1689,16 +1730,7 @@ pub fn emit_modules<'a, 'src>(
 
     for (state, identifier) in sub_modules.iter().chain(std::iter::once(&main_module)) {
         log::debug!("Generating module {identifier:?}");
-        //TODO: remove find
-        let split_points = program_info
-            .output_modules
-            .iter()
-            .find(|(id, _)| match id {
-                SplitModuleIdentifier::Single(id) => id == identifier,
-                SplitModuleIdentifier::Shared(_) => false,
-            })
-            .map(|(_, module)| &module.split_points)
-            .expect("Split points for module not found");
+
         let mut encoder = wasm_encoder::Module::new();
         state
             .generate(&main_module.0, &mut encoder)
