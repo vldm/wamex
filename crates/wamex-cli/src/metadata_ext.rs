@@ -22,7 +22,7 @@ use crate::{
         split_point::{SplitModuleIdentifier, SplitProgramInfo},
         ModuleInfo,
     },
-    emit::{DataSegment, EmitInfo, ModuleEmitState, SymbolRelation},
+    emit::{CommonEmitInfo, DataSegment, ModuleEmitState, SymbolRelation},
     helpers::Hash,
     index::{DataSegmentId, DataSymbolId, IdVec, InputFuncId},
     ModuleStructure,
@@ -257,7 +257,7 @@ pub struct Metadata {
 
 pub fn _build_module_structure(module: &ModuleInfo) -> crate::diff::symbols_map::ModuleStructure {
     let all_relocations =
-        EmitInfo::all_relocations(module.wasm).expect("Failed to get all relocations");
+        CommonEmitInfo::all_relocations(module.wasm).expect("Failed to get all relocations");
 
     // TODO: reuse from emit modules
     let data_segments_symbols = module

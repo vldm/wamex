@@ -68,8 +68,9 @@ impl ReachabilityGraph {
                 )
             }
         };
-        let mut rev_tree = HashMap::new();
+        let mut tree: HashMap<_, Vec<_>> = HashMap::new();
         for child in reachable.iter() {
+            tree.entry(child).or_default();
             for parent in parents
                 .get(child)
                 .into_iter()
@@ -77,14 +78,17 @@ impl ReachabilityGraph {
                 .filter(|p| reachable.contains(p))
             // important when parents is full tree
             {
-                rev_tree.entry(parent).or_insert_with(Vec::new).push(child);
+                tree.entry(parent).or_default().push(child);
             }
         }
 
         println!("SPLIT: ============== {module_name}");
-        for (parent, children) in rev_tree.iter() {
-            println!("{}", format_dep(parent));
-
+        for (node, children) in tree.iter() {
+            println!("---{}---", format_dep(node));
+            for parent in parents.get(node).into_iter().flatten() {
+                println!("<=={} (parent)", format_dep(parent));
+            }
+            println!("-------------");
             for child in children {
                 println!("==>{}", format_dep(child));
             }

@@ -6,7 +6,10 @@ use anyhow::{anyhow, bail, Result};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    emit::{index_safety::OutputGlobalId, modify::SymbolOp, ModuleEmitState},
+    emit::{
+        index_safety::OutputGlobalId, modify::SymbolOp, ComputedModules, GotBase, ModuleEmitState,
+        SubModuleExtra,
+    },
     index::{AnySymbolId, DataSegmentId, DataSymbolId, InputFuncId, InputGlobalId},
     read::{linking::SymbolIndex, InputModule},
 };
@@ -19,7 +22,7 @@ pub trait EntryTypeTag {
         state: &ModuleEmitState,
         src_symbol: AnySymbolId,
     ) -> Option<Self::OutputValue>;
-    fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId>;
+    fn get_got(got_base: &GotBase) -> OutputGlobalId;
 }
 
 pub enum FunctionIndexTag {}
@@ -59,8 +62,8 @@ impl EntryTypeTag for FunctionIndexTag {
         };
         Some(table_index)
     }
-    fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId> {
-        state.sub_module_extra.as_ref().map(|e| e.table_base_id)
+    fn get_got(got_base: &GotBase) -> OutputGlobalId {
+        got_base.table_base_id
     }
 }
 
@@ -100,15 +103,15 @@ impl EntryTypeTag for DataSymbolTag {
 
         DataSymbolTag::get_symbol_offset(state, segment_id, data_index)
     }
-    fn get_got(state: &ModuleEmitState) -> Option<OutputGlobalId> {
-        state.sub_module_extra.as_ref().map(|e| e.lib_base_id)
+    fn get_got(got_base: &GotBase) -> OutputGlobalId {
+        got_base.lib_base_id
     }
 }
 
 #[derive(Clone)]
 pub struct RelocateState<'any, 'src> {
     pub input_module: &'any InputModule<'src>,
-    pub main_module: &'any ModuleEmitState<'any, 'src>,
+    pub computed_modules: &'any ComputedModules<'any, 'src>,
     pub global_id_mapper: &'any dyn Fn(InputGlobalId) -> Option<OutputGlobalId>,
     pub emit_module: &'any ModuleEmitState<'any, 'src>,
 }
@@ -123,38 +126,74 @@ impl Debug for RelocateState<'_, '_> {
     }
 }
 
+// macro_rules! get_symbol_op{
+//     (
+//         $self:expr,
+//         @static($value) =>
+//         @not_found =>
+//         @no_got => $
+//     )
+
+// }
+
 impl RelocateState<'_, '_> {
+    fn _get_symbol_op_with_base<T: EntryTypeTag, U>(
+        &self,
+        func: impl Fn(&ModuleEmitState) -> Option<U>,
+        not_found: impl FnOnce() -> anyhow::Error,
+        no_got: impl FnOnce() -> anyhow::Error,
+    ) -> Result<SymbolOp<U>> {
+        if let Some(value) = func(&self.computed_modules.main_module) {
+            return Ok(SymbolOp::StaticOffset { value });
+        }
+        if let Some(value) = func(&self.emit_module) {
+            return Ok(SymbolOp::GotBased {
+                value,
+                got: self
+                    .emit_module
+                    .get_submodule_extra(None)
+                    .map(|extra| T::get_got(extra))
+                    .ok_or_else(no_got)?,
+            });
+        }
+
+        for (id, module) in &self.computed_modules.shared_modules {
+            if let Some(value) = func(module) {
+                return Ok(SymbolOp::GotBased {
+                    value,
+
+                    got: self
+                        .emit_module
+                        .get_submodule_extra(Some(id))
+                        .map(|extra| T::get_got(extra))
+                        .ok_or_else(no_got)?,
+                });
+            }
+        }
+
+        Err(not_found())
+    }
+
     pub fn get_entry_symbol_op<T: EntryTypeTag>(
         &self,
         relocation: &RelocationEntry,
     ) -> Result<SymbolOp<T::OutputValue>> {
-        // TODO: reverse order (dyn then static)?
-        if let Some(value) = T::get_mapped_value(
-            &self.input_module,
-            &self.main_module,
-            relocation.index as AnySymbolId,
-        ) {
-            return Ok(SymbolOp::StaticOffset { value });
-        }
-
-        let Some(value) = T::get_mapped_value(
-            self.input_module,
-            &self.emit_module,
-            relocation.index as AnySymbolId,
-        ) else {
-            bail!(
+        self._get_symbol_op_with_base::<T, _>(
+            |module| {
+                T::get_mapped_value(&self.input_module, &module, relocation.index as AnySymbolId)
+            },
+            || {
+                anyhow!(
                 "Symbol within relocation {relocation:?} not found in either main or emit module"
-            );
-        };
-        Ok(SymbolOp::GotBased {
-            got: T::get_got(&self.emit_module).ok_or_else(|| {
+            )
+            },
+            || {
                 anyhow!(
                     "No GOT global for symbol {src:?} in emit module",
                     src = relocation.index
                 )
-            })?,
-            value,
-        })
+            },
+        )
     }
 
     pub fn get_data_symbol_op(
@@ -162,24 +201,21 @@ impl RelocateState<'_, '_> {
         segment_id: DataSegmentId,
         data_symbol_id: DataSymbolId,
     ) -> Result<SymbolOp<<DataSymbolTag as EntryTypeTag>::OutputValue>> {
-        if let Some(value) =
-            DataSymbolTag::get_symbol_offset(self.main_module, &segment_id, &data_symbol_id)
-        {
-            return Ok(SymbolOp::StaticOffset { value });
-        }
-        let Some(value) =
-            DataSymbolTag::get_symbol_offset(self.emit_module, &segment_id, &data_symbol_id)
-        else {
-            bail!(
-                "Symbol {segment_id:?}: {data_symbol_id:?} not found in either main or emit module"
-            )
-        };
-        Ok(SymbolOp::GotBased {
-            got: DataSymbolTag::get_got(&self.emit_module).ok_or_else(|| {
-                anyhow!("No GOT global for symbol {segment_id:?}: {data_symbol_id:?}")
-            })?,
-            value,
-        })
+        self._get_symbol_op_with_base::<DataSymbolTag, _>(
+            |module| {
+                DataSymbolTag::get_symbol_offset(&module, &segment_id, &data_symbol_id)
+            },
+            || {
+                anyhow!(
+                    "Data symbol {segment_id:?}: {data_symbol_id:?} not found in either main or emit module"
+                )
+            },
+            || {
+                anyhow!(
+                    "No GOT global for data symbol {segment_id:?}: {data_symbol_id:?} in emit module"
+                )
+            },
+        )
     }
 
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {

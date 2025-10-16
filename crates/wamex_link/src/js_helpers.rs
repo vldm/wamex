@@ -22,12 +22,29 @@ macro_rules! obj_set {
     }};
 }
 
-pub fn copy_fields(target: &Object, source: &Object) -> Result<(), Error> {
+pub fn copy_imports(
+    target: &Object,
+    source: &Object,
+    remove_blacklisted_imports: bool,
+) -> Result<(), Error> {
+    thread_local! {
+        static BLACKLISTED_FIELDS: Vec<JsValue> = [
+            "memory",
+            "__indirect_function_table",
+            "__lib_base",
+            "__table_base",
+        ].into_iter().map(JsValue::from_str).collect()
+    }
+
     let entries = Object::entries(source);
     for entry in entries.iter() {
         let pair = Array::from(&entry);
         let key = pair.get(0);
         let value = pair.get(1);
+
+        if remove_blacklisted_imports && BLACKLISTED_FIELDS.with(|bl| bl.contains(&key)) {
+            continue;
+        }
 
         if cfg!(debug_assertions) {
             let key_str = key.as_string().unwrap_or_default();

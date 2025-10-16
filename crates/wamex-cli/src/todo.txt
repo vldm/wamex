@@ -32,5 +32,7 @@ Document:
 5. 
 
 
-! static_export return true for main imported function.
+! wasm_bindgen closure currently can be exported (prevent it).
+! make is_special_fn outer and check relocs instead of name only.
+! experiment with Box::pin(load_inner) to reduce size of extracted modules
 

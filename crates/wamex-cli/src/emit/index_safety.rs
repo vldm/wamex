@@ -23,7 +23,7 @@ impl<'src> crate::index::OutputType<'src> for DefinedFunction {
     fn get_input_index(
         &self,
     ) -> OutputMapType<crate::index::Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>> {
-        if matches!(self.kind, DefinedFunctionKind::ImportStub { .. }) {
+        if matches!(self.kind, DefinedFunctionKind::Trampoline { .. }) {
             // Import stubs is not a real function in input module.
             return OutputMapType::OutputHasInput(self.input_func_id);
         }

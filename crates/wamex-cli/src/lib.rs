@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -141,12 +141,15 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         split_program_info.output_modules.len() == 1,
         "Roundtrip should produce single module",
     );
-    crate::emit::emit_modules(&info, &split_program_info, &|_: &SplitModuleIdentifier,
-                                                            data: &[u8]|
-     -> Result<()> {
-        std::fs::write(&args.output, data)?;
-        Ok(())
-    })?;
+    crate::emit::emit_modules(
+        &info,
+        &split_program_info,
+        &HashSet::new(),
+        &|_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+            std::fs::write(&args.output, data)?;
+            Ok(())
+        },
+    )?;
 
     Ok(())
 }
@@ -159,7 +162,7 @@ pub fn split(args: Split) -> Result<()> {
     let split_points = analysis::split_point::find_split_points(&module, &info)?;
 
     log::debug!("split_points={split_points:?}");
-    let split_program_info =
+    let mut split_program_info =
         SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
 
     log::debug!("split_program_info={split_program_info:?}");
@@ -169,10 +172,17 @@ pub fn split(args: Split) -> Result<()> {
             split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
         }
     }
+    // one of the possible mode is to merge all shared with main chunks into main module.
+    // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
+    crate::emit::merge_main_shared(&mut split_program_info);
 
+    let parents = dep_graph.reverse();
+    // some wbg functions need to be moved to main before splitting.
+    let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &parents, &mut split_program_info);
     crate::emit::emit_modules(
         &info,
         &split_program_info,
+        &wbg_fns,
         &|identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             let output_filename = identifier.name() + ".wasm";
             std::fs::create_dir_all(&args.output)?;

@@ -19,7 +19,7 @@ pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
 use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
-    emit::{index_safety::OutputGlobalId, ModuleEmitState},
+    emit::{index_safety::OutputGlobalId, ComputedModules, ModuleEmitState},
     index::{AnySymbolId, DefinedFuncId, InputFuncId, InputGlobalId},
 };
 
@@ -73,7 +73,7 @@ pub struct ModifyContext<'any, 'src> {
 impl<'any, 'src> ModifyContext<'any, 'src> {
     pub fn emit_code_with_changes(
         module_emit: &'any ModuleEmitState<'any, 'src>,
-        main_module: &'any ModuleEmitState<'any, 'src>,
+        computed_modules: &'any ComputedModules<'any, 'src>,
         global_id_mapper: impl Fn(InputGlobalId) -> Option<OutputGlobalId>,
         defined_function_id: DefinedFuncId,
         input_function_id: InputFuncId, // debug purposes
@@ -81,7 +81,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let reloc_info = RelocateState {
             input_module: &module_emit.src.wasm,
-            main_module: main_module,
+            computed_modules,
             emit_module: module_emit,
             global_id_mapper: &global_id_mapper,
         };

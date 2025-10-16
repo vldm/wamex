@@ -6,6 +6,7 @@ use std::{
 use anyhow::{anyhow, bail};
 use lazy_static::lazy_static;
 use regex::Regex;
+use rkyv::ser::sharing::Share;
 
 use super::dep_graph::{DepGraph, DepNode, ReachabilityGraph};
 use crate::{
@@ -128,9 +129,35 @@ pub enum ModuleIdentifier {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub struct SharedModuleIdentifier(pub Vec<ModuleIdentifier>);
+
+impl SharedModuleIdentifier {
+    pub fn to_string(&self) -> String {
+        self.0.iter().fold(String::new(), |mut acc, n| {
+            if !acc.is_empty() {
+                acc.push('_');
+            }
+            acc + &n.name()
+        })
+    }
+    pub fn contains(&self, module: &ModuleIdentifier) -> bool {
+        self.0.iter().any(|m| m == module)
+    }
+}
+
+impl<'a> IntoIterator for &'a SharedModuleIdentifier {
+    type Item = &'a ModuleIdentifier;
+    type IntoIter = std::slice::Iter<'a, ModuleIdentifier>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub enum SplitModuleIdentifier {
     Single(ModuleIdentifier),
-    Shared(Vec<ModuleIdentifier>),
+    Shared(SharedModuleIdentifier),
 }
 
 impl ModuleIdentifier {
@@ -145,18 +172,19 @@ impl SplitModuleIdentifier {
     pub fn name(&self) -> String {
         match self {
             Self::Single(name) => name.name().to_string(),
-            Self::Shared(names) => names.iter().fold(String::new(), |mut acc, n| {
-                if !acc.is_empty() {
-                    acc.push('_');
-                }
-                acc + &n.name()
-            }),
+            Self::Shared(names) => names.to_string(),
         }
     }
     pub fn as_single(&self) -> Option<&ModuleIdentifier> {
         match self {
             Self::Single(name) => Some(name),
             Self::Shared(_) => None,
+        }
+    }
+    pub fn as_shared(&self) -> Option<&SharedModuleIdentifier> {
+        match self {
+            Self::Single(_) => None,
+            Self::Shared(name) => Some(name),
         }
     }
     pub fn is_shared(&self) -> bool {
@@ -287,7 +315,7 @@ impl SplitProgramInfo {
             }
 
             split_module_contents.insert(
-                SplitModuleIdentifier::Shared(shared.module_names.clone()),
+                SplitModuleIdentifier::Shared(SharedModuleIdentifier(shared.module_names.clone())),
                 OutputModuleInfo {
                     defined_symbols: shared.shared_deps,
                     link_symbols: shared.linked_nodes,

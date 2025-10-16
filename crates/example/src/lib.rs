@@ -8,7 +8,9 @@ pub async fn print_lazy_loaded_string(data: &str) -> Result<String, JsError> {
     let data = if data == "static" {
         format!("{}", sub::static_str().await)
     } else if data == "string" {
-        format!("{}", sub::string_from_static().await)
+        format!("{}", sub::string_build().await)
+    } else if data == "string_shared" {
+        format!("{}", sub::string_build_with_shared_const().await)
     } else if data == "async" {
         format!("{}", sub::async_string().await)
     } else if data == "dyn" {

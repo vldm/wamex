@@ -3,15 +3,24 @@ use std::pin::Pin;
 #[cfg(feature = "split")]
 use wamex::wasm_split;
 
+pub const SOME_STATIC_SHARED: &str = "SUPER STATIC SHARED STRING";
 #[cfg_attr(feature = "split", wasm_split(static_str))]
 pub fn static_str() -> Pin<Box<&'static str>> {
-    Box::pin("SUPER STATIC   STRING")
+    Box::pin(SOME_STATIC_SHARED)
 }
 
 #[cfg_attr(feature = "split", wasm_split(string_from_static))]
-pub fn string_from_static() -> Pin<Box<String>> {
+pub fn string_build() -> Pin<Box<String>> {
     let mut new = String::from("OTHER STATIC STRING");
     new.push_str("some_test");
+
+    Box::pin(new)
+}
+
+#[cfg_attr(feature = "split", wasm_split(string_build_with_shared_const))]
+pub fn string_build_with_shared_const() -> Pin<Box<String>> {
+    let mut new = String::from(SOME_STATIC_SHARED);
+    new.push_str("hi");
 
     Box::pin(new)
 }

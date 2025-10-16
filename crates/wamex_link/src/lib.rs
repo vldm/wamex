@@ -1,7 +1,7 @@
 extern crate alloc;
 use alloc::collections::BTreeMap;
 use core::error;
-use std::cell::RefCell;
+use std::{cell::RefCell, fmt::Display};
 
 use js_sys::{
     Object, Reflect,
@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, Response};
 
-use crate::{js_helpers::copy_fields, module_alloc::RawAllocEntry};
+use crate::{js_helpers::copy_imports, module_alloc::RawAllocEntry};
 
 mod deserialize;
 mod js_helpers;
@@ -25,12 +25,14 @@ pub enum Error {
     ModuleNotFound { module_id: ModuleId },
 
     #[error(
-        "Cannot resolve dependency {dependency:?}:{entry} needed for module {module_id:?}", entry = .entry.as_deref().unwrap_or("<none>")
+        "Cannot resolve dependency {dependency:?}:{entry} needed for module {module_id:?}\n => {sub_error}", entry = .entry.as_deref().unwrap_or("<none>"), 
+        sub_error = .sub_error.as_ref().map(|e| e.to_string()).unwrap_or("<none>".to_string())
     )]
     CannotResolveDependency {
         module_id: ModuleId,
         dependency: ModuleId,
         entry: Option<String>,
+        sub_error: Option<Box<dyn error::Error>>,
     },
     #[error("Failed to fetch url: {url}, result:{error:?}")]
     FetchError { url: String, error: JsValue },
@@ -179,7 +181,8 @@ impl LinkageState {
         self.loaded_modules.insert(module_id.clone(), module);
 
         // Extend global imports with module exports.
-        copy_fields(&self.global_imports, &defined_exports)
+        // On adding to global imports - filter out module specific fields.
+        copy_imports(&self.global_imports, &defined_exports, true)
     }
 
     // fn debug_object
@@ -190,7 +193,7 @@ impl LinkageState {
 
         log::debug!("Main exports value: {:?}", obj);
         let obj = obj.try_into().unwrap();
-        copy_fields(&new_object, &obj).unwrap();
+        copy_imports(&new_object, &obj, false).unwrap();
         let set = Reflect::set(
             &new_object,
             &JsValue::from_str("__indirect_function_table"),
@@ -294,8 +297,22 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
 
     let array = deserialize::buffer_to_rust(results.get(0));
     let metadata = deserialize::deserialize_metadata(&array)?;
-
     debug!("Fetched module metadata: {:?}", metadata);
+
+    if !metadata.needed_libraries.is_empty() {
+        debug!("Fetching module deps: {:?}", metadata.needed_libraries);
+        for dep in &metadata.needed_libraries {
+            let dep_id = ModuleId::new(&dep);
+            Box::pin(load_inner(dep_id.clone(), false))
+                .await
+                .map_err(|e| Error::CannotResolveDependency {
+                    module_id: module_id.clone(),
+                    dependency: dep_id,
+                    entry: None,
+                    sub_error: Some(Box::new(e)),
+                })?;
+        }
+    }
 
     let version = deserialize::parse_version(&module)?;
 
@@ -306,7 +323,7 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     let global_imports = LinkageState::global(|state| state.global_imports.clone());
 
     let new_exports = Object::new();
-    copy_fields(&new_exports, &global_imports)?;
+    copy_imports(&new_exports, &global_imports, false)?;
     debug!("New exports: {:?}", new_exports);
 
     debug!(
