@@ -248,7 +248,7 @@ impl ReachabilityGraph {
         }
     }
 
-    pub fn remove_node(&mut self, node: &DepNode, graph: &DepGraph) {
+    pub fn remove_node_tree(&mut self, node: &DepNode, graph: &DepGraph) {
         let mut queue = VecDeque::from([*node]);
 
         let mut removed = HashSet::<DepNode>::new();
@@ -324,8 +324,9 @@ impl<Id> NamedGraph<Id> {
         graph: &DepGraph,
     ) -> Vec<SharedEntries<Id>>
     where
-        Id: Clone + Ord,
+        Id: Clone + Ord + Debug,
     {
+        //TODO: use bitset as key instead
         let mut shared_entries: HashMap<Vec<usize>, HashSet<DepNode>> = HashMap::new();
 
         for m in modules.iter() {
@@ -341,13 +342,17 @@ impl<Id> NamedGraph<Id> {
             if owner_modules.len() > 1 {
                 for module_id in &owner_modules {
                     let module = &mut modules[*module_id];
-                    module.deps.remove_node(&dep, graph);
+                    module.deps.remove_node_tree(&dep, graph);
                 }
                 let mut owner_modules: Vec<usize> = owner_modules.into_iter().collect();
                 owner_modules.sort_unstable();
                 shared_entries.entry(owner_modules).or_default().insert(dep);
             }
         }
+
+        // TODO: replace remove_node_tree with reachable.remove() and then post remove cleanup phase.
+        // TODO: rebuild parents graph after removals
+
         let mut result = Vec::new();
 
         for (module_ids, shared_deps) in shared_entries {
@@ -372,7 +377,25 @@ impl<Id> NamedGraph<Id> {
         }
 
         // For each dep -> child if child is not found in deps: add it to linked_nodes
-        // for module in
+        for shared in result.iter_mut() {
+            for dep in &shared.shared_deps {
+                let Some(children) = graph.get(dep) else {
+                    continue;
+                };
+                for child in children {
+                    if shared.shared_deps.contains(child) {
+                        continue;
+                    }
+
+                    if shared.linked_nodes.insert(*child) {
+                        log::debug!(
+                            "Shared module {:?} linked node added: {child:?}",
+                            shared.module_names
+                        );
+                    }
+                }
+            }
+        }
 
         result.sort_by(|left, right| left.module_names.cmp(&right.module_names));
         result
@@ -713,13 +736,13 @@ mod tests {
         );
 
         // this remove f(4) and child f(7), f(6) is still reachable by f(2)
-        reachability_graph.remove_node(&function(4), &graph);
+        reachability_graph.remove_node_tree(&function(4), &graph);
 
         assert_eq!(
             reachability_graph.reachable,
             testing::uniq_nodes("F(1) & F(2) & F(3) & F(5) & F(6)").unwrap()
         );
-        reachability_graph.remove_node(&function(2), &graph);
+        reachability_graph.remove_node_tree(&function(2), &graph);
         assert_eq!(
             reachability_graph.reachable,
             testing::uniq_nodes("F(1) & F(3)").unwrap()
@@ -848,6 +871,96 @@ F(4671) -> F(4663)
             }
         }
         return true;
+    }
+
+    #[test]
+    fn test_of_shared_dep_of_shared() {
+        let source = r#"
+F(1) ->  F(2) -> F(3) -> F(4)
+F(11) -> F(12) -> F(13) -> F(14)
+F(21) -> F(22) -> F(23) -> F(24)
+F(31) -> F(32) -> F(33) -> F(34)
+F(100) -> F(101) -> F(102)
+F(22) -> F(100) & F(201)
+F(32) -> F(100) & F(201)
+F(12) -> F(101) & F(301)
+"#;
+        let graph = testing::parse_deps(source).unwrap();
+
+        let mut modules = vec![
+            super::NamedGraph::new(
+                "mod1",
+                super::ReachabilityGraph::find_reachable_deps(
+                    &graph,
+                    &testing::uniq_nodes("F(1)").unwrap(),
+                ),
+            ),
+            super::NamedGraph::new(
+                "mod2",
+                super::ReachabilityGraph::find_reachable_deps(
+                    &graph,
+                    &testing::uniq_nodes("F(11)").unwrap(),
+                ),
+            ),
+            super::NamedGraph::new(
+                "mod3",
+                super::ReachabilityGraph::find_reachable_deps(
+                    &graph,
+                    &testing::uniq_nodes("F(21)").unwrap(),
+                ),
+            ),
+            super::NamedGraph::new(
+                "mod4",
+                super::ReachabilityGraph::find_reachable_deps(
+                    &graph,
+                    &testing::uniq_nodes("F(31)").unwrap(),
+                ),
+            ),
+        ];
+
+        // So F(1) not share anything
+        // F(11), F(21), F(31) are sharing F(101)
+        // But F(21) & F(31) are sharing also F(101) parent F(100)
+        let shared_entries = super::NamedGraph::calculate_shared_modules(&mut modules, &graph);
+        assert_eq!(shared_entries.len(), 2);
+        let first = &shared_entries[0];
+        assert_eq!(
+            first.module_names,
+            &["mod2".to_string(), "mod3".to_string(), "mod4".to_string()]
+        );
+
+        // 101 exported, but 101 and 102 are both defined
+        assert!(first
+            .linked_nodes
+            .contains(&DepNode::Function(Id::from_index(101))));
+        assert!(first
+            .shared_deps
+            .contains(&DepNode::Function(Id::from_index(101))));
+        assert!(first
+            .shared_deps
+            .contains(&DepNode::Function(Id::from_index(102))));
+
+        let second = &shared_entries[1];
+        assert_eq!(
+            second.module_names,
+            &["mod3".to_string(), "mod4".to_string()]
+        );
+
+        dbg!(&second);
+        // 100 are exported and defined (201 also defined, but not interesting here)
+        assert!(second
+            .linked_nodes
+            .contains(&DepNode::Function(Id::from_index(100))));
+        assert!(second
+            .shared_deps
+            .contains(&DepNode::Function(Id::from_index(100))));
+        // 101 are imported only
+        assert!(second
+            .linked_nodes
+            .contains(&DepNode::Function(Id::from_index(101))));
+        assert!(!second
+            .shared_deps
+            .contains(&DepNode::Function(Id::from_index(101))));
     }
 
     fn reduce(source: &str, test: impl Fn(&str) -> bool) {
@@ -980,7 +1093,17 @@ F(4671) -> F(4663)
         ];
         let shared_entries = super::NamedGraph::calculate_shared_modules(&mut modules, &graph);
 
-        for module in &[&modules[0], &modules[1]] {
+        dbg!(&shared_entries);
+        // let first = &modules[0];
+        // assert_eq!(
+        //     first.linked_nodes,
+        //     testing::uniq_nodes("F(29) & D(2, 0) & D(2, 4) & F(73)").unwrap()
+        // );
+        // assert_eq!(
+        //     first.shared_deps,
+        //     testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
+        // );
+        for module in &[&modules[1], &modules[1]] {
             assert_eq!(
                 module.linked_nodes,
                 testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
@@ -992,6 +1115,7 @@ F(4671) -> F(4663)
             shared_entries[0].module_names,
             vec!["split_static_str", "split_string_from_static"]
         );
+        dbg!(&shared_entries[0]);
 
         // F(29) -> F(73) & D(2, 4) & F(662)
         // But F(73) and D(2, 4) are included into shared_entries[1]
@@ -1001,9 +1125,11 @@ F(4671) -> F(4663)
             shared_entries[0].shared_deps,
             testing::uniq_nodes("D(2, 0) & F(29) & F(662)").unwrap()
         );
+        // F(73) and D(2, 4) are included into shared_entries[1]
+        // and F(29) and D(2,0) are exported from here
         assert_eq!(
             shared_entries[0].linked_nodes,
-            testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
+            testing::uniq_nodes("F(29) & D(2, 0) & F(73) & D(2, 4)").unwrap()
         );
 
         // For second chunk - all deps are exported

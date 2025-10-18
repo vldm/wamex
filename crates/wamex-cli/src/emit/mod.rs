@@ -240,6 +240,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let (module_id, output_module_info) = &program_info.output_modules[output_module_index];
 
         log::debug!("output_module_info: {output_module_info:#?}");
+        log::debug!("module_id: {module_id:#?}");
+        log::debug!("shared_modules: {shared_modules:#?}");
         // We need to include definitions for all of the `defined_symbols`.
         let mut funcs_to_define = HashSet::<(InputFuncId, bool)>::new();
         let mut import_functions = Vec::new();
@@ -1783,26 +1785,17 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
             log::debug!("Shared_modules_info {id:?}: {output_module:?}");
         }
 
-        let shared_ids_by_module_id: HashMap<_, _> = program_info
-            .output_modules
-            .iter()
-            .filter_map(|(id, _output_module)| {
+        const NO_DEPS: Vec<SharedModuleIdentifier> = Vec::new();
+        let all_shared_deps = modules_ids_iter
+            .clone()
+            .filter_map(|(_output_module_index, id)| {
                 if let SplitModuleIdentifier::Shared(shared_with) = id {
-                    Some((shared_with))
+                    Some(shared_with)
                 } else {
                     None
                 }
             })
-            .fold(HashMap::new(), |mut acc, shared_with| {
-                for module in shared_with {
-                    acc.entry(module.clone())
-                        .or_insert_with(Vec::new)
-                        .push(shared_with.clone());
-                }
-                acc
-            });
-
-        const NO_DEPS: &[SharedModuleIdentifier] = &[];
+            .collect::<Vec<_>>();
 
         let dyn_linkage = true; // TODO: from args
 
@@ -1835,7 +1828,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                         program_info,
                         output_module_index,
                         None,
-                        NO_DEPS,
+                        &NO_DEPS,
                         linkage_type,
                         is_nonexported_fn,
                     ),
@@ -1868,11 +1861,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                     LinkageType::OriginalLayout
                 };
 
-                log::error!("linkage_type: {linkage_type:?}");
-                let shared_modules: &[_] = id
-                    .as_single()
-                    .and_then(|id| shared_ids_by_module_id.get(&id).map(Vec::as_slice))
-                    .unwrap_or_else(|| NO_DEPS);
+                let module_deps = Self::find_module_deps(id.clone(), &all_shared_deps);
                 (
                     ModuleEmitState::produce_state(
                         module,
@@ -1880,7 +1869,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                         program_info,
                         output_module_index,
                         Some(&main_module.0),
-                        shared_modules,
+                        &module_deps,
                         linkage_type,
                         is_nonexported_fn,
                     ),
@@ -1906,6 +1895,24 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
             shared_modules,
             sub_modules,
         })
+    }
+
+    fn find_module_deps(
+        interested_module: SplitModuleIdentifier,
+        shared_modules: &[SharedModuleIdentifier],
+    ) -> Vec<SharedModuleIdentifier> {
+        let mut result = Vec::new();
+        for shared_module in shared_modules {
+            if matches!(&interested_module, SplitModuleIdentifier::Shared(our_module) if shared_module == our_module)
+            {
+                continue; // skip self
+            }
+            if interested_module.is_part_of(shared_module) {
+                result.push(shared_module.clone());
+            }
+        }
+
+        result
     }
 
     fn iter_modules(
@@ -1961,21 +1968,38 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
         .expect("Main module not found")
         .1;
 
-    for (_id, shared_module) in shared_with_main {
+    #[cfg(debug_assertions)]
+    let mut check_imports = vec![];
+
+    for (id, mut shared_module) in shared_with_main {
         debug_assert!(shared_module.split_points.is_empty());
-        // shared.link_symbols -> exports
-        // single.link_symbols -> imports
-        // so we remove all symbols that are in both sets
-        for node in shared_module.link_symbols {
-            if !main_module.link_symbols.remove(&node) {
-                log::trace!("Shared module symbol not found in main: {node:?} (other module dep)");
+
+        for node in &shared_module.link_symbols {
+            // it was exported in shared module, so on main side it had been imported.
+            // remove from main link symbols.
+            let is_export = shared_module.defined_symbols.contains(node);
+            if is_export && !main_module.link_symbols.remove(&node) {
+                log::warn!("Shared module symbol not found in main: {node:?}");
+            }
+            // imported modules should already be in main
+            #[cfg(debug_assertions)]
+            if !is_export {
+                check_imports.push(node.clone());
             }
         }
+
         main_module
             .defined_symbols
-            .extend(shared_module.defined_symbols);
+            .extend(std::mem::take(&mut shared_module.defined_symbols));
     }
     debug_assert!(main_module.link_symbols.is_empty());
+    #[cfg(debug_assertions)]
+    for node in check_imports {
+        assert!(
+            main_module.defined_symbols.contains(&node),
+            "Shared module import not found in main defined symbols: {node:?}"
+        );
+    }
 
     program_info.output_modules = std::mem::take(&mut other);
 }
@@ -2015,18 +2039,26 @@ pub fn hoist_wbg_deps_to_main<'a, 'src>(
             }
         }
     }
-    dbg!(&to_move);
 
-    for (_id, output_module) in program_info
+    for (id, output_module) in program_info
         .output_modules
         .iter_mut()
         .filter(|(id, _m)| *id != MAIN_ID)
     {
         for moved_fn in to_move.iter() {
             // definitions are moved to main
-            output_module
+            if output_module
                 .defined_symbols
-                .remove(&DepNode::Function(*moved_fn));
+                .remove(&DepNode::Function(*moved_fn))
+            {
+                let fn_name = module.wasm.names.functions.get(*moved_fn);
+                log::debug!(
+                    "Moving function {:?} ({}) from module {} to main module",
+                    fn_name,
+                    moved_fn,
+                    id.name()
+                );
+            }
         }
     }
     let main_module = &mut program_info

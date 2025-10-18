@@ -143,6 +143,12 @@ impl SharedModuleIdentifier {
     pub fn contains(&self, module: &ModuleIdentifier) -> bool {
         self.0.iter().any(|m| m == module)
     }
+    // Return true if a module was removed.
+    pub fn remove(&mut self, module: &ModuleIdentifier) -> bool {
+        let original_len = self.0.len();
+        self.0.retain(|m| m != module);
+        original_len != self.0.len()
+    }
 }
 
 impl<'a> IntoIterator for &'a SharedModuleIdentifier {
@@ -192,6 +198,14 @@ impl SplitModuleIdentifier {
     }
     pub fn is_main(&self) -> bool {
         matches!(self, Self::Single(ModuleIdentifier::Main))
+    }
+
+    /// Check if this split module identifier includes the given module identifier.
+    pub fn is_part_of(&self, other: &SharedModuleIdentifier) -> bool {
+        match self {
+            Self::Single(name) => other.contains(name),
+            Self::Shared(shared) => shared.0.iter().all(|name| other.contains(name)),
+        }
     }
 }
 
