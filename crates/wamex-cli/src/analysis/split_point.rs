@@ -12,7 +12,7 @@ use super::dep_graph::{DepGraph, DepNode};
 use crate::{
     analysis::{
         self,
-        dep_graph::{find_reachable_deps, NamedGraph},
+        dep_graph::{find_reachable_deps, DepList, NamedGraph},
     },
     index::{ExportId, ImportId, InputFuncId},
     read::InputModule,
@@ -22,9 +22,10 @@ use crate::{
 // The other possible is to emit it as separate chunk and allow linkage.
 #[derive(Default)]
 pub struct OutputModuleInfo {
-    pub defined_symbols: HashSet<DepNode>,
+    pub defined_symbols: DepList,
     // Shared imports that should be imported from other modules.
-    pub link_symbols: HashSet<DepNode>,
+    pub imports: DepList,
+    pub exports: DepList,
     // TODO: Instead of split points we need list of what "split-points" we exports, and what we imports
     pub split_points: Vec<SplitPoint>,
 }
@@ -214,7 +215,6 @@ impl SplitModuleIdentifier {
 #[derive(Debug, Default)]
 pub struct SplitProgramInfo {
     pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
-    pub shared_nodes: HashSet<DepNode>,
     pub symbol_output_module: HashMap<DepNode, usize>,
 }
 
@@ -300,7 +300,7 @@ impl SplitProgramInfo {
         let mut split_module_contents = BTreeMap::<SplitModuleIdentifier, OutputModuleInfo>::new();
 
         split_module_contents.extend(named_modules.into_iter().map(|named_graph| {
-            let link_symbols = named_graph.linked_nodes().clone();
+            let imports = named_graph.imports().clone();
             // TODO: Rewrite this
             let split_points = split_points_by_module
                 .get(named_graph.module.name())
@@ -314,27 +314,21 @@ impl SplitProgramInfo {
                 SplitModuleIdentifier::Single(named_graph.module),
                 OutputModuleInfo {
                     defined_symbols: named_graph.reachable,
-                    link_symbols,
+                    imports,
                     split_points,
+                    // Module can only import symbols from shared modules.
+                    exports: DepList::new(),
                 },
             )
         }));
 
-        let mut all_links = HashSet::new();
-
         for shared in shared_deps {
-            for module in shared.module_names.iter() {
-                let split_module = split_module_contents
-                    .get_mut(&SplitModuleIdentifier::Single(module.clone()))
-                    .unwrap();
-                all_links.extend(split_module.link_symbols.iter().cloned());
-            }
-
             split_module_contents.insert(
                 SplitModuleIdentifier::Shared(SharedModuleIdentifier(shared.module_names.clone())),
                 OutputModuleInfo {
                     defined_symbols: shared.shared_deps,
-                    link_symbols: shared.linked_nodes,
+                    exports: shared.exports,
+                    imports: shared.imports,
                     split_points: vec![],
                 },
             );
@@ -352,7 +346,6 @@ impl SplitProgramInfo {
 
         Ok(SplitProgramInfo {
             output_modules: split_module_contents.into_iter().collect(),
-            shared_nodes: all_links,
             symbol_output_module,
         })
     }

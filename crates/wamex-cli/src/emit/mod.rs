@@ -10,8 +10,6 @@ pub use data_segments::{DataSegment, DataSegmentOutput, NamedData, SymbolRelatio
 use globals::GlobalConstructor;
 use index_safety::OutputFuncId;
 use modify::{init_each_store_var, ModifyContext, StoreType};
-use ptree::output;
-use rkyv::collections::swiss_table::table;
 use wamex_metadata::{BumpVersion, DemangledName, ExportedSymbol};
 use wasm_encoder::{reencode::Reencode, GlobalType};
 use wasmparser::{RelocationEntry, TypeRef};
@@ -303,9 +301,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             // submodule imports needed function from main module.
             import_functions.extend(
                 output_module_info
-                    .link_symbols
+                    .imports
                     .iter()
-                    .filter(|symbol| !output_module_info.defined_symbols.contains(*symbol))
+                    .inspect(|symbol| {
+                        debug_assert!(!output_module_info.defined_symbols.contains(*symbol))
+                    })
                     .filter_map(DepNode::as_function)
                     .map(|func_id| ImportedFunction {
                         input_func_id: func_id,
@@ -1652,9 +1652,11 @@ impl<'src> CommonEmitInfo<'src> {
             match id {
                 SplitModuleIdentifier::Shared(shared_with) => {
                     let imported_nodes = output_module
-                        .link_symbols
+                        .imports
                         .iter()
-                        .filter(|node| !output_module.defined_symbols.contains(node))
+                        .inspect(|node| {
+                            debug_assert!(!output_module.defined_symbols.contains(node))
+                        })
                         .cloned()
                         .collect::<HashSet<_>>();
                     shared_modules_imports.insert(shared_with.clone(), imported_nodes);
@@ -1665,7 +1667,7 @@ impl<'src> CommonEmitInfo<'src> {
                 }
                 SplitModuleIdentifier::Single(id) => {
                     let imported_nodes = output_module
-                        .link_symbols
+                        .imports
                         .iter()
                         .inspect(|node| {
                             debug_assert!(!output_module.defined_symbols.contains(node))
@@ -1989,28 +1991,29 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
     #[cfg(debug_assertions)]
     let mut check_imports = vec![];
 
-    for (id, mut shared_module) in shared_with_main {
+    for (_, mut shared_module) in shared_with_main {
         debug_assert!(shared_module.split_points.is_empty());
 
-        for node in &shared_module.link_symbols {
+        for node in &shared_module.exports {
             // it was exported in shared module, so on main side it had been imported.
             // remove from main link symbols.
-            let is_export = shared_module.defined_symbols.contains(node);
-            if is_export && !main_module.link_symbols.remove(&node) {
+            if !main_module.imports.remove(&node) {
                 log::warn!("Shared module symbol not found in main: {node:?}");
             }
-            // imported modules should already be in main
-            #[cfg(debug_assertions)]
-            if !is_export {
-                check_imports.push(node.clone());
-            }
+        }
+
+        // imported modules should already be in main
+        #[cfg(debug_assertions)]
+        for node in &shared_module.imports {
+            check_imports.push(node.clone());
         }
 
         main_module
             .defined_symbols
             .extend(std::mem::take(&mut shared_module.defined_symbols));
     }
-    debug_assert!(main_module.link_symbols.is_empty());
+
+    debug_assert!(main_module.imports.is_empty());
     #[cfg(debug_assertions)]
     for node in check_imports {
         assert!(
@@ -2076,6 +2079,9 @@ pub fn hoist_wbg_deps_to_main<'a, 'src>(
                     moved_fn,
                     id.name()
                 );
+
+                output_module.exports.remove(&DepNode::Function(*moved_fn));
+                output_module.imports.insert(DepNode::Function(*moved_fn));
             }
         }
     }
@@ -2086,11 +2092,9 @@ pub fn hoist_wbg_deps_to_main<'a, 'src>(
         .expect("Main module not found")
         .1;
 
-    // remove main linkage to moved functions, since it is now defined in main
+    // remove main linkage to moved functions (if any), since it is now defined in main
     for moved_fn in &to_move {
-        main_module
-            .link_symbols
-            .remove(&DepNode::Function(*moved_fn));
+        main_module.imports.remove(&DepNode::Function(*moved_fn));
     }
 
     main_module

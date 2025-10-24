@@ -115,7 +115,7 @@ pub struct NamedGraph<Id> {
     pub reachable: DepList,
 
     /// This field is hidden, because it is output parameter of `calculate_shared_modules`
-    linked_nodes: HashSet<DepNode>,
+    imports: HashSet<DepNode>,
 }
 
 impl<Id> NamedGraph<Id> {
@@ -123,11 +123,11 @@ impl<Id> NamedGraph<Id> {
         Self {
             module,
             reachable,
-            linked_nodes: HashSet::new(),
+            imports: HashSet::new(),
         }
     }
-    pub fn linked_nodes(&self) -> &HashSet<DepNode> {
-        &self.linked_nodes
+    pub fn imports(&self) -> &HashSet<DepNode> {
+        &self.imports
     }
 }
 
@@ -135,7 +135,8 @@ impl<Id> NamedGraph<Id> {
 pub struct SharedEntries<Id> {
     pub module_names: Vec<Id>,
     pub shared_deps: HashSet<DepNode>,
-    pub linked_nodes: HashSet<DepNode>,
+    pub exports: HashSet<DepNode>,
+    pub imports: HashSet<DepNode>,
 }
 
 pub trait SymbolTable {
@@ -283,10 +284,7 @@ impl<Id> NamedGraph<Id> {
         let mut shared_entries: HashMap<Vec<usize>, HashSet<DepNode>> = HashMap::new();
 
         for m in modules.iter() {
-            debug_assert!(
-                m.linked_nodes.is_empty(),
-                "Linked nodes is output parameter"
-            );
+            debug_assert!(m.imports.is_empty(), "Linked nodes is output parameter");
         }
 
         let mut module_shared_deps: HashMap<usize, HashSet<DepNode>> = HashMap::new();
@@ -311,7 +309,7 @@ impl<Id> NamedGraph<Id> {
         let mut result = Vec::new();
         for (module_ids, shared_deps) in shared_entries {
             let mut module_names = Vec::new();
-            let mut shared_linked_points = HashSet::new();
+            let mut shared_exports = DepList::new();
 
             for module_id in module_ids {
                 let module = &mut modules[module_id];
@@ -319,15 +317,16 @@ impl<Id> NamedGraph<Id> {
                 let top_shared_deps =
                     Self::reduce_shared_entries(&shared_deps, &module.reachable, &parents);
                 // imports
-                module.linked_nodes.extend(top_shared_deps.clone());
+                module.imports.extend(top_shared_deps.clone());
                 // exports
-                shared_linked_points.extend(top_shared_deps);
+                shared_exports.extend(top_shared_deps);
                 module_names.push(module.module.clone());
             }
             result.push(SharedEntries {
                 module_names,
                 shared_deps,
-                linked_nodes: shared_linked_points,
+                exports: shared_exports,
+                imports: DepList::new(),
             });
         }
 
@@ -343,7 +342,7 @@ impl<Id> NamedGraph<Id> {
                         continue;
                     }
 
-                    if shared.linked_nodes.insert(*child) {
+                    if shared.imports.insert(*child) {
                         log::debug!(
                             "Shared module {:?} linked node added: {child:?}",
                             shared.module_names
@@ -572,7 +571,7 @@ mod tests {
         // It is top-most because it doesn't depend on other shared dependencies
         // F(7), D(5,6) and D(8,9) are not top-most because F(4) -> D(5,6) & F(7)and F(7) -> D(8,9)
         for module in &modules {
-            assert_eq!(module.linked_nodes, testing::uniq_nodes("F(4)").unwrap());
+            assert_eq!(module.imports, testing::uniq_nodes("F(4)").unwrap());
         }
     }
 
@@ -623,20 +622,14 @@ mod tests {
             testing::uniq_nodes("D(8, 9) & F(7)").unwrap()
         );
 
-        assert_eq!(
-            modules[1].linked_nodes,
-            testing::uniq_nodes("F(7)").unwrap()
-        );
+        assert_eq!(modules[1].imports, testing::uniq_nodes("F(7)").unwrap());
         assert_eq!(shared_entries[1].module_names, vec!["module1", "module3"]);
         assert_eq!(
             shared_entries[1].shared_deps, // F(7) and children are stored in [m1,m2,m3] shared deps
             testing::uniq_nodes("F(4) & D(5, 6)").unwrap()
         );
         for module in &[&modules[0], &modules[2]] {
-            assert_eq!(
-                module.linked_nodes,
-                testing::uniq_nodes("F(4) & F(7)").unwrap()
-            );
+            assert_eq!(module.imports, testing::uniq_nodes("F(4) & F(7)").unwrap());
         }
     }
 
@@ -676,7 +669,7 @@ mod tests {
             testing::uniq_nodes("F(4) & D(5, 6) & F(7) & D(8, 9)").unwrap()
         );
         for module in &modules {
-            assert_eq!(module.linked_nodes, testing::uniq_nodes("F(4)").unwrap());
+            assert_eq!(module.imports, testing::uniq_nodes("F(4)").unwrap());
         }
     }
 
@@ -720,7 +713,7 @@ F(1) -> F(307)
         for node in child {
             dbg!(node);
             let direct_dep = modules[1].reachable.contains(&node);
-            let linked_dep = modules[1].linked_nodes.contains(&node);
+            let linked_dep = modules[1].imports.contains(&node);
 
             assert!(direct_dep || linked_dep);
         }
@@ -790,7 +783,7 @@ F(4671) -> F(4663)
         for node in children {
             dbg!(node);
             let direct_dep = modules[2].reachable.contains(&node);
-            let linked_dep = modules[2].linked_nodes.contains(&node);
+            let linked_dep = modules[2].imports.contains(&node);
 
             if !direct_dep && !linked_dep {
                 return false;
@@ -845,7 +838,7 @@ F(12) -> F(101) & F(301)
 
         // 101 exported, but 101 and 102 are both defined
         assert!(first
-            .linked_nodes
+            .exports
             .contains(&DepNode::Function(Id::from_index(101))));
         assert!(first
             .shared_deps
@@ -862,15 +855,21 @@ F(12) -> F(101) & F(301)
 
         dbg!(&second);
         // 100 are exported and defined (201 also defined, but not interesting here)
+        assert!(!second
+            .imports
+            .contains(&DepNode::Function(Id::from_index(100))));
         assert!(second
-            .linked_nodes
+            .exports
             .contains(&DepNode::Function(Id::from_index(100))));
         assert!(second
             .shared_deps
             .contains(&DepNode::Function(Id::from_index(100))));
         // 101 are imported only
         assert!(second
-            .linked_nodes
+            .imports
+            .contains(&DepNode::Function(Id::from_index(101))));
+        assert!(!second
+            .exports
             .contains(&DepNode::Function(Id::from_index(101))));
         assert!(!second
             .shared_deps
@@ -1010,7 +1009,7 @@ F(12) -> F(101) & F(301)
         // );
         for module in &[&modules[0], &modules[1]] {
             assert_eq!(
-                module.linked_nodes,
+                module.imports,
                 testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
             );
         }
@@ -1033,8 +1032,12 @@ F(12) -> F(101) & F(301)
         // F(73) and D(2, 4) are included into shared_entries[1]
         // and F(29) and D(2,0) are exported from here
         assert_eq!(
-            shared_entries[0].linked_nodes,
-            testing::uniq_nodes("F(29) & D(2, 0) & F(73) & D(2, 4)").unwrap()
+            shared_entries[0].imports,
+            testing::uniq_nodes("F(73) & D(2, 4)").unwrap()
+        );
+        assert_eq!(
+            shared_entries[0].exports,
+            testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
         );
 
         // For second chunk - all deps are exported
@@ -1048,13 +1051,13 @@ F(12) -> F(101) & F(301)
             testing::uniq_nodes("F(73) & D(2, 4)").unwrap()
         );
         assert_eq!(
-            shared_entries[1].linked_nodes,
+            shared_entries[1].exports,
             testing::uniq_nodes("F(73) & D(2, 4)").unwrap()
         );
 
         // top-most shared entries should be only F(29) and D(2, 0)
         assert_eq!(
-            modules[2].linked_nodes,
+            modules[2].imports,
             testing::uniq_nodes("F(73) & D(2, 4)").unwrap()
         );
     }

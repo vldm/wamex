@@ -6,7 +6,7 @@ use std::{
 use crate::{
     analysis::{
         self,
-        dep_graph::{DepGraph, DepList, DepNode},
+        dep_graph::{DepGraph, DepNode},
         split_point::OutputModuleInfo,
     },
     helpers::debug_fmt_mostly_filled,
@@ -119,34 +119,62 @@ impl Debug for OutputModuleInfo {
             .collect::<Vec<_>>();
         included_datas.sort_unstable();
 
-        let mut shared_fns = self
-            .link_symbols
+        let mut imported_fns = self
+            .imports
             .iter()
             .filter_map(|dep| match dep {
                 DepNode::Function(func_id) => Some(*func_id),
                 _ => None,
             })
             .collect::<Vec<_>>();
-        shared_fns.sort_unstable();
 
-        let mut shared_datas = self
-            .link_symbols
+        let mut imported_datas = self
+            .imports
             .iter()
             .filter_map(|dep| match dep {
                 DepNode::DataSymbol(segment, data_id) => Some((*segment, *data_id)),
                 _ => None,
             })
             .collect::<Vec<_>>();
-        shared_datas.sort_unstable();
+
+        let mut exported_fns = self
+            .exports
+            .iter()
+            .filter_map(|dep| match dep {
+                DepNode::Function(func_id) => Some(*func_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut exported_datas = self
+            .exports
+            .iter()
+            .filter_map(|dep| match dep {
+                DepNode::DataSymbol(segment, data_id) => Some((*segment, *data_id)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        imported_fns.sort_unstable();
+        imported_datas.sort_unstable();
+        exported_fns.sort_unstable();
+        exported_datas.sort_unstable();
 
         f.debug_struct("OutputModuleInfo")
             .field(
-                "shared_fns",
-                &debug_fmt_mostly_filled(&shared_fns, 4, 15, "...", |a, b| a.next() != *b),
+                "imported_fns",
+                &debug_fmt_mostly_filled(&imported_fns, 4, 15, "...", |a, b| a.next() != *b),
             )
             .field(
-                "shared_datas",
-                &debug_fmt_mostly_filled(&shared_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
+                "imported_datas",
+                &debug_fmt_mostly_filled(&imported_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
+            )
+            .field(
+                "exported_fns",
+                &debug_fmt_mostly_filled(&exported_fns, 4, 15, "...", |a, b| a.next() != *b),
+            )
+            .field(
+                "exported_datas",
+                &debug_fmt_mostly_filled(&exported_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
             )
             .field(
                 "included_fns",

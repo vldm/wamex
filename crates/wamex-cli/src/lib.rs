@@ -26,37 +26,6 @@ use wamex_metadata::BumpVersion;
 
 use crate::analysis::split_point::SplitModuleIdentifier;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, ValueEnum)]
-pub enum ModuleStructure {
-    // Includes all shared chunks into main module.
-    BigMain,
-    // Emit chunks into separate modules.
-    EmitChunks,
-    // Emit chunks with main module.
-    EmitMainChunked,
-}
-impl ToString for ModuleStructure {
-    fn to_string(&self) -> String {
-        match self {
-            ModuleStructure::BigMain => "big-main".to_string(),
-            ModuleStructure::EmitChunks => "emit-chunks".to_string(),
-            ModuleStructure::EmitMainChunked => "emit-main-chunked".to_string(),
-        }
-    }
-}
-impl FromStr for ModuleStructure {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "big-main" => Ok(ModuleStructure::BigMain),
-            "emit-chunks" => Ok(ModuleStructure::EmitChunks),
-            "emit-main-chunked" => Ok(ModuleStructure::EmitMainChunked),
-            _ => Err(format!("Unknown module structure: {s}")),
-        }
-    }
-}
-
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
 pub struct Cli {
@@ -79,10 +48,6 @@ pub struct Split {
 
     #[arg(short, long)]
     pub metadata: bool,
-
-    /// Module structure.
-    #[arg(long, default_value_t = ModuleStructure::EmitMainChunked)]
-    pub module_structure: ModuleStructure,
 }
 
 #[derive(Debug, Args)]
@@ -195,11 +160,7 @@ pub fn split(args: Split) -> Result<()> {
     #[cfg(feature = "metadata")]
     if args.metadata {
         let metadata_path = args.output.join("metadata.json");
-        let metadata = metadata_ext::build_metadata_and_snapshot(
-            &info,
-            &split_program_info,
-            args.module_structure,
-        );
+        let metadata = metadata_ext::build_metadata_and_snapshot(&info, &split_program_info);
         let metadata_json = if args.verbose {
             serde_json::to_string_pretty(&metadata)?
         } else {

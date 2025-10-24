@@ -14,8 +14,7 @@
 - Correct global relocations to external sub-modules
 
 Roadmap:
-1. sub-modules "non-lazy" deps.
-1.1 Extract "shared" modules in a separate module
+1. calculate imports exports instead of linked_symbols
 2. wasm-link code reduction
 2.1 extend twiggy report for line -> code mapping
 3. storage globals -> to local vars.
@@ -32,7 +31,5 @@ Document:
 5. 
 
 
-! wasm_bindgen closure currently can be exported (prevent it).
-! make is_special_fn outer and check relocs instead of name only.
 ! experiment with Box::pin(load_inner) to reduce size of extracted modules
 

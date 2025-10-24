@@ -144,7 +144,6 @@ impl<'a> InputModule<'a> {
                             BinaryReader::new(reader.data(), reader.data_offset()),
                         )?;
                         module.linking = LinkingInfo::read(linking_reader)?;
-                        dbg!(&module.linking);
                     } else if name.starts_with("reloc.") {
                         let reloc_reader = wasmparser::RelocSectionReader::new(BinaryReader::new(
                             reader.data(),

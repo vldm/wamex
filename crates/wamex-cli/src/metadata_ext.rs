@@ -25,7 +25,6 @@ use crate::{
     emit::{CommonEmitInfo, DataSegment, ModuleEmitState, SymbolRelation},
     helpers::Hash,
     index::{DataSegmentId, DataSymbolId, IdVec, InputFuncId},
-    ModuleStructure,
 };
 
 pub trait SymbolSignatureExt {
@@ -107,23 +106,20 @@ pub trait ModuleExt {
     fn build_modules_metadata(
         module_info: &ModuleInfo,
         program_info: &SplitProgramInfo,
-        module_structure: ModuleStructure,
     ) -> BTreeMap<String, Module>;
 }
 impl ModuleExt for Module {
     fn build_modules_metadata(
         module_info: &ModuleInfo,
         program_info: &SplitProgramInfo,
-        module_structure: ModuleStructure,
     ) -> BTreeMap<String, Module> {
         let modules_that_exports: BTreeMap<DepNode, SplitModuleIdentifier> = program_info
             .output_modules
             .iter()
             .fold(BTreeMap::new(), |mut acc, (name, deps)| {
-                if name.is_shared()
-                    || (module_structure != ModuleStructure::EmitMainChunked && name.is_main())
-                {
-                    for dep in &deps.link_symbols {
+                if name.is_shared() || name.is_main() {
+                    // todo!()
+                    for dep in &deps.exports {
                         let prev = acc.insert(dep.clone(), name.clone());
                         assert!(
                             prev.is_none(),
@@ -153,29 +149,30 @@ impl ModuleExt for Module {
                     version: BumpVersion::new(),
                 });
             }
-            for node in &split_deps.link_symbols {
-                let exported_symbol = ExportedSymbol {
-                    signature: SymbolSignature::from_node(module_info, node),
-                    version: BumpVersion::new(),
-                };
-                match name {
-                    SplitModuleIdentifier::Shared(_) => provides.push(exported_symbol),
-                    name @ SplitModuleIdentifier::Single(_)
-                        if module_structure != ModuleStructure::EmitMainChunked
-                            && name.is_main() =>
-                    {
-                        provides.push(exported_symbol);
-                    }
-                    SplitModuleIdentifier::Single(_) => {
-                        let import_module = modules_that_exports
-                            .get(node)
-                            .expect("No exporting module found");
-                        deps.entry(import_module.name())
-                            .or_default()
-                            .push(exported_symbol);
-                    }
-                }
-            }
+            todo!();
+            // for node in &split_deps.link_symbols {
+            //     let exported_symbol = ExportedSymbol {
+            //         signature: SymbolSignature::from_node(module_info, node),
+            //         version: BumpVersion::new(),
+            //     };
+            //     match name {
+            //         SplitModuleIdentifier::Shared(_) => provides.push(exported_symbol),
+            //         name @ SplitModuleIdentifier::Single(_)
+            //             if module_structure != ModuleStructure::EmitMainChunked
+            //                 && name.is_main() =>
+            //         {
+            //             provides.push(exported_symbol);
+            //         }
+            //         SplitModuleIdentifier::Single(_) => {
+            //             let import_module = modules_that_exports
+            //                 .get(node)
+            //                 .expect("No exporting module found");
+            //             deps.entry(import_module.name())
+            //                 .or_default()
+            //                 .push(exported_symbol);
+            //         }
+            //     }
+            // }
 
             metadata.insert(
                 module_name,
@@ -320,9 +317,8 @@ pub fn _build_module_structure(module: &ModuleInfo) -> crate::diff::symbols_map:
 pub fn build_metadata_and_snapshot(
     module: &ModuleInfo,
     program_info: &SplitProgramInfo,
-    module_structure: ModuleStructure,
 ) -> Metadata {
-    let modules = Module::build_modules_metadata(module, program_info, module_structure);
+    let modules = Module::build_modules_metadata(module, program_info);
     assert!(
         modules.get("snapshot").is_none(),
         "field 'snapshot' is reserved, and not allowed as module name"
