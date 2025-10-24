@@ -1,0 +1,9 @@
+---
+source: crates/wamex-cli/tests/snapshot.rs
+expression: "format!(\"{:#?}\", data_segments)"
+---
+[
+    "",
+    "",
+    "",
+]

@@ -251,8 +251,8 @@ impl SplitProgramInfo {
 
     pub fn merge_split_points_by_name(
         split_points: &[SplitPoint],
-    ) -> HashMap<String, Vec<&SplitPoint>> {
-        let mut result = HashMap::<String, Vec<&SplitPoint>>::new();
+    ) -> BTreeMap<String, Vec<&SplitPoint>> {
+        let mut result = BTreeMap::<String, Vec<&SplitPoint>>::new();
 
         for split_point in split_points {
             result

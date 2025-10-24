@@ -1,0 +1,7 @@
+---
+source: crates/wamex-cli/tests/snapshot.rs
+expression: "format!(\"{:#?}\", exports)"
+---
+{
+    "__wamex___wasm_split_00string_build_with_shared_const00_export_67350f8513bf297d8823c3cfcd3bbd87_string_build_with_shared_const",
+}

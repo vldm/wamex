@@ -1,0 +1,7 @@
+---
+source: crates/wamex-cli/tests/snapshot.rs
+expression: "format!(\"{:#?}\", exports)"
+---
+{
+    "__wamex___wasm_split_00multiple_dyn_fns00_export_d8b6697e7a618286107f21494e9611c7_multiple_dyn_fns",
+}

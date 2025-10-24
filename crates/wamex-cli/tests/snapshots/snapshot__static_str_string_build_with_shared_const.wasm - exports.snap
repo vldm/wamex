@@ -1,0 +1,8 @@
+---
+source: crates/wamex-cli/tests/snapshot.rs
+expression: "format!(\"{:#?}\", exports)"
+---
+{
+    "__static_str_string_build_with_shared_const_lib_base",
+    "__static_str_string_build_with_shared_const_table_base",
+}

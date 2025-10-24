@@ -1,7 +1,7 @@
 #![feature(trace_macros)]
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -24,20 +24,27 @@ fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
     Ok(output_temp)
 }
 
-fn list_imports(src: &InputModule) -> HashSet<String> {
+fn list_data_segments(src: &InputModule) -> Vec<String> {
+    src.data
+        .data_segments
+        .iter()
+        .map(|s| hex::encode(s.data))
+        .collect()
+}
+fn list_imports(src: &InputModule) -> BTreeSet<String> {
     src.imports
         .iter()
         // .filter(|(_id, i)| matches!(i.ty, wasmparser::TypeRef::Func(_)))
         .map(|(_id, i)| i.name.to_owned())
-        .collect::<HashSet<_>>()
+        .collect()
 }
 
-fn list_exports(src: &InputModule) -> HashSet<String> {
+fn list_exports(src: &InputModule) -> BTreeSet<String> {
     src.exports
         .iter()
         // .filter(|(_id, i)| matches!(i.kind, wasmparser::ExternalKind::Func))
         .map(|(_id, i)| i.name.to_owned())
-        .collect::<HashSet<_>>()
+        .collect()
 }
 
 mod static_str {
@@ -75,7 +82,7 @@ const REQUIRED_MAIN_EXPORTS: &[&str] = &[
 ];
 const EXTRA_MAIN_EXPORTS: &[&str] = &["__stack_pointer", "__indirect_function_table"];
 
-fn check_lists(list: &HashSet<String>, expected_lists: &[&[&str]], name: &str) -> Result<()> {
+fn check_lists(list: &BTreeSet<String>, expected_lists: &[&[&str]], name: &str) -> Result<()> {
     for expected_list in expected_lists {
         let missing: Vec<_> = expected_list
             .iter()
@@ -89,7 +96,11 @@ fn check_lists(list: &HashSet<String>, expected_lists: &[&[&str]], name: &str) -
     }
     Ok(())
 }
-fn check_lists_not(list: &HashSet<String>, unexpected_lists: &[&[&str]], name: &str) -> Result<()> {
+fn check_lists_not(
+    list: &BTreeSet<String>,
+    unexpected_lists: &[&[&str]],
+    name: &str,
+) -> Result<()> {
     for unexpected in unexpected_lists {
         let unexpected: Vec<_> = unexpected
             .iter()
@@ -122,7 +133,7 @@ macro_rules! test_list_contain {
 #[test]
 fn test_correct_imports_exports() {
     let _ = env_logger::Builder::new()
-        .filter(None, log::LevelFilter::Trace)
+        .filter(None, log::LevelFilter::Warn)
         .parse_env("RUST_LOG")
         .try_init();
     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
@@ -193,4 +204,52 @@ fn test_correct_imports_exports() {
         string_from_static_imports => @NOT string_from_static::IMPORTS, static_str::IMPORTS;
         string_from_static_exports => @NOT static_str::EXPORT_BEFORE
     }
+}
+
+// Snapshot imports, exports and data segments of wasm modules.
+fn snapshot_module_structure(src: &Path) {
+    let input_bytes = std::fs::read(src).expect("Failed to read wasm file");
+    let input_module = InputModule::parse(&input_bytes).expect("Failed to parse wasm file");
+
+    let imports = list_imports(&input_module);
+    let exports = list_exports(&input_module);
+    let data_segments = list_data_segments(&input_module);
+
+    let file_name = src.file_name().unwrap().to_string_lossy();
+    insta::assert_snapshot!(
+        format!("{} - imports", file_name),
+        format!("{:#?}", imports)
+    );
+    insta::assert_snapshot!(
+        format!("{} - exports", file_name),
+        format!("{:#?}", exports)
+    );
+    insta::assert_snapshot!(
+        format!("{} - data_segments", file_name),
+        format!("{:#?}", data_segments)
+    );
+}
+
+#[test]
+fn test_insta_imports_exports_of_extended_example() {
+    let _ = env_logger::Builder::new()
+        .filter(None, log::LevelFilter::Warn)
+        .parse_env("RUST_LOG")
+        .try_init();
+    let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
+    src.push("test-data");
+    src.push("extended-example.wasm");
+    snapshot_module_structure(&src);
+    // now split and snapshot all files
+    let output_temp = split_cmd(&src).expect("Failed to split wasm file");
+    let mut num_readed = 0;
+    let mut list_entries = std::fs::read_dir(output_temp.path()).unwrap();
+    while let Some(entry) = list_entries.next() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        snapshot_module_structure(&path);
+        num_readed += 1;
+    }
+    // main, static_str, string_from_static, dyn, async, dep_dyn, shared_static_str, shared(shared_static_str + static_str)
+    assert_eq!(num_readed, 8);
 }

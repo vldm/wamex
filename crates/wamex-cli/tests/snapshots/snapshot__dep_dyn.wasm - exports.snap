@@ -1,0 +1,7 @@
+---
+source: crates/wamex-cli/tests/snapshot.rs
+expression: "format!(\"{:#?}\", exports)"
+---
+{
+    "__wamex___wasm_split_00dep_dyn00_export_fb0d4dcfe40b38e9fdde63174d7d7851_dep_dyn",
+}

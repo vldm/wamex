@@ -1,0 +1,14 @@
+---
+source: crates/wamex-cli/tests/snapshot.rs
+expression: "format!(\"{:#?}\", imports)"
+---
+{
+    "__indirect_function_table",
+    "__lib_base",
+    "__stack_pointer",
+    "__table_base",
+    "__wamex__ZN4core9panicking11panic_const28panic_const_async_fn_resumed17hcdc7963235d4e518E",
+    "__wamex__ZN5alloc7raw_vec12handle_error17h3d3f256ad1600b52E",
+    "__wamex__ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h2de685e1ffc8fe2eE",
+    "memory",
+}

@@ -1,0 +1,11 @@
+---
+source: crates/wamex-cli/tests/snapshot.rs
+expression: "format!(\"{:#?}\", imports)"
+---
+{
+    "__indirect_function_table",
+    "__lib_base",
+    "__stack_pointer",
+    "__table_base",
+    "memory",
+}
