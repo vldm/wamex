@@ -8,10 +8,12 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use rkyv::ser::sharing::Share;
 
-use super::dep_graph::{DepGraph, DepNode, ReachabilityGraph};
+use super::dep_graph::{DepGraph, DepNode};
 use crate::{
-    analysis,
-    analysis::dep_graph::NamedGraph,
+    analysis::{
+        self,
+        dep_graph::{find_reachable_deps, NamedGraph},
+    },
     index::{ExportId, ImportId, InputFuncId},
     read::InputModule,
 };
@@ -271,7 +273,7 @@ impl SplitProgramInfo {
         let main_roots = Self::get_main_module_roots(info, &split_points);
 
         // graph root -> dep -> dep
-        let main_deps = ReachabilityGraph::find_reachable_deps(dep_graph, &main_roots);
+        let main_deps = find_reachable_deps(dep_graph, &main_roots);
 
         let mut named_modules = vec![NamedGraph::new(ModuleIdentifier::Main, main_deps.clone())];
 
@@ -284,7 +286,7 @@ impl SplitProgramInfo {
                 roots.insert(DepNode::Function(entry_point.export_func));
             }
 
-            let split_functions = ReachabilityGraph::find_reachable_deps(dep_graph, &roots);
+            let split_functions = find_reachable_deps(dep_graph, &roots);
 
             named_modules.push(NamedGraph::new(
                 ModuleIdentifier::Split(module_name.clone()),
@@ -311,7 +313,7 @@ impl SplitProgramInfo {
             (
                 SplitModuleIdentifier::Single(named_graph.module),
                 OutputModuleInfo {
-                    defined_symbols: named_graph.deps.reachable,
+                    defined_symbols: named_graph.reachable,
                     link_symbols,
                     split_points,
                 },
