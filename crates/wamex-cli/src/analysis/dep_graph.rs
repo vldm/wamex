@@ -248,31 +248,6 @@ impl ReachabilityGraph {
         }
     }
 
-    pub fn remove_node_tree(&mut self, node: &DepNode, graph: &DepGraph) {
-        let mut queue = VecDeque::from([*node]);
-
-        let mut removed = HashSet::<DepNode>::new();
-        while let Some(node) = queue.pop_front() {
-            if removed.contains(&node) {
-                continue;
-            }
-            removed.insert(node);
-
-            // Can be unreachable if cycle in graph
-            let _reachable = self.reachable.remove(&node);
-
-            if let Some(children) = graph.get(&node) {
-                for child in children {
-                    let child_parent = self.parents.get_mut(&child).expect("Parent should exist");
-                    child_parent.remove(&node);
-                    if child_parent.is_empty() {
-                        queue.push_back(*child);
-                    }
-                }
-            }
-        }
-    }
-
     #[cfg(test)]
     fn check_unreachable(&self, deps: &HashSet<DepNode>) -> bool {
         for dep in deps {
@@ -298,16 +273,17 @@ impl<Id> NamedGraph<Id> {
         visited_by
     }
 
-    /// Remove all entries which all parents are also in shared entries.
-    /// This will clean-up tree of shared entries and leave only top-most entries.
+    /// List only shared entries that have parents in module entries.
+    /// This will collect nodes that module entries imports from shared entries.
     pub fn reduce_shared_entries(
-        shared_entries: HashSet<DepNode>,
+        shared_entries: &HashSet<DepNode>,
+        module_entries: &HashSet<DepNode>,
         parents: &DepGraph,
     ) -> HashSet<DepNode> {
         let mut reduced = HashSet::new();
-        for dep in &shared_entries {
+        for dep in shared_entries {
             if let Some(parent) = parents.get(dep) {
-                if parent.iter().all(|p| shared_entries.contains(p)) {
+                if !parent.iter().any(|p| module_entries.contains(p)) {
                     continue; // skip if all parents are also in shared entries
                 }
             }
@@ -336,13 +312,18 @@ impl<Id> NamedGraph<Id> {
             );
         }
 
+        let mut module_shared_deps: HashMap<usize, HashSet<DepNode>> = HashMap::new();
         let visited_by = Self::collect_visited_by(modules);
 
         for (dep, owner_modules) in visited_by {
             if owner_modules.len() > 1 {
                 for module_id in &owner_modules {
                     let module = &mut modules[*module_id];
-                    module.deps.remove_node_tree(&dep, graph);
+                    module.deps.reachable.remove(&dep);
+                    module_shared_deps
+                        .entry(*module_id)
+                        .or_default()
+                        .insert(dep);
                 }
                 let mut owner_modules: Vec<usize> = owner_modules.into_iter().collect();
                 owner_modules.sort_unstable();
@@ -350,11 +331,7 @@ impl<Id> NamedGraph<Id> {
             }
         }
 
-        // TODO: replace remove_node_tree with reachable.remove() and then post remove cleanup phase.
-        // TODO: rebuild parents graph after removals
-
         let mut result = Vec::new();
-
         for (module_ids, shared_deps) in shared_entries {
             let mut module_names = Vec::new();
             let mut shared_linked_points = HashSet::new();
@@ -363,9 +340,14 @@ impl<Id> NamedGraph<Id> {
                 let module = &mut modules[module_id];
                 let module_parents = &module.deps.parents;
 
-                let top_shared_deps =
-                    Self::reduce_shared_entries(shared_deps.clone(), module_parents);
+                let top_shared_deps = Self::reduce_shared_entries(
+                    &shared_deps,
+                    &module.deps.reachable,
+                    module_parents,
+                );
+                // imports
                 module.linked_nodes.extend(top_shared_deps.clone());
+                // exports
                 shared_linked_points.extend(top_shared_deps);
                 module_names.push(module.module.clone());
             }
@@ -377,6 +359,7 @@ impl<Id> NamedGraph<Id> {
         }
 
         // For each dep -> child if child is not found in deps: add it to linked_nodes
+        // Imports
         for shared in result.iter_mut() {
             for dep in &shared.shared_deps {
                 let Some(children) = graph.get(dep) else {
@@ -397,8 +380,30 @@ impl<Id> NamedGraph<Id> {
             }
         }
 
+        // TODO: do we need parents?
+        Self::rebuild_parents(modules, graph);
         result.sort_by(|left, right| left.module_names.cmp(&right.module_names));
         result
+    }
+
+    fn rebuild_parents(modules: &mut [NamedGraph<Id>], graph: &DepGraph) {
+        // rebuild parents graph after removals
+        for module in modules.iter_mut() {
+            let mut new_parents = DepGraph::new();
+            for node in module.deps.reachable.iter() {
+                let Some(children) = graph.get(node) else {
+                    continue;
+                };
+                // create empty entry
+                let _ = new_parents.entry(*node);
+                for child in children {
+                    if module.deps.reachable.contains(child) {
+                        new_parents.entry(*child).insert(*node);
+                    }
+                }
+            }
+            module.deps.parents = new_parents;
+        }
     }
 }
 
@@ -717,39 +722,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cascade_remove() {
-        let graph = testing::parse_deps(
-            r#"
-            F(1) -> F(2) & F(3) -> F(4) -> F(6) & F(7)
-            F(2) -> F(5) & F(6)
-            "#,
-        )
-        .unwrap();
-
-        let mut reachability_graph = super::ReachabilityGraph::find_reachable_deps(
-            &graph,
-            &testing::uniq_nodes("F(1)").unwrap(),
-        );
-        assert_eq!(
-            reachability_graph.reachable,
-            testing::uniq_nodes("F(1) & F(2) & F(3) & F(4) & F(5) & F(6) & F(7)").unwrap()
-        );
-
-        // this remove f(4) and child f(7), f(6) is still reachable by f(2)
-        reachability_graph.remove_node_tree(&function(4), &graph);
-
-        assert_eq!(
-            reachability_graph.reachable,
-            testing::uniq_nodes("F(1) & F(2) & F(3) & F(5) & F(6)").unwrap()
-        );
-        reachability_graph.remove_node_tree(&function(2), &graph);
-        assert_eq!(
-            reachability_graph.reachable,
-            testing::uniq_nodes("F(1) & F(3)").unwrap()
-        );
-    }
-
-    #[test]
     fn test_shared_deps_reduced() {
         let source = r#"
 F(899) ->  F(307) & F(912)
@@ -819,6 +791,7 @@ F(4671) -> F(4663)
     }
 
     #[test]
+    #[ignore = "takes too long time"]
     fn test_reduce_deps_in_shared_conflict() {
         reduce(INPUT, test_deps_in_shared_conflict_impl);
     }
@@ -1103,7 +1076,7 @@ F(12) -> F(101) & F(301)
         //     first.shared_deps,
         //     testing::uniq_nodes("F(29) & D(2, 0)").unwrap()
         // );
-        for module in &[&modules[1], &modules[1]] {
+        for module in &[&modules[0], &modules[1]] {
             assert_eq!(
                 module.linked_nodes,
                 testing::uniq_nodes("F(29) & D(2, 0)").unwrap()

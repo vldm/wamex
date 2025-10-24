@@ -305,6 +305,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 output_module_info
                     .link_symbols
                     .iter()
+                    .filter(|symbol| !output_module_info.defined_symbols.contains(*symbol))
                     .filter_map(DepNode::as_function)
                     .map(|func_id| ImportedFunction {
                         input_func_id: func_id,
@@ -1592,6 +1593,8 @@ pub struct CommonEmitInfo<'src> {
     // Imports (corresponding to split points) to exclude from all modules.
     pub split_point_imports: BTreeSet<InputFuncId>,
     pub modules_decl: HashMap<ModuleIdentifier, ModuleDecl>,
+
+    pub shared_modules_imports: HashMap<SharedModuleIdentifier, HashSet<DepNode>>,
 }
 
 impl<'src> CommonEmitInfo<'src> {
@@ -1631,7 +1634,10 @@ impl<'src> CommonEmitInfo<'src> {
     fn is_imported(&self, dep: &DepNode) -> bool {
         self.modules_decl.iter().any(|(key, module)| {
             *key != ModuleIdentifier::Main && module.imported_nodes.contains(dep)
-        })
+        }) || self
+            .shared_modules_imports
+            .values()
+            .any(|imports| imports.contains(dep))
     }
 
     fn new(
@@ -1641,34 +1647,45 @@ impl<'src> CommonEmitInfo<'src> {
         let all_relocations = Self::all_relocations(module.wasm)?;
         let mut split_point_imports = BTreeSet::new();
         let mut modules_decl = HashMap::new();
+        let mut shared_modules_imports = HashMap::new();
         for (module_index, (id, output_module)) in program_info.output_modules.iter().enumerate() {
-            let SplitModuleIdentifier::Single(id) = id else {
-                assert!(
-                    output_module.split_points.is_empty(),
-                    "Expected no split points on shared module"
-                );
-                continue;
+            match id {
+                SplitModuleIdentifier::Shared(shared_with) => {
+                    let imported_nodes = output_module
+                        .link_symbols
+                        .iter()
+                        .filter(|node| !output_module.defined_symbols.contains(node))
+                        .cloned()
+                        .collect::<HashSet<_>>();
+                    shared_modules_imports.insert(shared_with.clone(), imported_nodes);
+                    debug_assert!(
+                        output_module.split_points.is_empty(),
+                        "Expected no split points on shared module"
+                    );
+                }
+                SplitModuleIdentifier::Single(id) => {
+                    let imported_nodes = output_module
+                        .link_symbols
+                        .iter()
+                        .inspect(|node| {
+                            debug_assert!(!output_module.defined_symbols.contains(node))
+                        })
+                        .cloned()
+                        .collect::<HashSet<_>>();
+                    modules_decl.insert(
+                        id.clone(),
+                        ModuleDecl {
+                            split_points: output_module.split_points.clone(),
+                            split_points_offset: module_index as u32,
+                            imported_nodes,
+                        },
+                    );
+
+                    for split_point in output_module.split_points.iter() {
+                        split_point_imports.insert(split_point.import_func);
+                    }
+                }
             };
-
-            let imported_nodes = output_module
-                .link_symbols
-                .iter()
-                .inspect(|node| debug_assert!(!output_module.defined_symbols.contains(node)))
-                .cloned()
-                .collect::<HashSet<_>>();
-
-            modules_decl.insert(
-                id.clone(),
-                ModuleDecl {
-                    split_points: output_module.split_points.clone(),
-                    split_points_offset: module_index as u32,
-                    imported_nodes,
-                },
-            );
-
-            for split_point in output_module.split_points.iter() {
-                split_point_imports.insert(split_point.import_func);
-            }
         }
 
         // re-build data_segments (using only available symbols)
@@ -1724,6 +1741,7 @@ impl<'src> CommonEmitInfo<'src> {
             split_point_imports,
             src_data_segments: data_segments,
             modules_decl,
+            shared_modules_imports,
         })
     }
 

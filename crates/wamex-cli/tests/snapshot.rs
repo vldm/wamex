@@ -41,21 +41,28 @@ fn list_exports(src: &InputModule) -> HashSet<String> {
 }
 
 mod static_str {
-    pub const IMPORTS: &[&str] = &[
-        "__wasm_split_00static_str00_import_776d8e51aac0782b17e57d45872c52d7_static_str",
-        "__wasm_split_load_static_str",
-    ];
-    pub const EXPORTS: &[&str] =
+    pub const LOADER_FN: &str = "__wasm_split_load_static_str";
+    pub const IMPORT_FN: &str =
+        "__wasm_split_00static_str00_import_776d8e51aac0782b17e57d45872c52d7_static_str";
+
+    pub const IMPORTS: &[&str] = &[LOADER_FN, IMPORT_FN];
+    pub const EXPORT_BEFORE: &[&str] =
         &["__wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str"];
+    pub const EXPORT_AFTER: &[&str] = &[
+        "__wamex___wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str",
+    ];
 }
 mod string_from_static {
-    pub const IMPORTS: &[&str] = &[
-        "__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static",
-        "__wasm_split_load_string_from_static",
-    ];
-    pub const EXPORTS: &[&str] = &[
+    pub const LOADER_FN: &str = "__wasm_split_load_string_from_static";
+    pub const IMPORT_FN: &str =
+        "__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static";
+
+    pub const IMPORTS: &[&str] = &[LOADER_FN, IMPORT_FN];
+    pub const EXPORT_BEFORE: &[&str] = &[
         "__wasm_split_00string_from_static00_export_17997317cc392c52ed3bea15880aab65_string_from_static",
     ];
+    pub const EXPORT_AFTER: &[&str] =
+        &["__wamex___wasm_split_00string_from_static00_export_17997317cc392c52ed3bea15880aab65_string_from_static"];
 }
 
 const REQUIRED_MAIN_EXPORTS: &[&str] = &[
@@ -76,6 +83,7 @@ fn check_lists(list: &HashSet<String>, expected_lists: &[&[&str]], name: &str) -
             .cloned()
             .collect();
         if !missing.is_empty() {
+            dbg!(&list);
             bail!("Missing item in {name}: {:?}", missing);
         }
     }
@@ -89,7 +97,7 @@ fn check_lists_not(list: &HashSet<String>, unexpected_lists: &[&[&str]], name: &
             .cloned()
             .collect();
         if !unexpected.is_empty() {
-            bail!("Unexpected item in{name}: {:?}", unexpected);
+            bail!("Unexpected item in {name}: {:?}", unexpected);
         }
     }
     Ok(())
@@ -132,7 +140,7 @@ fn test_correct_imports_exports() {
 
     test_list_contain! {
         imports => static_str::IMPORTS, string_from_static::IMPORTS;
-        exports => REQUIRED_MAIN_EXPORTS, static_str::EXPORTS, string_from_static::EXPORTS;
+        exports => REQUIRED_MAIN_EXPORTS, static_str::EXPORT_BEFORE, string_from_static::EXPORT_BEFORE;
         exports => @NOT EXTRA_MAIN_EXPORTS// TODO: It is based on rustc imports
     }
 
@@ -153,9 +161,10 @@ fn test_correct_imports_exports() {
     let main_imports = list_imports(&main);
     let main_exports = list_exports(&main);
     test_list_contain! {
-        main_imports => static_str::IMPORTS, string_from_static::IMPORTS;
+        main_imports => &[static_str::LOADER_FN, string_from_static::LOADER_FN];
         main_exports => EXTRA_MAIN_EXPORTS, REQUIRED_MAIN_EXPORTS;
-        main_exports => @NOT static_str::EXPORTS, string_from_static::EXPORTS
+        main_exports => @NOT static_str::EXPORT_BEFORE, string_from_static::EXPORT_BEFORE;
+        main_imports => @NOT &[static_str::IMPORT_FN, string_from_static::IMPORT_FN]
 
     }
 
@@ -165,10 +174,10 @@ fn test_correct_imports_exports() {
     let static_str_exports = list_exports(&static_str);
 
     test_list_contain! {
-        static_str_imports => &["__lib_base", "__stack_pointer", "memory", "_ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h6dc9611e5a260cc8E"];
-        static_str_exports => static_str::EXPORTS;
+        static_str_imports => &["__lib_base", "__stack_pointer", "memory", "__wamex__ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h6dc9611e5a260cc8E"];
+        static_str_exports => static_str::EXPORT_AFTER;
         static_str_imports => @NOT string_from_static::IMPORTS, static_str::IMPORTS;
-        static_str_exports => @NOT string_from_static::EXPORTS
+        static_str_exports => @NOT string_from_static::EXPORT_BEFORE
     }
 
     let string_from_static =
@@ -179,9 +188,9 @@ fn test_correct_imports_exports() {
     let string_from_static_imports = list_imports(&string_from_static);
     let string_from_static_exports = list_exports(&string_from_static);
     test_list_contain! {
-        string_from_static_imports => &["__lib_base", "__stack_pointer", "memory", "_ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h6dc9611e5a260cc8E", "_ZN5alloc7raw_vec12handle_error17hffd4f9c6873ec0fbE"];
-        string_from_static_exports => string_from_static::EXPORTS;
+        string_from_static_imports => &["__lib_base", "__stack_pointer", "memory", "__wamex__ZN8dlmalloc8dlmalloc17Dlmalloc$LT$A$GT$6malloc17h6dc9611e5a260cc8E", "__wamex__ZN5alloc7raw_vec12handle_error17hffd4f9c6873ec0fbE"];
+        string_from_static_exports => string_from_static::EXPORT_AFTER;
         string_from_static_imports => @NOT string_from_static::IMPORTS, static_str::IMPORTS;
-        string_from_static_exports => @NOT static_str::EXPORTS
+        string_from_static_exports => @NOT static_str::EXPORT_BEFORE
     }
 }
