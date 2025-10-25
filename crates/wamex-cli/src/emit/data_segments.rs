@@ -1,6 +1,7 @@
-use std::{collections::HashSet, fmt::Debug, iter::Peekable};
+use std::{fmt::Debug, iter::Peekable};
 
 use anyhow::Result;
+use gxhash::HashSet;
 use wasm_encoder::Encode;
 use wasmparser::{Data, DataKind, SymbolFlags};
 

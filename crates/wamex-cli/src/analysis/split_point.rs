@@ -1,9 +1,7 @@
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    fmt::Debug,
-};
+use std::{collections::BTreeMap, fmt::Debug};
 
 use anyhow::{anyhow, bail};
+use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 
@@ -11,7 +9,7 @@ use super::dep_graph::{DepGraph, DepNode};
 use crate::{
     analysis::{
         self,
-        dep_graph::{find_reachable_deps, DepList, NamedGraph},
+        dep_graph::{find_reachable_deps, DepList, DepMiniList, NamedGraph},
     },
     index::{ExportId, ImportId, InputFuncId},
     read::InputModule,
@@ -23,8 +21,8 @@ use crate::{
 pub struct OutputModuleInfo {
     pub defined_symbols: DepList,
     // Shared imports that should be imported from other modules.
-    pub imports: DepList,
-    pub exports: DepList,
+    pub imports: DepMiniList,
+    pub exports: DepMiniList,
     // TODO: Instead of split points we need list of what "split-points" we exports, and what we imports
     pub split_points: Vec<SplitPoint>,
 }
@@ -221,11 +219,8 @@ impl SplitProgramInfo {
     // TODO: Not sure why imports are used here.
     // Add start_func, exports and imports
     // Filter-out all split points related functions.
-    fn get_main_module_roots(
-        info: &analysis::ModuleInfo,
-        split_points: &[SplitPoint],
-    ) -> HashSet<DepNode> {
-        let mut roots: HashSet<DepNode> = HashSet::new();
+    fn get_main_module_roots(info: &analysis::ModuleInfo, split_points: &[SplitPoint]) -> DepList {
+        let mut roots: DepList = DepList::new();
         if let Some(id) = info.wasm.code.section_payload.start_func {
             roots.insert(DepNode::Function(id));
         }
@@ -280,7 +275,7 @@ impl SplitProgramInfo {
         // split module. Symbols may be reachable from more than one split module;
         // these symbols will be moved to a separate module.
         for (module_name, entry_points) in split_points_by_module.iter() {
-            let mut roots = HashSet::<DepNode>::new();
+            let mut roots = DepList::new();
             for entry_point in entry_points.iter() {
                 roots.insert(DepNode::Function(entry_point.export_func));
             }
@@ -316,7 +311,7 @@ impl SplitProgramInfo {
                     imports,
                     split_points,
                     // Module can only import symbols from shared modules.
-                    exports: DepList::new(),
+                    exports: DepMiniList::new(),
                 },
             )
         }));

@@ -22,6 +22,7 @@ colored = "3"
 derivative = "2.2"
 smallvec = "1.15"
 ptree = "0.5.0"
+linear-map = "1.2.0"
 
 serde_json = { version = "1.0.104", optional = true }
 serde = { version = "1.0.130", features = ["derive"], optional = true }

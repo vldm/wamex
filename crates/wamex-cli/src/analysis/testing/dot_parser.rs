@@ -10,8 +10,7 @@
 //! First operator cannot be `&`.
 //!
 
-use std::collections::{HashMap, HashSet};
-
+use gxhash::{HashMap, HashMapExt, HashSet};
 use nom::{
     branch::alt,
     bytes::{tag, take_while},
@@ -182,6 +181,8 @@ pub fn parse_list(input: &str) -> IResult<&str, Vec<DepNode>> {
 
 #[cfg(test)]
 pub mod tests {
+    use gxhash::{HashMap, HashMapExt};
+
     use crate::index::Id;
 
     pub fn function(id: u32) -> super::DepNode {
@@ -218,7 +219,7 @@ pub mod tests {
         let (remaining, nodes) = super::parse_oneline_deps(input).unwrap();
         assert_eq!(remaining, "");
         assert_eq!(nodes, {
-            let mut map = std::collections::HashMap::new();
+            let mut map = HashMap::new();
             map.insert(function(1), vec![data_symbol(2, 3)].into_iter().collect());
             map
         });
@@ -234,7 +235,7 @@ pub mod tests {
         assert_eq!(remaining, "");
         assert_eq!(same_nodes, nodes);
         assert_eq!(nodes, {
-            let mut map = std::collections::HashMap::new();
+            let mut map = HashMap::new();
             map.insert(
                 function(1),
                 vec![data_symbol(2, 3), function(4)].into_iter().collect(),
@@ -254,7 +255,7 @@ pub mod tests {
         let (remaining, nodes) = super::parse_deps(input).unwrap();
         assert_eq!(remaining, "");
         assert_eq!(nodes, {
-            let mut map = std::collections::HashMap::new();
+            let mut map = HashMap::new();
 
             map.insert(
                 function(1),

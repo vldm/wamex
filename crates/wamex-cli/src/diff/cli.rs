@@ -1,7 +1,7 @@
 //! Find a difference between two wasm modules.
 //!
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use colored::Colorize;
 use similar::{ChangeTag, TextDiff};

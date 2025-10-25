@@ -1,0 +1,1 @@
+/crates/wamex-cli/test-data/lazy_routes.wasm filter=lfs diff=lfs merge=lfs -text

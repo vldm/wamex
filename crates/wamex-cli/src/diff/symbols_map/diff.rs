@@ -1,8 +1,9 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     mem,
 };
 
+use gxhash::{HashMap, HashMapExt};
 use wamex_metadata::SymbolSignature;
 
 use super::{GraphNode, NodeInfo, NodeMarker, Structure};

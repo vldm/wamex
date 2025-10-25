@@ -1,10 +1,12 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, VecDeque},
     fmt::Debug,
     ops::Range,
 };
 
 use anyhow::Context;
+use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use smallvec::SmallVec;
 use wasmparser::RelocationType;
 
 use crate::{
@@ -45,15 +47,131 @@ impl DepNode {
     }
 }
 
-pub type DepList = HashSet<DepNode>;
+// TODO: optimize inserts in dep graph building
+/// List of dependency, optimized for small number of entries.
+/// Allows fast lookup but in compromise of slower inserts and removes.
+/// Based on Vec with binary search.
+// #[derive(Debug, Clone, Eq, PartialEq)]
+// pub struct DepMiniList<T = DepNode> {
+//     nodes: SmallVec<[T; 8]>,
+// }
+// impl<T> DepMiniList<T>
+// where
+//     T: Ord + Copy,
+// {
+//     pub fn new() -> Self {
+//         Self::default()
+//     }
+//     pub fn contains(&self, node: &T) -> bool {
+//         self.nodes.binary_search(node).is_ok()
+//     }
+//     pub fn insert(&mut self, node: T) -> bool {
+//         match self.nodes.binary_search(&node) {
+//             Ok(_) => false, // already exists
+//             Err(pos) => {
+//                 self.nodes.insert(pos, node);
+//                 true
+//             }
+//         }
+//     }
+//     pub fn remove(&mut self, node: &T) -> bool {
+//         if let Ok(pos) = self.nodes.binary_search(node) {
+//             self.nodes.remove(pos);
+//             true
+//         } else {
+//             false
+//         }
+//     }
+//     pub fn is_empty(&self) -> bool {
+//         self.nodes.is_empty()
+//     }
+//     pub fn len(&self) -> usize {
+//         self.nodes.len()
+//     }
+//     pub fn iter(&self) -> impl Iterator<Item = &T> {
+//         self.nodes.iter()
+//     }
+//     // Optimized extend that adds all items and then resorts and dedups
+//     // Usefull if initial collection is small and we want to add many items at once
+//     pub(crate) fn extend_and_resort(&mut self, iter: impl Iterator<Item = T>) {
+//         self.nodes.extend(iter);
+//         self.nodes.sort_unstable();
+//         self.nodes.dedup();
+//     }
+// }
+
+// impl PartialEq<DepList> for DepMiniList {
+//     fn eq(&self, other: &DepList) -> bool {
+//         if self.len() != other.len() {
+//             return false;
+//         }
+//         for item in self.iter() {
+//             if !other.contains(item) {
+//                 return false;
+//             }
+//         }
+//         true
+//     }
+// }
+
+// impl<T> Default for DepMiniList<T> {
+//     fn default() -> Self {
+//         Self {
+//             nodes: SmallVec::new(),
+//         }
+//     }
+// }
+
+// impl<T> FromIterator<T> for DepMiniList<T>
+// where
+//     T: Ord + Copy,
+// {
+//     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+//         let mut list = DepMiniList::new();
+//         list.extend(iter);
+//         list
+//     }
+// }
+
+// impl<'a, T> IntoIterator for &'a DepMiniList<T> {
+//     type Item = &'a T;
+//     type IntoIter = std::slice::Iter<'a, T>;
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.nodes.iter()
+//     }
+// }
+// impl<T> IntoIterator for DepMiniList<T> {
+//     type Item = T;
+//     type IntoIter = smallvec::IntoIter<[T; 8]>;
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.nodes.into_iter()
+//     }
+// }
+
+// impl<T> Extend<T> for DepMiniList<T>
+// where
+//     T: Ord + Copy,
+// {
+//     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+//         for item in iter {
+//             self.insert(item);
+//         }
+//     }
+// }
+
+// Old implementation (faster than HashSet)
+pub type DepList<T = DepNode> = BTreeSet<T>;
+
+pub type DepMiniList<T = DepNode> = DepList<T>;
 
 #[derive(Clone, Default)]
 struct SymbolStructure {
-    pub parents: DepList,
-    pub childs: DepList,
+    pub parents: DepMiniList,
+    pub childs: DepMiniList,
 }
 #[derive(Clone, Default)]
 pub struct DepGraph {
+    // TODO: use VecMap kind of structure for better performance
     nodes: HashMap<DepNode, SymbolStructure>,
 }
 impl DepGraph {
@@ -66,13 +184,13 @@ impl DepGraph {
         self.nodes.entry(parent).or_default().childs.insert(child);
         self.nodes.entry(child).or_default().parents.insert(parent);
     }
-    pub fn get_childs(&self, key: &DepNode) -> Option<&DepList> {
+    pub fn get_childs(&self, key: &DepNode) -> Option<&DepMiniList> {
         self.nodes.get(key).map(|s| &s.childs)
     }
-    pub fn get_parents(&self, key: &DepNode) -> Option<&DepList> {
+    pub fn get_parents(&self, key: &DepNode) -> Option<&DepMiniList> {
         self.nodes.get(key).map(|s| &s.parents)
     }
-    pub fn iter_childs(&self) -> impl Iterator<Item = (&DepNode, &DepList)> {
+    pub fn iter_childs(&self) -> impl Iterator<Item = (&DepNode, &DepMiniList)> {
         self.nodes.iter().map(|(k, v)| (k, &v.childs))
     }
 }
@@ -105,7 +223,7 @@ pub struct NamedGraph<Id> {
     pub reachable: DepList,
 
     /// This field is hidden, because it is output parameter of `calculate_shared_modules`
-    imports: HashSet<DepNode>,
+    imports: DepMiniList,
 }
 
 impl<Id> NamedGraph<Id> {
@@ -113,10 +231,10 @@ impl<Id> NamedGraph<Id> {
         Self {
             module,
             reachable,
-            imports: HashSet::new(),
+            imports: DepMiniList::new(),
         }
     }
-    pub fn imports(&self) -> &HashSet<DepNode> {
+    pub fn imports(&self) -> &DepMiniList {
         &self.imports
     }
 }
@@ -124,9 +242,9 @@ impl<Id> NamedGraph<Id> {
 #[derive(Debug, Clone)]
 pub struct SharedEntries<Id> {
     pub module_names: Vec<Id>,
-    pub shared_deps: HashSet<DepNode>,
-    pub exports: HashSet<DepNode>,
-    pub imports: HashSet<DepNode>,
+    pub shared_deps: DepList,
+    pub exports: DepMiniList,
+    pub imports: DepMiniList,
 }
 
 pub trait SymbolTable {
@@ -205,18 +323,17 @@ pub fn get_dependencies(
 }
 
 // traverse the dep graph starting from roots and return all reachable nodes
-pub fn find_reachable_deps(deps: &DepGraph, roots: &HashSet<DepNode>) -> DepList {
+pub fn find_reachable_deps(deps: &DepGraph, roots: &DepList) -> DepList {
     let mut queue: VecDeque<DepNode> = roots.iter().copied().collect();
-    let mut seen = HashSet::<DepNode>::new();
+    let mut seen = DepList::new();
 
     while let Some(node) = queue.pop_front() {
         // println!("queue node: {node:?}");
 
-        if seen.contains(&node) {
+        if !seen.insert(node) {
             continue;
         }
 
-        seen.insert(node);
         let Some(children) = deps.get_childs(&node) else {
             continue;
         };
@@ -230,8 +347,8 @@ pub fn find_reachable_deps(deps: &DepGraph, roots: &HashSet<DepNode>) -> DepList
 impl<Id> NamedGraph<Id> {
     /// Collect list of modules that owns a given dep node
     /// Returns a map of dep node to set of module ids that owns it
-    fn collect_visited_by(modules: &[NamedGraph<Id>]) -> HashMap<DepNode, HashSet<usize>> {
-        let mut visited_by: HashMap<DepNode, HashSet<usize>> = HashMap::new();
+    fn collect_visited_by(modules: &[NamedGraph<Id>]) -> HashMap<DepNode, DepList<usize>> {
+        let mut visited_by: HashMap<DepNode, DepList<usize>> = HashMap::new();
         for (module_id, module) in modules.iter().enumerate() {
             for dep in module.reachable.iter() {
                 visited_by.entry(*dep).or_default().insert(module_id);
@@ -243,11 +360,11 @@ impl<Id> NamedGraph<Id> {
     /// List only shared entries that have parents in module entries.
     /// This will collect nodes that module entries imports from shared entries.
     pub fn reduce_shared_entries(
-        shared_entries: &HashSet<DepNode>,
-        module_entries: &HashSet<DepNode>,
+        shared_entries: &DepList,
+        module_entries: &DepList,
         graph: &DepGraph,
-    ) -> HashSet<DepNode> {
-        let mut reduced = HashSet::new();
+    ) -> DepList {
+        let mut reduced = DepList::new();
         for dep in shared_entries {
             if let Some(parent) = graph.get_parents(dep) {
                 if !parent.iter().any(|p| module_entries.contains(p)) {
@@ -270,13 +387,12 @@ impl<Id> NamedGraph<Id> {
         Id: Clone + Ord + Debug,
     {
         //TODO: use bitset as key instead
-        let mut shared_entries: HashMap<Vec<usize>, HashSet<DepNode>> = HashMap::new();
+        let mut shared_entries: HashMap<Vec<usize>, DepList> = HashMap::new();
 
         for m in modules.iter() {
             debug_assert!(m.imports.is_empty(), "Linked nodes is output parameter");
         }
 
-        let mut module_shared_deps: HashMap<usize, HashSet<DepNode>> = HashMap::new();
         let visited_by = Self::collect_visited_by(modules);
 
         for (dep, owner_modules) in visited_by {
@@ -284,10 +400,6 @@ impl<Id> NamedGraph<Id> {
                 for module_id in &owner_modules {
                     let module = &mut modules[*module_id];
                     module.reachable.remove(&dep);
-                    module_shared_deps
-                        .entry(*module_id)
-                        .or_default()
-                        .insert(dep);
                 }
                 let mut owner_modules: Vec<usize> = owner_modules.into_iter().collect();
                 owner_modules.sort_unstable();
@@ -298,7 +410,7 @@ impl<Id> NamedGraph<Id> {
         let mut result = Vec::new();
         for (module_ids, shared_deps) in shared_entries {
             let mut module_names = Vec::new();
-            let mut shared_exports = DepList::new();
+            let mut shared_exports = DepMiniList::new();
 
             for module_id in module_ids {
                 let module = &mut modules[module_id];
@@ -315,30 +427,22 @@ impl<Id> NamedGraph<Id> {
                 module_names,
                 shared_deps,
                 exports: shared_exports,
-                imports: DepList::new(),
+                imports: DepMiniList::new(),
             });
         }
 
         // For each dep -> child if child is not found in deps: add it to linked_nodes
         // Imports
         for shared in result.iter_mut() {
-            for dep in &shared.shared_deps {
-                let Some(children) = graph.get_childs(dep) else {
-                    continue;
-                };
-                for child in children {
-                    if shared.shared_deps.contains(child) {
-                        continue;
-                    }
+            let new_imports = shared
+                .shared_deps
+                .iter()
+                .filter_map(|d| graph.get_childs(d))
+                .flatten()
+                .filter(|child| !shared.shared_deps.contains(child))
+                .copied();
 
-                    if shared.imports.insert(*child) {
-                        log::debug!(
-                            "Shared module {:?} linked node added: {child:?}",
-                            shared.module_names
-                        );
-                    }
-                }
-            }
+            shared.imports.extend(new_imports);
         }
         result.sort_by(|left, right| left.module_names.cmp(&right.module_names));
         result
@@ -362,12 +466,9 @@ fn find_data_symbol_containing_range(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{HashSet, VecDeque},
-        fs::File,
-        io::Write,
-    };
+    use std::{collections::VecDeque, fs::File, io::Write};
 
+    use gxhash::HashSet;
     use lazy_static::lazy_static;
     use testing::tests::function;
 
@@ -470,7 +571,7 @@ mod tests {
 
         let reachability_graph = super::find_reachable_deps(
             &dep_graph,
-            &HashSet::from([DepNode::Function(no_inline_fn)]),
+            &DepList::from_iter([DepNode::Function(no_inline_fn)]),
         );
         // no_inline_fn -> data1
         //              -> data2
@@ -484,7 +585,7 @@ mod tests {
         let indirect_fn = info.find_function_id_by_name("indirect_fn").unwrap();
         let reachability_graph = super::find_reachable_deps(
             &dep_graph,
-            &HashSet::from([DepNode::Function(indirect_fn)]),
+            &DepList::from_iter([DepNode::Function(indirect_fn)]),
         );
         reachability_graph.print("indirect_fn", &info, &dep_graph);
         // almost same count, but indirect_fn has more deep graph and switchtable

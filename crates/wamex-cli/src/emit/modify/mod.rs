@@ -10,10 +10,11 @@ mod constant_extracton;
 mod relocation;
 mod start_fn_gen;
 
-use std::{any::Any, collections::HashMap, ops::Range};
+use std::{any::Any, ops::Range};
 
 use anyhow::{bail, Result};
 use constant_extracton::ConstantExtractionEntry;
+use gxhash::{HashMap, HashMapExt};
 pub use relocation::RelocateState;
 pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
 use wasmparser::{BinaryReader, FunctionBody};

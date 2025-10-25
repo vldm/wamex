@@ -1,7 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-};
+use std::fmt::Debug;
+
+use gxhash::HashSet;
 
 use crate::{
     analysis::{
@@ -16,7 +15,7 @@ use crate::{
 pub(crate) fn print_deps_inner(
     module_name: &str,
     info: &analysis::ModuleInfo,
-    reachable: &HashSet<DepNode>,
+    reachable: &DepList,
     graph: &DepGraph,
 ) {
     let size_fn = |dep: &DepNode| match dep {

@@ -1,6 +1,5 @@
-use std::collections::HashSet;
-
 use anyhow::anyhow;
+use gxhash::{HashSet, HashSetExt};
 
 use crate::analysis::dep_graph::{DepGraph, DepList};
 
@@ -29,7 +28,7 @@ pub fn uniq_nodes(input: &str) -> anyhow::Result<DepList> {
     let (_input, deps) =
         dot_parser::parse_list(input).map_err(|e| anyhow!("Failed to parse list: {e}"))?;
 
-    let mut nodes = HashSet::new();
+    let mut nodes = DepList::new();
     for value in deps {
         nodes.insert(value);
     }

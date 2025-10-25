@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -7,6 +7,7 @@ use std::{
 use analysis::split_point::SplitProgramInfo;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use gxhash::{HashSet, HashSetExt};
 
 // todo: Refactor analysis and emit modules.
 mod analysis;

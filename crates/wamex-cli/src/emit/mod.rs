@@ -1,6 +1,6 @@
 use std::{
     borrow::{self, Cow},
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     convert::identity,
     ops::Range,
 };
@@ -8,6 +8,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 pub use data_segments::{DataSegment, DataSegmentOutput, NamedData, SymbolRelation};
 use globals::GlobalConstructor;
+use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use index_safety::OutputFuncId;
 use modify::{init_each_store_var, ModifyContext, StoreType};
 use wamex_metadata::{BumpVersion, DemangledName, ExportedSymbol};
