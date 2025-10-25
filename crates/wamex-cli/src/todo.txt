@@ -1,35 +1,24 @@
-1. Implement a strategy outside `ModuleEmitState::produce_state` to allow different modes
-3. Process "Unnamed" data segments ?
-4. Recreate relocations
-5. Generate the linking, and relocations sections
-7. implement "streaming" code copy during emit, without instructions parsing
-8. process only relocation entry specific for section
-9. Cleanup exports from sub-modules 
-10. Add imports for data symbols.
+1. Make two mode:
+- LinkageType::Dynamic - emit modules as shared-libraries, keeping space for entrypoints (partially done, except indirect function position)
+- LinkageType::Static - emit modules that will fill "segments" of data, so the layout is preserved.
+    Modules Entrypoints are added at end of indirect_function_table
+2. Data segments improvements:
+- process "Unnamed" data symbols.
+- process "passive" data segments.
+- create dep link for symbols with negative offset, also make sure offset is not out of bound for symbol. (BoundToPrevious symbols)
+3. Custom sections:
+- provides - simple section that can be copied, and added info about wamex.
+- linking/debug/relocation sections.
+4. Optimisation:
+- ignore instruction processing during fn modify entry processing.(aka streaming code processing)
+5. runtime code reduction for wasm-link crate (can be reimplemented on js, or inlined). twiggy can help
+6. Fix storage variables- instead of global vars, emit local.
 
-
-- Add dep in DepGraph for BoundToPrevious symbol
-- impl tests for Structure recovery (partially done)
-- Convert relocations with negative appends to relocations to previous symbol
-- Correct global relocations to external sub-modules
-
-Roadmap:
-1. calculate imports exports instead of linked_symbols
-2. wasm-link code reduction
-2.1 extend twiggy report for line -> code mapping
-3. storage globals -> to local vars.
-4. emit symbol info 
-5. emit debug info 
-6. emit linking info
-
-
-Document:
-1. constant exraction 
-2. extended const need in segment allocation
-3. start fn generator (aka relocation)
-4. export wasm-bindgen imported fns (externref shrims stubs)
-5. 
-
-
-! experiment with Box::pin(load_inner) to reduce size of extracted modules
+7. Document:
+-  constant extraction
+-  extended-const feature needs in segment allocation
+-  start fn generator (aka dyn relocation)
+-  export wasm-bindgen imported fns (externref shrims stubs)
+8. Experimental:
+- Box::pin(load_inner) can reduce size of extracted modules (the dep will be fully emited inside main module)
 
