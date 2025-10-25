@@ -6,7 +6,7 @@ use std::{
 use crate::{
     analysis::{
         self,
-        dep_graph::{DepGraph, DepNode},
+        dep_graph::{DepGraph, DepList, DepNode},
         split_point::OutputModuleInfo,
     },
     helpers::debug_fmt_mostly_filled,
@@ -17,7 +17,7 @@ pub(crate) fn print_deps_inner(
     module_name: &str,
     info: &analysis::ModuleInfo,
     reachable: &HashSet<DepNode>,
-    parents: &DepGraph,
+    graph: &DepGraph,
 ) {
     let size_fn = |dep: &DepNode| match dep {
         DepNode::Function(index) => {
@@ -64,24 +64,15 @@ pub(crate) fn print_deps_inner(
             )
         }
     };
-    let mut tree: HashMap<_, Vec<_>> = HashMap::new();
-    for child in reachable.iter() {
-        tree.entry(child).or_default();
-        for parent in parents
-            .get(child)
-            .into_iter()
-            .flatten()
-            .filter(|p| reachable.contains(p))
-        // important when parents is full tree
-        {
-            tree.entry(parent).or_default().push(child);
-        }
-    }
 
     println!("SPLIT: ============== {module_name}");
-    for (node, children) in tree.iter() {
+    for (node, children) in graph.iter_childs() {
+        if !reachable.contains(&node) {
+            continue;
+        }
+
         println!("---{}---", format_dep(node));
-        for parent in parents.get(node).into_iter().flatten() {
+        for parent in graph.get_parents(node).into_iter().flatten() {
             println!("<=={} (parent)", format_dep(parent));
         }
         println!("-------------");
@@ -190,7 +181,6 @@ impl Debug for OutputModuleInfo {
 
 impl OutputModuleInfo {
     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo, graph: &DepGraph) {
-        let parents = graph.reverse();
-        print_deps_inner(module_name, info, &self.defined_symbols, &parents);
+        print_deps_inner(module_name, info, &self.defined_symbols, &graph);
     }
 }

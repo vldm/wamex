@@ -141,9 +141,8 @@ pub fn split(args: Split) -> Result<()> {
     // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
     crate::emit::merge_main_shared(&mut split_program_info);
 
-    let parents = dep_graph.reverse();
     // some wbg functions need to be moved to main before splitting.
-    let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &parents, &mut split_program_info);
+    let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
     crate::emit::emit_modules(
         &info,
         &split_program_info,

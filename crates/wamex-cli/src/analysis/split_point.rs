@@ -6,7 +6,6 @@ use std::{
 use anyhow::{anyhow, bail};
 use lazy_static::lazy_static;
 use regex::Regex;
-use rkyv::ser::sharing::Share;
 
 use super::dep_graph::{DepGraph, DepNode};
 use crate::{

@@ -12,7 +12,13 @@ pub use dot_parser::tests;
 pub fn parse_deps(input: &str) -> anyhow::Result<DepGraph> {
     let val =
         dot_parser::parse_deps(input).map_err(|e| anyhow!("Failed to parse dependencies: {e}"))?;
-    Ok(val.1.into())
+    let mut graph = DepGraph::new();
+    for (parent, childs) in val.1 {
+        for child in childs {
+            graph.insert_child(parent.clone(), child);
+        }
+    }
+    Ok(graph)
 }
 
 /// Returns a set of unique nodes from the input string.

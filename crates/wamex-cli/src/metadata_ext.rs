@@ -118,7 +118,6 @@ impl ModuleExt for Module {
             .iter()
             .fold(BTreeMap::new(), |mut acc, (name, deps)| {
                 if name.is_shared() || name.is_main() {
-                    // todo!()
                     for dep in &deps.exports {
                         let prev = acc.insert(dep.clone(), name.clone());
                         assert!(
@@ -149,30 +148,27 @@ impl ModuleExt for Module {
                     version: BumpVersion::new(),
                 });
             }
-            todo!();
-            // for node in &split_deps.link_symbols {
-            //     let exported_symbol = ExportedSymbol {
-            //         signature: SymbolSignature::from_node(module_info, node),
-            //         version: BumpVersion::new(),
-            //     };
-            //     match name {
-            //         SplitModuleIdentifier::Shared(_) => provides.push(exported_symbol),
-            //         name @ SplitModuleIdentifier::Single(_)
-            //             if module_structure != ModuleStructure::EmitMainChunked
-            //                 && name.is_main() =>
-            //         {
-            //             provides.push(exported_symbol);
-            //         }
-            //         SplitModuleIdentifier::Single(_) => {
-            //             let import_module = modules_that_exports
-            //                 .get(node)
-            //                 .expect("No exporting module found");
-            //             deps.entry(import_module.name())
-            //                 .or_default()
-            //                 .push(exported_symbol);
-            //         }
-            //     }
-            // }
+            for node in &split_deps.exports {
+                let exported_symbol = ExportedSymbol {
+                    signature: SymbolSignature::from_node(module_info, node),
+                    version: BumpVersion::new(),
+                };
+
+                provides.push(exported_symbol)
+            }
+            for node in &split_deps.imports {
+                let exported_symbol = ExportedSymbol {
+                    signature: SymbolSignature::from_node(module_info, node),
+                    version: BumpVersion::new(),
+                };
+
+                let import_module = modules_that_exports
+                    .get(node)
+                    .expect("No exporting module found");
+                deps.entry(import_module.name())
+                    .or_default()
+                    .push(exported_symbol);
+            }
 
             metadata.insert(
                 module_name,

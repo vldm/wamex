@@ -267,7 +267,9 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
             let need_export = {
                 // if any module linked to current function
-                let static_export = emit_info.is_imported(&DepNode::Function(func_id));
+                let static_export = output_module_info
+                    .exports
+                    .contains(&DepNode::Function(func_id));
                 // Or it is linked indirectly via split points
                 let lazy_export = output_module_info
                     .split_points
@@ -1575,7 +1577,6 @@ impl IndirectFunctionEmitInfo {
 #[derive(Debug)]
 pub struct ModuleDecl {
     pub split_points: Vec<SplitPoint>,
-    pub imported_nodes: HashSet<DepNode>,
 
     // offset in indirect_function table where this module's entrypoints start
     split_points_offset: u32,
@@ -1593,8 +1594,6 @@ pub struct CommonEmitInfo<'src> {
     // Imports (corresponding to split points) to exclude from all modules.
     pub split_point_imports: BTreeSet<InputFuncId>,
     pub modules_decl: HashMap<ModuleIdentifier, ModuleDecl>,
-
-    pub shared_modules_imports: HashMap<SharedModuleIdentifier, HashSet<DepNode>>,
 }
 
 impl<'src> CommonEmitInfo<'src> {
@@ -1630,16 +1629,6 @@ impl<'src> CommonEmitInfo<'src> {
         self.split_point_imports.len() as u64
     }
 
-    /// Check if dependency is imported by any module except main.
-    fn is_imported(&self, dep: &DepNode) -> bool {
-        self.modules_decl.iter().any(|(key, module)| {
-            *key != ModuleIdentifier::Main && module.imported_nodes.contains(dep)
-        }) || self
-            .shared_modules_imports
-            .values()
-            .any(|imports| imports.contains(dep))
-    }
-
     fn new(
         module: &analysis::ModuleInfo<'_, 'src>,
         program_info: &SplitProgramInfo,
@@ -1647,47 +1636,25 @@ impl<'src> CommonEmitInfo<'src> {
         let all_relocations = Self::all_relocations(module.wasm)?;
         let mut split_point_imports = BTreeSet::new();
         let mut modules_decl = HashMap::new();
-        let mut shared_modules_imports = HashMap::new();
         for (module_index, (id, output_module)) in program_info.output_modules.iter().enumerate() {
-            match id {
-                SplitModuleIdentifier::Shared(shared_with) => {
-                    let imported_nodes = output_module
-                        .imports
-                        .iter()
-                        .inspect(|node| {
-                            debug_assert!(!output_module.defined_symbols.contains(node))
-                        })
-                        .cloned()
-                        .collect::<HashSet<_>>();
-                    shared_modules_imports.insert(shared_with.clone(), imported_nodes);
-                    debug_assert!(
-                        output_module.split_points.is_empty(),
-                        "Expected no split points on shared module"
-                    );
-                }
-                SplitModuleIdentifier::Single(id) => {
-                    let imported_nodes = output_module
-                        .imports
-                        .iter()
-                        .inspect(|node| {
-                            debug_assert!(!output_module.defined_symbols.contains(node))
-                        })
-                        .cloned()
-                        .collect::<HashSet<_>>();
-                    modules_decl.insert(
-                        id.clone(),
-                        ModuleDecl {
-                            split_points: output_module.split_points.clone(),
-                            split_points_offset: module_index as u32,
-                            imported_nodes,
-                        },
-                    );
-
-                    for split_point in output_module.split_points.iter() {
-                        split_point_imports.insert(split_point.import_func);
-                    }
-                }
+            let SplitModuleIdentifier::Single(id) = &id else {
+                debug_assert!(
+                    output_module.split_points.is_empty(),
+                    "Expected no split points on shared module"
+                );
+                continue;
             };
+            modules_decl.insert(
+                id.clone(),
+                ModuleDecl {
+                    split_points: output_module.split_points.clone(),
+                    split_points_offset: module_index as u32,
+                },
+            );
+
+            for split_point in output_module.split_points.iter() {
+                split_point_imports.insert(split_point.import_func);
+            }
         }
 
         // re-build data_segments (using only available symbols)
@@ -1743,7 +1710,6 @@ impl<'src> CommonEmitInfo<'src> {
             split_point_imports,
             src_data_segments: data_segments,
             modules_decl,
-            shared_modules_imports,
         })
     }
 
@@ -1982,11 +1948,30 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
                 }
             });
 
-    let main_module = &mut other
-        .iter_mut()
-        .find(|(id, _)| *id == MAIN_ID)
-        .expect("Main module not found")
-        .1;
+    // split iter at 3 parts: before main, main, after main
+    let (before, main_module, after) = {
+        let main_module_index = other
+            .iter()
+            .enumerate()
+            .find(|(_, (id, _))| *id == MAIN_ID)
+            .expect("Main module not found")
+            .0;
+        let (before, main_and_next) = other.split_at_mut(main_module_index);
+        let (main_module, after) = main_and_next.split_at_mut(1);
+        let main_module = &mut main_module[0].1;
+        (before, main_module, after)
+    };
+
+    // check import in all remain modules except main
+    let is_imported_by_other = |node: &DepNode| {
+        before
+            .iter()
+            .chain(after.iter())
+            .any(|(_, mod_state)| mod_state.imports.contains(node))
+            || after
+                .iter()
+                .any(|(_, mod_state)| mod_state.imports.contains(node))
+    };
 
     #[cfg(debug_assertions)]
     let mut check_imports = vec![];
@@ -1999,6 +1984,10 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
             // remove from main link symbols.
             if !main_module.imports.remove(&node) {
                 log::warn!("Shared module symbol not found in main: {node:?}");
+            }
+            // This was imported not only by main, so export is needed.
+            if is_imported_by_other(&node) {
+                main_module.exports.insert(node.clone());
             }
         }
 
@@ -2034,7 +2023,7 @@ fn is_wasm_bindgen_descriptor(name: &str) -> bool {
 // Returns set of moved functions. So main module can generate stubs for them.
 pub fn hoist_wbg_deps_to_main<'a, 'src>(
     module: &'a analysis::ModuleInfo<'a, 'src>,
-    parents: &DepGraph,
+    graph: &DepGraph,
     program_info: &mut SplitProgramInfo,
 ) -> HashSet<InputFuncId> {
     let wbg_fns: HashSet<_> = module
@@ -2051,7 +2040,7 @@ pub fn hoist_wbg_deps_to_main<'a, 'src>(
         if !to_move.insert(func) {
             continue;
         }
-        if let Some(parents) = parents.get(&DepNode::Function(func)) {
+        if let Some(parents) = graph.get_parents(&DepNode::Function(func)) {
             for parent in parents {
                 let DepNode::Function(parent) = parent else {
                     panic!("Non-function parent for wbg function: {parent:?}");

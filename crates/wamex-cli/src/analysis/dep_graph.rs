@@ -46,50 +46,40 @@ impl DepNode {
 }
 
 pub type DepList = HashSet<DepNode>;
+
+#[derive(Clone, Default)]
+struct SymbolStructure {
+    pub parents: DepList,
+    pub childs: DepList,
+}
 #[derive(Clone, Default)]
 pub struct DepGraph {
-    deps: HashMap<DepNode, DepList>,
+    nodes: HashMap<DepNode, SymbolStructure>,
 }
 impl DepGraph {
     pub fn new() -> Self {
         Self {
-            deps: HashMap::new(),
+            nodes: HashMap::new(),
         }
     }
-    pub fn entry(&mut self, key: DepNode) -> &mut DepList {
-        self.deps.entry(key).or_default()
+    pub fn insert_child(&mut self, parent: DepNode, child: DepNode) {
+        self.nodes.entry(parent).or_default().childs.insert(child);
+        self.nodes.entry(child).or_default().parents.insert(parent);
     }
-    pub fn get(&self, key: &DepNode) -> Option<&DepList> {
-        self.deps.get(key)
+    pub fn get_childs(&self, key: &DepNode) -> Option<&DepList> {
+        self.nodes.get(key).map(|s| &s.childs)
     }
-    pub fn get_mut(&mut self, key: &DepNode) -> Option<&mut DepList> {
-        self.deps.get_mut(key)
+    pub fn get_parents(&self, key: &DepNode) -> Option<&DepList> {
+        self.nodes.get(key).map(|s| &s.parents)
     }
-    pub fn iter(&self) -> impl Iterator<Item = (&DepNode, &DepList)> {
-        self.deps.iter()
-    }
-    /// Build a reverse graph from the given dep graph.
-    /// parent -> child becomes child -> parent
-    ///
-    /// This is usefull for finding all parents of a given node.
-    pub fn reverse(&self) -> DepGraph {
-        let mut reversed = DepGraph::new();
-        for (node, deps) in self.iter() {
-            for dep in deps {
-                reversed.entry(*dep).insert(*node);
-            }
-        }
-        reversed
+    pub fn iter_childs(&self) -> impl Iterator<Item = (&DepNode, &DepList)> {
+        self.nodes.iter().map(|(k, v)| (k, &v.childs))
     }
 }
-impl From<HashMap<DepNode, DepList>> for DepGraph {
-    fn from(deps: HashMap<DepNode, DepList>) -> Self {
-        Self { deps }
-    }
-}
+
 impl Debug for DepGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (node, deps) in self.iter() {
+        for (node, deps) in self.iter_childs() {
             if deps.is_empty() {
                 writeln!(f, "{node:?} -> <no deps>")?;
                 continue;
@@ -169,10 +159,10 @@ pub fn get_dependencies(
     info: &analysis::ModuleInfo,
 ) -> anyhow::Result<DepGraph> {
     let mut deps = DepGraph::new();
-    let mut add_dep = |a: DepNode, linking_index: u32| {
+    let mut add_dep = |parent: DepNode, linking_index: u32| {
         if let Some(target) = module.get_symbol_dep_node(linking_index as usize) {
-            log::trace!("Adding direct deps {a:?} -> {target:?}");
-            deps.entry(a).insert(target);
+            log::trace!("Adding direct deps {parent:?} -> {target:?}");
+            deps.insert_child(parent, target);
         };
     };
 
@@ -227,7 +217,7 @@ pub fn find_reachable_deps(deps: &DepGraph, roots: &HashSet<DepNode>) -> DepList
         }
 
         seen.insert(node);
-        let Some(children) = deps.get(&node) else {
+        let Some(children) = deps.get_childs(&node) else {
             continue;
         };
         for child in children {
@@ -255,11 +245,11 @@ impl<Id> NamedGraph<Id> {
     pub fn reduce_shared_entries(
         shared_entries: &HashSet<DepNode>,
         module_entries: &HashSet<DepNode>,
-        parents: &DepGraph,
+        graph: &DepGraph,
     ) -> HashSet<DepNode> {
         let mut reduced = HashSet::new();
         for dep in shared_entries {
-            if let Some(parent) = parents.get(dep) {
+            if let Some(parent) = graph.get_parents(dep) {
                 if !parent.iter().any(|p| module_entries.contains(p)) {
                     continue; // skip if all parents are also in shared entries
                 }
@@ -279,7 +269,6 @@ impl<Id> NamedGraph<Id> {
     where
         Id: Clone + Ord + Debug,
     {
-        let parents = graph.reverse();
         //TODO: use bitset as key instead
         let mut shared_entries: HashMap<Vec<usize>, HashSet<DepNode>> = HashMap::new();
 
@@ -315,7 +304,7 @@ impl<Id> NamedGraph<Id> {
                 let module = &mut modules[module_id];
 
                 let top_shared_deps =
-                    Self::reduce_shared_entries(&shared_deps, &module.reachable, &parents);
+                    Self::reduce_shared_entries(&shared_deps, &module.reachable, &graph);
                 // imports
                 module.imports.extend(top_shared_deps.clone());
                 // exports
@@ -334,7 +323,7 @@ impl<Id> NamedGraph<Id> {
         // Imports
         for shared in result.iter_mut() {
             for dep in &shared.shared_deps {
-                let Some(children) = graph.get(dep) else {
+                let Some(children) = graph.get_childs(dep) else {
                     continue;
                 };
                 for child in children {
@@ -409,8 +398,7 @@ mod tests {
             true
         }
         fn print(&self, title: &str, info: &analysis::ModuleInfo, graph: &DepGraph) {
-            let parents = graph.reverse();
-            print_deps_inner(title, info, self, &parents);
+            print_deps_inner(title, info, self, graph);
         }
     }
     // checkout test-data/simple-graph crate at root (just keep wasm in case rustc changes)
@@ -434,7 +422,7 @@ mod tests {
             }
         };
 
-        for (node, deps) in dep_graph.iter() {
+        for (node, deps) in dep_graph.iter_childs() {
             println!("node: {node}", node = format_dep(node));
             for dep in deps {
                 println!("  =>{dep}", dep = format_dep(dep));
@@ -443,7 +431,9 @@ mod tests {
 
         let no_inline_fn = info.find_function_id_by_name("no_inline_fn").unwrap();
 
-        let deps = dep_graph.get(&DepNode::Function(no_inline_fn)).unwrap();
+        let deps = dep_graph
+            .get_childs(&DepNode::Function(no_inline_fn))
+            .unwrap();
         let func_deps: Vec<_> = deps
             .iter()
             .filter(|dep| matches!(dep, DepNode::Function(_)))
@@ -459,11 +449,13 @@ mod tests {
 
         let indirect_fn = info.find_function_id_by_name("indirect_fn").unwrap();
 
-        let deps = dep_graph.get(&DepNode::Function(indirect_fn)).unwrap();
+        let deps = dep_graph
+            .get_childs(&DepNode::Function(indirect_fn))
+            .unwrap();
         assert_eq!(deps.len(), 1); // only dep on switchtable
         let swith_table = deps.iter().next().unwrap();
         assert!(matches!(swith_table, DepNode::DataSymbol(..)));
-        let fns = dep_graph.get(swith_table).unwrap();
+        let fns = dep_graph.get_childs(swith_table).unwrap();
 
         assert_eq!(fns.len(), 3);
     }
@@ -777,7 +769,7 @@ F(4671) -> F(4663)
             return true;
         }
 
-        let children = graph.get(&node).unwrap().clone();
+        let children = graph.get_childs(&node).unwrap().clone();
         assert!(!children.is_empty());
         // make sure that all childs of specific node (that known to be in module 2) are included or linked
         for node in children {
