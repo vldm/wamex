@@ -98,13 +98,33 @@ fn benchmark_emit_modules(c: &mut Criterion) {
     emit::merge_main_shared(&mut split_program_info);
     let wbg_fns = emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
 
-    c.bench_function("emit_modules", |b| {
+    c.bench_function("emit_modules_fast", |b| {
         b.iter(|| {
             let mut output_counter = 0;
             let result = emit::emit_modules(
                 black_box(&info),
                 black_box(&split_program_info),
                 black_box(&wbg_fns),
+                false,
+                |_identifier, data| {
+                    // Just count outputs instead of writing to disk
+                    output_counter += 1;
+                    hint_black_box(data);
+                    Ok(())
+                },
+            );
+            hint_black_box(result.unwrap());
+            hint_black_box(output_counter);
+        })
+    });
+    c.bench_function("emit_modules_precise", |b| {
+        b.iter(|| {
+            let mut output_counter = 0;
+            let result = emit::emit_modules(
+                black_box(&info),
+                black_box(&split_program_info),
+                black_box(&wbg_fns),
+                true,
                 |_identifier, data| {
                     // Just count outputs instead of writing to disk
                     output_counter += 1;
@@ -123,10 +143,14 @@ fn benchmark_full_split_pipeline(c: &mut Criterion) {
     c.bench_function("full_split_lazy_routes", |b| {
         b.iter(|| {
             // Use the CLI API with dry_run to avoid file I/O
-            let result =
-                wamex_cli::split_inner(black_box(&lazy_routes_wasm), false, false, None, |_, _| {
-                    Ok(())
-                });
+            let result = wamex_cli::split_inner(
+                black_box(&lazy_routes_wasm),
+                false,
+                false,
+                true,
+                None,
+                |_, _| Ok(()),
+            );
             hint_black_box(result.unwrap());
         })
     });
@@ -145,6 +169,7 @@ fn benchmark_memory_usage_patterns(c: &mut Criterion<MemUsage>) {
                     black_box(&lazy_routes_wasm),
                     false,
                     false,
+                    true,
                     None,
                     |_, _| {
                         if oneshot {
@@ -184,7 +209,12 @@ impl Measurement for MemUsage {
         0
     }
     fn to_f64(&self, val: &Self::Value) -> f64 {
-        *val as f64
+        let res = *val as f64;
+        if res.is_nan() {
+            0.0
+        } else {
+            res
+        }
     }
     fn formatter(&self) -> &dyn ValueFormatter {
         &MemUsage

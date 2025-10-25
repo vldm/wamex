@@ -8,7 +8,6 @@ use wasmparser::RelocationEntry;
 use crate::{
     emit::{
         index_safety::OutputGlobalId, modify::SymbolOp, ComputedModules, GotBase, ModuleEmitState,
-        SubModuleExtra,
     },
     index::{AnySymbolId, DataSegmentId, DataSymbolId, InputFuncId, InputGlobalId},
     read::{linking::SymbolIndex, InputModule},

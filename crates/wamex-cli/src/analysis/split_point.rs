@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fmt::Debug};
 
 use anyhow::{anyhow, bail};
-use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use gxhash::{HashMap, HashMapExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 

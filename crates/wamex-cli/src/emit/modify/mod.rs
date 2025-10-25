@@ -10,18 +10,20 @@ mod constant_extracton;
 mod relocation;
 mod start_fn_gen;
 
-use std::{any::Any, ops::Range};
+use std::ops::Range;
 
 use anyhow::{bail, Result};
 use constant_extracton::ConstantExtractionEntry;
 use gxhash::{HashMap, HashMapExt};
 pub use relocation::RelocateState;
 pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
+use wasm_encoder::{reencode::Reencode, ValType};
 use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     emit::{index_safety::OutputGlobalId, ComputedModules, ModuleEmitState},
-    index::{AnySymbolId, DefinedFuncId, InputFuncId, InputGlobalId},
+    helpers::RangeExt,
+    index::{DefinedFuncId, InputFuncId, InputGlobalId},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -121,30 +123,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         let mut locals = vec![];
         for local in func_body.get_locals_reader()? {
             let local = local?;
-            let val_type = match local.1 {
-                wasmparser::ValType::I32 => wasm_encoder::ValType::I32,
-                wasmparser::ValType::I64 => wasm_encoder::ValType::I64,
-                wasmparser::ValType::F32 => wasm_encoder::ValType::F32,
-                wasmparser::ValType::F64 => wasm_encoder::ValType::F64,
-                wasmparser::ValType::V128 => wasm_encoder::ValType::V128,
-                wasmparser::ValType::Ref(v) => wasm_encoder::ValType::Ref(wasm_encoder::RefType {
-                    nullable: v.is_nullable(),
-                    heap_type: match v.heap_type() {
-                        wasmparser::HeapType::Abstract { shared, ty } => {
-                            wasm_encoder::HeapType::Abstract {
-                                shared,
-                                ty: ty.into(),
-                            }
-                        }
-                        wasmparser::HeapType::Concrete(c) => {
-                            // TODO: remove unsafe
-                            wasm_encoder::HeapType::Concrete(unsafe {
-                                std::mem::transmute::<_, u32>(c.pack().unwrap())
-                            })
-                        }
-                    },
-                }),
-            };
+            let val_type = wasm_encoder::reencode::RoundtripReencoder.val_type(local.1)?;
             locals.push((local.0, val_type));
         }
         let mut result = wasm_encoder::Function::new(locals).into_raw_body();
@@ -265,47 +244,108 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
     }
 
     // Same as emit_code_with_changes, but avoid deserializing.
-    fn emit_code_in_place(
-        module_emit: &ModuleEmitState<'any, 'src>,
-        num_new_global_imports: u32,
-        defined_function_id: InputGlobalId,
+    pub fn emit_code_in_place(
+        module_emit: &'any ModuleEmitState<'any, 'src>,
+        computed_modules: &'any ComputedModules<'any, 'src>,
+        global_id_mapper: impl Fn(InputGlobalId) -> Option<OutputGlobalId>,
+        defined_function_id: DefinedFuncId,
+        input_function_id: InputFuncId, // debug purposes
         entries: &[CodeModifyEntry],
-    ) -> Result<Vec<u8>> {
-        todo!()
-        // let mut last_range = 0..0;
-        // for entry in entries {
-        //     if entry.range().start > last_range.end {
-        //         bail!("Data relocations out of order");
-        //     }
-        //     if entry.range().end > ctx.src_body.len() {
-        //         bail!("Data relocations out of bounds");
-        //     }
-        //     ctx.writter
-        //         .extend_from_slice(&ctx.src_body[last_range.end..entry.range().start]);
+    ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
+        let reloc_info = RelocateState {
+            input_module: &module_emit.src.wasm,
+            computed_modules,
+            emit_module: module_emit,
+            global_id_mapper: &global_id_mapper,
+        };
+        let (function_name, src_body) = {
+            let func_id = InputFuncId::from_index(
+                defined_function_id.as_raw_index()
+                    + module_emit.src.import_info.imported_funcs.len(),
+            );
+            let defined_func =
+                &module_emit.src.wasm.code.section_payload.defined_funcs[defined_function_id];
+            let name = module_emit
+                .src
+                .wasm
+                .names
+                .functions
+                .get(func_id)
+                .copied()
+                .unwrap_or_else(|| "__undefined_function");
+            (name, defined_func.body.clone())
+        };
+        log::debug!(
+            "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {entries:#?}]",
+            range = src_body.range(),
+        );
 
-        //     match entry {
-        //         RelocationEntry::Data(data) => match data.relocation_type {
-        //             RelocationType::MemoryAddrLeb => {
-        //                 replace_memory_offset_with_global_get(ctx.reref(), &data)?
-        //             }
-        //             RelocationType::MemoryAddrSleb => {
-        //                 replace_const_get_with_global_get(ctx.reref(), &data)?
-        //             }
-        //             _ => {
-        //                 bail!("Unsupported relocation type")
-        //             }
-        //         },
-        //         RelocationEntry::Other(other) => {
-        //             ctx.writter
-        //                 .extend_from_slice(&ctx.src_body[other.range.start..other.range.end]);
-        //             todo!()
-        //         }
-        //     }
+        let src = src_body.as_bytes();
+        log::trace!("src_body {:?}", src_body.as_bytes());
 
-        //     last_range = entry.range().clone();
-        // }
+        let mut other_relocations = vec![];
+        let mut result = Vec::new();
 
-        // Ok(())
+        let mut last_write = 0;
+        for entry in entries {
+            let shift = result.len() as isize - last_write as isize;
+
+            let (range, data) = match entry {
+                ModifyEntry::Custom(data) => {
+                    let ix_size = match data.entry.ty {
+                        wasmparser::RelocationType::MemoryAddrLeb => 2,
+                        wasmparser::RelocationType::MemoryAddrSleb
+                        | wasmparser::RelocationType::TableIndexSleb => 1,
+                        _ => {
+                            bail!("Unsupported relocation type")
+                        }
+                    };
+                    let range = data.entry.relocation_range();
+                    ((range.start - ix_size..range.end), data)
+                }
+                ModifyEntry::Other(other) => {
+                    log::trace!("skiping modify entry {other:?} ");
+                    other_relocations.push(wasmparser::RelocationEntry {
+                        ty: other.ty,
+                        index: other.index,
+                        addend: other.addend,
+                        offset: (other.offset as isize + shift).try_into()?,
+                    });
+                    continue;
+                }
+            };
+            // copy remaining data before modification entry
+            result.extend_from_slice(&src[last_write..range.start]);
+            let instr = {
+                let bin_reader = wasmparser::BinaryReader::new(&src[range.clone()], 0);
+                let mut op_reader = wasmparser::OperatorsReader::new(bin_reader);
+                op_reader.read()?
+            };
+
+            let ctx = ModifyContext {
+                function_name,
+                global_tmps: &module_emit.global_tmp_store,
+                instruction: instr.clone(),
+                writer: &mut result,
+                relocation_state: reloc_info.clone(),
+            };
+
+            // process modification entry
+            data.try_apply(ctx)?;
+            last_write = range.end;
+        }
+        // copy remaining data after last modification entry
+        result.extend_from_slice(&src[last_write..]);
+
+        // process relocation
+        for relocation in &other_relocations {
+            log::trace!(
+                "applying relocation {relocation:?} to function {function_name}",
+                function_name = function_name
+            );
+            reloc_info.apply_relocation(&mut result, &relocation)?;
+        }
+        Ok((result, other_relocations))
     }
 }
 

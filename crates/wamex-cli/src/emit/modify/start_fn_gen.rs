@@ -14,8 +14,7 @@ use crate::{
         CustomModify, DataModifyEntry, ModifyEntry, RelocateState, RelocationContext, SymbolOffset,
         SymbolOp, SymbolUOffset,
     },
-    index::{AnySymbolId, DataSegmentId, DataSymbolId, InputFuncId},
-    read::linking::SymbolIndex,
+    index::{DataSegmentId, DataSymbolId},
 };
 
 #[derive(Debug, Clone)]

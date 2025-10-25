@@ -11,14 +11,14 @@ use globals::GlobalConstructor;
 use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use index_safety::OutputFuncId;
 use modify::{init_each_store_var, ModifyContext, StoreType};
-use wamex_metadata::{BumpVersion, DemangledName, ExportedSymbol};
+use wamex_metadata::BumpVersion;
 use wasm_encoder::{reencode::Reencode, GlobalType};
 use wasmparser::{RelocationEntry, TypeRef};
 
 use crate::{
     analysis::{
         self,
-        dep_graph::{self, DepGraph, DepNode},
+        dep_graph::{DepGraph, DepNode},
         split_point::{
             ModuleIdentifier, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint,
             SplitProgramInfo,
@@ -29,11 +29,10 @@ use crate::{
         index_safety::OutputGlobalId,
         modify::{RelocateState, StartFnGen},
     },
-    helpers::{encoding_size, iter_if, Hash, RangeExt},
+    helpers::{encoding_size, RangeExt},
     index::{
-        AnySymbolId, DataId, DataSegmentId, FuncTypeId, Id, IdMap, IdVec, ImportId,
-        ImportsOrDefined, Indexed, InputFuncId, InputGlobalId, MemoryId, OutputSymbolDataId,
-        WithOriginalIndex,
+        AnySymbolId, DataId, DataSegmentId, FuncTypeId, Id, IdMap, IdVec, ImportsOrDefined,
+        Indexed, InputFuncId, InputGlobalId, MemoryId, OutputSymbolDataId, WithOriginalIndex,
     },
     read::{linking::SymbolIndex, InputModule},
 };
@@ -748,6 +747,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         &'any self,
         computed_modules: &'any ComputedModules<'any, 'src>,
         output_module: &mut wasm_encoder::Module,
+        precise_modification: bool,
     ) -> Result<()> {
         self.generate_dylink0_section(output_module)?;
         // Encode type section
@@ -764,7 +764,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         self.generate_start_function_section(output_module)?;
         self.generate_element_section(output_module)?;
 
-        let code_relocs = self.generate_code_section(computed_modules, output_module)?;
+        let code_relocs =
+            self.generate_code_section(computed_modules, output_module, precise_modification)?;
         let data_relocs = self.generate_data_section(computed_modules, output_module)?;
 
         // self.generate_wasm_bindgen_sections(output_module);
@@ -968,7 +969,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             if !func.export {
                 continue;
             }
-            let mut name = self.get_function_name(func_id, true);
+            let name = self.get_function_name(func_id, true);
 
             if existing_exports.contains(&name) {
                 continue;
@@ -1307,6 +1308,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         function_start_offset: usize,
         input_func_id: InputFuncId,
         modification_list: &[modify::CodeModifyEntry],
+        precise_modification: bool,
     ) -> Result<Vec<RelocationEntry>> {
         let mut code_relocs = Vec::new();
         let defined_id = self
@@ -1315,9 +1317,14 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .expect("Defined function expected");
 
         let global_id_mapper = |global_id: InputGlobalId| self.globals.get_output_id(global_id);
-        // TODO: collect relocations.
 
-        let (result, modified_relocs) = ModifyContext::emit_code_with_changes(
+        let modify_fn = if precise_modification {
+            ModifyContext::emit_code_with_changes
+        } else {
+            ModifyContext::emit_code_in_place
+        };
+
+        let (result, modified_relocs) = modify_fn(
             self,
             computed_modules,
             global_id_mapper,
@@ -1338,6 +1345,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         &'any self,
         computed_modules: &'any ComputedModules<'any, 'src>,
         output_module: &mut wasm_encoder::Module,
+
+        precise_modification: bool,
     ) -> Result<Vec<RelocationEntry>> {
         let defined_functions_count = self.functions.defined().len() as u32
             + if !self.is_main() {
@@ -1373,6 +1382,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         function_start_offset,
                         output_func.input_func_id,
                         modification_list,
+                        precise_modification,
                     )
                 }
             };
@@ -1919,6 +1929,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
 
     fn emit_modules(
         &self,
+        precise_modification: bool,
         mut emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         for (identifier, state) in self.iter_modules() {
@@ -1926,7 +1937,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
 
             let mut encoder = wasm_encoder::Module::new();
             state
-                .generate(&self, &mut encoder)
+                .generate(&self, &mut encoder, precise_modification)
                 .with_context(|| format!("Error generating {:?}", identifier))?;
 
             emit_fn(&identifier, encoder.as_slice())
@@ -2098,6 +2109,7 @@ pub fn emit_modules<'a, 'src>(
     module: &'a analysis::ModuleInfo<'a, 'src>,
     program_info: &SplitProgramInfo,
     wbg_fns: &HashSet<InputFuncId>,
+    precise_modification: bool,
     emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let emit_info = CommonEmitInfo::new(&module, program_info)?;
@@ -2105,6 +2117,6 @@ pub fn emit_modules<'a, 'src>(
         wbg_fns.contains(&func_id)
     })
     .context("Error calculating modules")?;
-    calculated.emit_modules(emit_fn)?;
+    calculated.emit_modules(precise_modification, emit_fn)?;
     Ok(())
 }

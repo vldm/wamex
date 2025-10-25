@@ -12,27 +12,15 @@ use wasm_encoder::{Encode, Instruction};
 use wasmparser::{Operator, RelocationType};
 
 use super::{ModifyContext, StoreType};
-use crate::{
-    emit::{
-        index_safety::OutputGlobalId,
-        modify::{
-            relocation::{DataSymbolTag, FunctionIndexTag},
-            CustomModify, RelocationContext, SymbolOffset, SymbolOp,
-        },
-    },
-    index::AnySymbolId,
+use crate::emit::modify::{
+    relocation::{DataSymbolTag, FunctionIndexTag},
+    CustomModify, RelocationContext, SymbolOffset, SymbolOp,
 };
 
 // Represents a data relocation entry with additional information about global variable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstantExtractionEntry {
     pub(super) entry: wasmparser::RelocationEntry,
-    // pub(super) relocation_type: RelocationType,
-    // pub(super) referenced_symbol_index: AnySymbolId,
-    // /// Addend to add to the address, or `0` if not applicable. The value must
-    // /// be consistent with the `self.ty.addend_kind()`.
-    // pub(super) addend: i64,
-    // pub(super) range: Range<usize>,
 }
 
 impl ConstantExtractionEntry {
@@ -268,11 +256,6 @@ impl CustomModify for ConstantExtractionEntry {
                     entry: entry.clone(),
                 })
             }
-            // RelocationType::TableIndexSleb => {
-            //     // TODO: It's just regular relocation?
-            //     log::error!("TableIndexSleb relocation found in code section, which is currently not implemented");
-            //     return Ok(None);
-            // }
             RelocationType::TableIndexI32  // in instruction Sleb or Leb are used I32 is used only in data segment ?
             | RelocationType::MemoryAddrI32
             => {

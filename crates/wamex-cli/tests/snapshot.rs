@@ -1,7 +1,8 @@
 #![feature(trace_macros)]
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
+    ffi::OsString,
     path::{Path, PathBuf},
 };
 
@@ -18,6 +19,7 @@ fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
         verbose: false,
         metadata: false,
         dry_run: false,
+        precise_modification: true,
     };
     split(cli)?;
 
@@ -252,4 +254,61 @@ fn test_insta_imports_exports_of_extended_example() {
     }
     // main, static_str, string_from_static, dyn, async, dep_dyn, shared_static_str, shared(shared_static_str + static_str)
     assert_eq!(num_readed, 8);
+}
+
+fn check_that_precise_modification_works(src: PathBuf) {
+    let _ = env_logger::Builder::new()
+        .filter(None, log::LevelFilter::Warn)
+        .parse_env("RUST_LOG")
+        .try_init();
+    let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
+    src.push("test-data");
+    src.push("extended-example.wasm");
+    let output_temp = split_cmd(&src).expect("Failed to split wasm file");
+
+    let mut files: HashMap<OsString, Vec<u8>> = HashMap::new();
+    for entry in std::fs::read_dir(output_temp.path()).unwrap() {
+        let entry = entry.unwrap();
+        let data = std::fs::read(&entry.path()).unwrap();
+        let file_name = entry.path().file_name().unwrap().to_owned();
+        files.insert(file_name, data);
+    }
+
+    // non-precise split
+
+    let output_temp = TempDir::new("wasm_split_test2").unwrap();
+
+    let cli = Split {
+        input: src.into(),
+        output: output_temp.path().into(),
+        verbose: false,
+        metadata: false,
+        dry_run: false,
+        precise_modification: false,
+    };
+    split(cli).unwrap();
+
+    for entry in std::fs::read_dir(output_temp.path()).unwrap() {
+        let entry = entry.unwrap();
+        let data = std::fs::read(&entry.path()).unwrap();
+        let file_name = entry.path().file_name().unwrap().to_owned();
+        let original_data = files.get(&file_name).unwrap();
+        assert_eq!(
+            hex::encode(&data),
+            hex::encode(original_data),
+            "File {:?} should be same in any mode",
+            file_name
+        );
+    }
+}
+
+#[test]
+fn check_precise_modification_mode() {
+    let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
+    src.push("test-data");
+    for file in ["example.wasm", "extended-example.wasm", "lazy_routes.wasm"] {
+        let mut file_path = src.clone();
+        file_path.push(file);
+        check_that_precise_modification_works(file_path);
+    }
 }

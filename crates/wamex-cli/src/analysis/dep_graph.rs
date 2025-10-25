@@ -5,8 +5,7 @@ use std::{
 };
 
 use anyhow::Context;
-use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
-use smallvec::SmallVec;
+use gxhash::{HashMap, HashMapExt};
 use wasmparser::RelocationType;
 
 use crate::{
@@ -51,118 +50,118 @@ impl DepNode {
 /// List of dependency, optimized for small number of entries.
 /// Allows fast lookup but in compromise of slower inserts and removes.
 /// Based on Vec with binary search.
-// #[derive(Debug, Clone, Eq, PartialEq)]
-// pub struct DepMiniList<T = DepNode> {
-//     nodes: SmallVec<[T; 8]>,
-// }
-// impl<T> DepMiniList<T>
-// where
-//     T: Ord + Copy,
-// {
-//     pub fn new() -> Self {
-//         Self::default()
-//     }
-//     pub fn contains(&self, node: &T) -> bool {
-//         self.nodes.binary_search(node).is_ok()
-//     }
-//     pub fn insert(&mut self, node: T) -> bool {
-//         match self.nodes.binary_search(&node) {
-//             Ok(_) => false, // already exists
-//             Err(pos) => {
-//                 self.nodes.insert(pos, node);
-//                 true
-//             }
-//         }
-//     }
-//     pub fn remove(&mut self, node: &T) -> bool {
-//         if let Ok(pos) = self.nodes.binary_search(node) {
-//             self.nodes.remove(pos);
-//             true
-//         } else {
-//             false
-//         }
-//     }
-//     pub fn is_empty(&self) -> bool {
-//         self.nodes.is_empty()
-//     }
-//     pub fn len(&self) -> usize {
-//         self.nodes.len()
-//     }
-//     pub fn iter(&self) -> impl Iterator<Item = &T> {
-//         self.nodes.iter()
-//     }
-//     // Optimized extend that adds all items and then resorts and dedups
-//     // Usefull if initial collection is small and we want to add many items at once
-//     pub(crate) fn extend_and_resort(&mut self, iter: impl Iterator<Item = T>) {
-//         self.nodes.extend(iter);
-//         self.nodes.sort_unstable();
-//         self.nodes.dedup();
-//     }
-// }
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DepMiniList<T = DepNode> {
+    nodes: smallvec::SmallVec<[T; 8]>,
+}
+impl<T> DepMiniList<T>
+where
+    T: Ord + Copy,
+{
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn contains(&self, node: &T) -> bool {
+        self.nodes.binary_search(node).is_ok()
+    }
+    pub fn insert(&mut self, node: T) -> bool {
+        match self.nodes.binary_search(&node) {
+            Ok(_) => false, // already exists
+            Err(pos) => {
+                self.nodes.insert(pos, node);
+                true
+            }
+        }
+    }
+    pub fn remove(&mut self, node: &T) -> bool {
+        if let Ok(pos) = self.nodes.binary_search(node) {
+            self.nodes.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.nodes.iter()
+    }
+    // Optimized extend that adds all items and then resorts and dedups
+    // Usefull if initial collection is small and we want to add many items at once
+    pub(crate) fn extend_and_resort(&mut self, iter: impl IntoIterator<Item = T>) {
+        self.nodes.extend(iter);
+        self.nodes.sort_unstable();
+        self.nodes.dedup();
+    }
+}
 
-// impl PartialEq<DepList> for DepMiniList {
-//     fn eq(&self, other: &DepList) -> bool {
-//         if self.len() != other.len() {
-//             return false;
-//         }
-//         for item in self.iter() {
-//             if !other.contains(item) {
-//                 return false;
-//             }
-//         }
-//         true
-//     }
-// }
+impl PartialEq<DepList> for DepMiniList {
+    fn eq(&self, other: &DepList) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        for item in self.iter() {
+            if !other.contains(item) {
+                return false;
+            }
+        }
+        true
+    }
+}
 
-// impl<T> Default for DepMiniList<T> {
-//     fn default() -> Self {
-//         Self {
-//             nodes: SmallVec::new(),
-//         }
-//     }
-// }
+impl<T> Default for DepMiniList<T> {
+    fn default() -> Self {
+        Self {
+            nodes: smallvec::SmallVec::new(),
+        }
+    }
+}
 
-// impl<T> FromIterator<T> for DepMiniList<T>
-// where
-//     T: Ord + Copy,
-// {
-//     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-//         let mut list = DepMiniList::new();
-//         list.extend(iter);
-//         list
-//     }
-// }
+impl<T> FromIterator<T> for DepMiniList<T>
+where
+    T: Ord + Copy,
+{
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut list = DepMiniList::new();
+        list.extend(iter);
+        list
+    }
+}
 
-// impl<'a, T> IntoIterator for &'a DepMiniList<T> {
-//     type Item = &'a T;
-//     type IntoIter = std::slice::Iter<'a, T>;
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.nodes.iter()
-//     }
-// }
-// impl<T> IntoIterator for DepMiniList<T> {
-//     type Item = T;
-//     type IntoIter = smallvec::IntoIter<[T; 8]>;
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.nodes.into_iter()
-//     }
-// }
+impl<'a, T> IntoIterator for &'a DepMiniList<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.nodes.iter()
+    }
+}
+impl<T> IntoIterator for DepMiniList<T> {
+    type Item = T;
+    type IntoIter = smallvec::IntoIter<[T; 8]>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.nodes.into_iter()
+    }
+}
 
-// impl<T> Extend<T> for DepMiniList<T>
-// where
-//     T: Ord + Copy,
-// {
-//     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-//         for item in iter {
-//             self.insert(item);
-//         }
-//     }
-// }
+impl<T> Extend<T> for DepMiniList<T>
+where
+    T: Ord + Copy,
+{
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for item in iter {
+            self.insert(item);
+        }
+    }
+}
 
 // Old implementation (faster than HashSet)
 pub type DepList<T = DepNode> = BTreeSet<T>;
 
-pub type DepMiniList<T = DepNode> = DepList<T>;
+// pub type DepMiniList<T = DepNode> = DepList<T>;
 
 #[derive(Clone, Default)]
 struct SymbolStructure {
@@ -420,7 +419,7 @@ impl<Id> NamedGraph<Id> {
                 // imports
                 module.imports.extend(top_shared_deps.clone());
                 // exports
-                shared_exports.extend(top_shared_deps);
+                shared_exports.extend_and_resort(top_shared_deps.into_iter());
                 module_names.push(module.module.clone());
             }
             result.push(SharedEntries {
@@ -442,7 +441,7 @@ impl<Id> NamedGraph<Id> {
                 .filter(|child| !shared.shared_deps.contains(child))
                 .copied();
 
-            shared.imports.extend(new_imports);
+            shared.imports.extend_and_resort(new_imports);
         }
         result.sort_by(|left, right| left.module_names.cmp(&right.module_names));
         result
@@ -466,11 +465,9 @@ fn find_data_symbol_containing_range(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, fs::File, io::Write};
+    use std::{fs::File, io::Write};
 
-    use gxhash::HashSet;
     use lazy_static::lazy_static;
-    use testing::tests::function;
 
     use crate::{
         analysis::{

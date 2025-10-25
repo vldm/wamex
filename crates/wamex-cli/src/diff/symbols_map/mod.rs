@@ -235,7 +235,7 @@ impl Structure {
     }
 
     pub fn recover_from_snapshot(snapshot: &crate::metadata_ext::Snapshot) -> Result<Self> {
-        let mut nodes = snapshot
+        let nodes = snapshot
             .symbols
             .iter()
             .enumerate()

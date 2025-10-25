@@ -1,11 +1,8 @@
 use anyhow::anyhow;
-use gxhash::{HashSet, HashSetExt};
 
 use crate::analysis::dep_graph::{DepGraph, DepList};
 
 mod dot_parser;
-#[cfg(test)]
-pub use dot_parser::tests;
 
 /// Parses dependencies from a string in the format of a DOT like graph.
 pub fn parse_deps(input: &str) -> anyhow::Result<DepGraph> {

@@ -1,12 +1,8 @@
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::{Path, PathBuf};
 
 use analysis::split_point::SplitProgramInfo;
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use gxhash::{HashSet, HashSetExt};
 
 // todo: Refactor analysis and emit modules.
@@ -23,7 +19,6 @@ mod diff;
 pub mod read;
 
 pub use read::InputModule;
-use wamex_metadata::BumpVersion;
 
 use crate::analysis::split_point::SplitModuleIdentifier;
 
@@ -49,6 +44,9 @@ pub struct Split {
 
     #[arg(short, long)]
     pub metadata: bool,
+
+    #[arg(short, long)]
+    pub precise_modification: bool,
 
     /// Skip writing files (for benchmarking).
     #[arg(long)]
@@ -115,6 +113,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         &info,
         &split_program_info,
         &HashSet::new(),
+        false,
         |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             std::fs::write(&args.output, data)?;
             Ok(())
@@ -129,6 +128,7 @@ pub fn split(args: Split) -> Result<()> {
         &input_wasm,
         args.metadata,
         args.verbose,
+        args.precise_modification,
         args.dry_run.then(|| args.output.as_path()),
         |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             if !args.dry_run {
@@ -149,6 +149,7 @@ pub fn split_inner(
     input_wasm: &[u8],
     emit_metadata: bool,
     verbose: bool,
+    precise_modification: bool,
     metadata_output: Option<&Path>,
     emit_module_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> Result<()>,
 ) -> Result<()> {
@@ -175,7 +176,13 @@ pub fn split_inner(
 
     // some wbg functions need to be moved to main before splitting.
     let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
-    crate::emit::emit_modules(&info, &split_program_info, &wbg_fns, emit_module_fn)?;
+    crate::emit::emit_modules(
+        &info,
+        &split_program_info,
+        &wbg_fns,
+        precise_modification,
+        emit_module_fn,
+    )?;
 
     #[cfg(feature = "metadata")]
     if emit_metadata {
