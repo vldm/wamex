@@ -161,7 +161,7 @@ impl Ord for DefinedFunction {
 
         match (tag, self.input_func_id).cmp(&(other_tag, other.input_func_id)) {
             std::cmp::Ordering::Equal => self.export.cmp(&other.export),
-            ord => return ord,
+            ord => ord,
         }
     }
 }
@@ -184,6 +184,7 @@ struct SubModuleExtra {
 }
 impl SubModuleExtra {
     const MAIN_GLOBAL_EXPORTS: &[&str] = &["__stack_pointer"]; // "__data_end", "__heap_base" - i
+    #[allow(dead_code)]
     const MAIN_GLOBAL_EXPORTS_COUNT: u32 = Self::MAIN_GLOBAL_EXPORTS.len() as u32;
 }
 
@@ -223,10 +224,10 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     pub fn produce_state(
         module_info: &'any analysis::ModuleInfo<'any, 'src>,
         emit_info: &'any CommonEmitInfo,
-        // Merge use only output_module instead of program_info and output_module_index
-        program_info: &SplitProgramInfo,
-        output_module_index: usize,
-
+        (module_id, output_module_info): &(
+            SplitModuleIdentifier,
+            analysis::split_point::OutputModuleInfo,
+        ),
         // Main module with static layout of memory and table.
         // None if it is main module.
         static_main: Option<&Self>,
@@ -235,10 +236,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         linkage_type: LinkageType,
         is_nonexported_fn: impl Fn(InputFuncId) -> bool,
     ) -> ModuleEmitState<'any, 'src> {
-        let (module_id, output_module_info) = &program_info.output_modules[output_module_index];
-
         log::debug!("output_module_info: {output_module_info:#?}");
-        log::debug!("module_id: {module_id:#?}");
+        // log::debug!("module_id: {module_id:#?}");
         log::debug!("shared_modules: {shared_modules:#?}");
         // We need to include definitions for all of the `defined_symbols`.
         let mut funcs_to_define = HashSet::<(InputFuncId, bool)>::new();
@@ -247,12 +246,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let mut indirect_funcs_stubs = Vec::new();
         let mut import_funcs_stubs = Vec::new();
 
-        let main_module = output_module_index == 0;
-        assert_eq!(
-            main_module,
-            static_main.is_none(),
-            "Static main module should be provided for sub modules",
-        );
+        let main_module = static_main.is_none();
 
         let mut used_funcs = HashSet::new();
         for func_id in output_module_info
@@ -444,7 +438,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         // offset of current segment.
         let mut segment_mem_offset = 0;
         log::trace!("Data segments for module: {:#?}", data_segments);
-        for (segment_id, segment) in data_segments.iter() {
+        for (_, segment) in data_segments.iter() {
             let lib_base_global_id = lib_base_import.as_ref().map(|id| id.as_raw_index() as u32);
 
             let (new_segment_offset, out) =
@@ -474,10 +468,9 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             Some(SymbolIndex::DataDefined(segment_id, symbol_id)) => {
                 let main = static_main.as_ref().unwrap();
                 main.input_data_to_output_id
-                    .get(&(*segment_id, *symbol_id))
-                    .is_some()
+                    .contains_key(&(*segment_id, *symbol_id))
             }
-            _ => return false,
+            _ => false,
         };
 
         let mut data_relocations = IdMap::new();
@@ -486,7 +479,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         for (segment_id, data_segment) in data_segment_outputs.iter() {
             let segment_relocs = data_segment
                 .relocations()
-                .into_iter()
+                .iter()
                 .map(|reloc| {
                     let relocation_context = modify::RelocationContext {
                         dyn_relocate: !main_module
@@ -629,10 +622,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     let got_base = GotBase {
                         lib_base_id: globals.push_import(GlobalImport::New {
                             input_global_id: None,
-                            global_name: Cow::Owned(format!(
-                                "__{}_lib_base",
-                                module_id.to_string()
-                            )),
+                            global_name: Cow::Owned(format!("__{}_lib_base", module_id)),
                             global_type: wasm_encoder::GlobalType {
                                 val_type: wasm_encoder::ValType::I32,
                                 mutable: false,
@@ -641,10 +631,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         }),
                         table_base_id: globals.push_import(GlobalImport::New {
                             input_global_id: None,
-                            global_name: Cow::Owned(format!(
-                                "__{}_table_base",
-                                module_id.to_string()
-                            )),
+                            global_name: Cow::Owned(format!("__{}_table_base", module_id)),
                             global_type: wasm_encoder::GlobalType {
                                 val_type: wasm_encoder::ValType::I32,
                                 mutable: false,
@@ -738,9 +725,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     }
 
     fn _num_extra_global_imports(&self) -> usize {
-        (!self.is_main())
-            .then(|| SubModuleExtra::MAIN_GLOBAL_EXPORTS_COUNT as usize + 2)
-            .unwrap_or(0)
+        if !self.is_main() {
+            SubModuleExtra::MAIN_GLOBAL_EXPORTS_COUNT as usize + 2
+        } else {
+            0
+        }
     }
 
     fn generate(
@@ -770,7 +759,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         // self.generate_wasm_bindgen_sections(output_module);
         // Names + Linking + Relocations
-        self.generate_compiler_tools_sections(output_module, code_relocs, vec![])?;
+        self.generate_compiler_tools_sections(output_module, code_relocs, data_relocs)?;
         self.generate_target_features_section(output_module)?;
         self.generate_custom_sections(output_module)?;
         Ok(())
@@ -823,14 +812,14 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     ) {
                         continue;
                     }
-                    let ty: wasm_encoder::EntityType = import.ty.clone().try_into().unwrap();
+                    let ty: wasm_encoder::EntityType = import.ty.try_into().unwrap();
                     section.import(import.module, import.name, ty);
                 }
             }
 
-            Some(sub_module_extra) => {
+            Some(_) => {
                 // Import all globals that are exported from main module.
-                for (id, item) in self.globals.imports() {
+                for (_, item) in self.globals.imports() {
                     section.import(
                         item.module_name().as_ref(),
                         item.import_name().as_ref(),
@@ -849,7 +838,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
                 // Import all memories defined by the input module.
                 for (memory_index, memory) in self.src.wasm.memories.iter() {
-                    let ty: wasm_encoder::MemoryType = memory.clone().try_into().unwrap();
+                    let ty: wasm_encoder::MemoryType = (*memory).into();
                     section.import(
                         "__wasm_split",
                         self.get_memory_name(memory_index).as_str(),
@@ -960,7 +949,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     };
                     index = func_id.as_raw_index() as u32;
                 }
-                section.export(export.name, export.kind.try_into().unwrap(), index);
+                section.export(export.name, export.kind.into(), index);
                 existing_exports.insert(export.name.into());
             }
         }
@@ -984,9 +973,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         match &self.sub_module_extra {
             Some(extra) => {
                 if let Some(export_got_with_id) = &extra.export_got_with_id {
-                    let lib_base_name = format!("__{}_lib_base", export_got_with_id.to_string());
-                    let table_base_name =
-                        format!("__{}_table_base", export_got_with_id.to_string());
+                    let lib_base_name = format!("__{}_lib_base", export_got_with_id);
+                    let table_base_name = format!("__{}_table_base", export_got_with_id);
                     if existing_exports.contains(lib_base_name.as_str())
                         || existing_exports.contains(table_base_name.as_str())
                     {
@@ -1024,7 +1012,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         wasm_encoder::ExportKind::Global,
                         global_index.as_raw_index() as u32,
                     );
-                    existing_exports.insert(name.into());
+                    existing_exports.insert(name);
                 }
 
                 white_list.iter().for_each(|name| {
@@ -1141,7 +1129,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 sub_module_extra.self_base.table_base_id.as_raw_index() as u32,
             )
         } else {
-            wasm_encoder::ConstExpr::i32_const(1 as i32) // skip empty entry at index 0 for main module
+            wasm_encoder::ConstExpr::i32_const(1_i32) // skip empty entry at index 0 for main module
         };
 
         let func_ids = self._function_ids_for_element_section()?;
@@ -1192,18 +1180,18 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         }
         let mut section = wasm_encoder::MemorySection::new();
         for (_idx, memory) in self.src.wasm.memories.iter() {
-            section.memory(memory.clone().try_into().unwrap());
+            section.memory((*memory).into());
         }
         output_module.section(&section);
     }
 
     fn generate_global_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         let mut section = wasm_encoder::GlobalSection::new();
-        for (id, global) in self.globals.defined() {
+        for (_, global) in self.globals.defined() {
             match global {
                 DefinedGlobal::PlainCopy { global, .. } => {
                     section.global(
-                        global.ty.clone().try_into().unwrap(),
+                        global.ty.try_into().unwrap(),
                         &global.init_expr.clone().try_into().unwrap(),
                     );
                 }
@@ -1330,7 +1318,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             global_id_mapper,
             defined_id,
             input_func_id,
-            &modification_list,
+            modification_list,
         )?;
         for mut reloc in modified_relocs {
             reloc.offset += function_start_offset as u32;
@@ -1390,7 +1378,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             code_relocs.extend(relocs?);
         }
 
-        if let Some(_) = &self.sub_module_extra {
+        if self.sub_module_extra.is_some() {
             let relocate = RelocateState {
                 input_module: self.src.wasm,
                 computed_modules,
@@ -1416,8 +1404,9 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         &'any self,
         computed_modules: &'any ComputedModules<'any, 'src>,
         output_module: &mut wasm_encoder::Module,
-    ) -> Result<()> {
-        // let num_new_global_imports = self._num_extra_global_imports();
+    ) -> Result<Vec<RelocationEntry>> {
+        // TODO: Add shifter relocs
+        let relocs = Vec::new();
         let mut section = wasm_encoder::DataSection::new();
 
         for (id, out) in self.data.iter() {
@@ -1442,7 +1431,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         }
 
         output_module.section(&section);
-        Ok(())
+        Ok(relocs)
     }
     fn generate_target_features_section(
         &self,
@@ -1573,7 +1562,7 @@ impl IndirectFunctionEmitInfo {
     }
     fn calculate_indirect_function_table_type(&self) -> wasm_encoder::TableType {
         // + 1 due to empty entry at index 0
-        let indirect_table_size = self.table_entries.len() as u64 + 1 + &self.num_extra_stubs; // reserve space for stubs at start
+        let indirect_table_size = self.table_entries.len() as u64 + 1 + self.num_extra_stubs; // reserve space for stubs at start
 
         wasm_encoder::TableType {
             element_type: wasm_encoder::RefType::FUNCREF,
@@ -1616,7 +1605,7 @@ impl<'src> CommonEmitInfo<'src> {
         stubs_start: u32,
         module_id: &ModuleIdentifier,
     ) -> Option<Range<u32>> {
-        self.modules_decl.get(&module_id).map(|r| {
+        self.modules_decl.get(module_id).map(|r| {
             let start = stubs_start + r.split_points_offset;
             let end = stubs_start + r.split_points_offset + r.split_points.len() as u32;
             start..end
@@ -1687,7 +1676,7 @@ impl<'src> CommonEmitInfo<'src> {
                     .get(data_segment)
                     .cloned()
                     .expect("Symbols for data segment not found");
-                let segment_info = module.wasm.linking.segments_info[data_segment].clone();
+                let segment_info = module.wasm.linking.segments_info[data_segment];
 
                 DataSegment::new_inner(data.clone(), segment_info, data_symbols, data_relocs)
             })
@@ -1734,7 +1723,7 @@ impl<'src> CommonEmitInfo<'src> {
                 continue;
             };
             for reloc in &section_relocs.entries {
-                let mut reloc = reloc.clone();
+                let mut reloc = *reloc;
                 reloc.offset =
                     reloc
                         .offset
@@ -1767,13 +1756,11 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
         program_info: &SplitProgramInfo,
         is_nonexported_fn: impl Fn(InputFuncId) -> bool + Copy,
     ) -> Result<Self> {
-        let modules_ids_iter = program_info.output_modules.iter().enumerate().filter_map(
-            |(output_module_index, (id, _))| {
-                Some((output_module_index, id.clone()))
-                // // Skip shared modules, they are processed inside modules.
-                // SplitModuleIdentifier::as_single(id).map(|id| (output_module_index, id.clone()))
-            },
-        );
+        let modules_ids_iter = program_info
+            .output_modules
+            .iter()
+            .enumerate()
+            .map(|(output_module_index, (id, _))| (output_module_index, id.clone()));
 
         for (id, output_module) in program_info.output_modules.iter() {
             let SplitModuleIdentifier::Shared(_) = id else {
@@ -1821,9 +1808,8 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                 (
                     ModuleEmitState::produce_state(
                         module,
-                        &common_emit_info,
-                        program_info,
-                        output_module_index,
+                        common_emit_info,
+                        &program_info.output_modules[output_module_index],
                         None,
                         &NO_DEPS,
                         linkage_type,
@@ -1843,7 +1829,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
 
                 let table_range = if let SplitModuleIdentifier::Single(id) = &id {
                     common_emit_info
-                        .module_entrypoints_range_shifted(stubs_start as u32, &id)
+                        .module_entrypoints_range_shifted(stubs_start as u32, id)
                         .expect("Module split points not found")
                 } else {
                     0..0
@@ -1862,9 +1848,8 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                 (
                     ModuleEmitState::produce_state(
                         module,
-                        &common_emit_info,
-                        program_info,
-                        output_module_index,
+                        common_emit_info,
+                        &program_info.output_modules[output_module_index],
                         Some(&main_module.0),
                         &module_deps,
                         linkage_type,
@@ -1937,7 +1922,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
 
             let mut encoder = wasm_encoder::Module::new();
             state
-                .generate(&self, &mut encoder, precise_modification)
+                .generate(self, &mut encoder, precise_modification)
                 .with_context(|| format!("Error generating {:?}", identifier))?;
 
             emit_fn(&identifier, encoder.as_slice())
@@ -1994,19 +1979,19 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
         for node in &shared_module.exports {
             // it was exported in shared module, so on main side it had been imported.
             // remove from main link symbols.
-            if !main_module.imports.remove(&node) {
+            if !main_module.imports.remove(node) {
                 log::warn!("Shared module symbol not found in main: {node:?}");
             }
             // This was imported not only by main, so export is needed.
-            if is_imported_by_other(&node) {
-                main_module.exports.insert(node.clone());
+            if is_imported_by_other(node) {
+                main_module.exports.insert(*node);
             }
         }
 
         // imported modules should already be in main
         #[cfg(debug_assertions)]
         for node in &shared_module.imports {
-            check_imports.push(node.clone());
+            check_imports.push(*node);
         }
 
         main_module
@@ -2112,7 +2097,7 @@ pub fn emit_modules<'a, 'src>(
     precise_modification: bool,
     emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let emit_info = CommonEmitInfo::new(&module, program_info)?;
+    let emit_info = CommonEmitInfo::new(module, program_info)?;
     let calculated = ComputedModules::produce_state(&emit_info, module, program_info, |func_id| {
         wbg_fns.contains(&func_id)
     })

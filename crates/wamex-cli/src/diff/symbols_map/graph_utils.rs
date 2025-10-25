@@ -62,7 +62,7 @@ impl Child {
                     else {
                         panic!("Relocation type with wrong index information: {:?}", entry);
                     };
-                    Child::DataSymbol { id: (segment, idx), offset: entry.addend.try_into().unwrap() }
+                    Child::DataSymbol { id: (segment, idx), offset: entry.addend }
                 }
                 // Symbols that we don't handle as "dependencies" in dep graph
                 GlobalIndexI32 | GlobalIndexLeb | TableIndexI32

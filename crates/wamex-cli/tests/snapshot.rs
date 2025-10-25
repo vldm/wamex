@@ -261,9 +261,6 @@ fn check_that_precise_modification_works(src: PathBuf) {
         .filter(None, log::LevelFilter::Warn)
         .parse_env("RUST_LOG")
         .try_init();
-    let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
-    src.push("test-data");
-    src.push("extended-example.wasm");
     let output_temp = split_cmd(&src).expect("Failed to split wasm file");
 
     let mut files: HashMap<OsString, Vec<u8>> = HashMap::new();

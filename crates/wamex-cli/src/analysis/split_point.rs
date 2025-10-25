@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, fmt::Debug};
+use std::{
+    collections::BTreeMap,
+    fmt::{Debug, Display},
+};
 
 use anyhow::{anyhow, bail};
 use gxhash::{HashMap, HashMapExt};
@@ -115,7 +118,7 @@ pub fn find_split_points(
         })
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
 
-    for (key, _) in export_map.iter() {
+    if let Some((key, _)) = export_map.iter().next() {
         anyhow::bail!("No corresponding import for split export {key:?} hash {key_hash:?}. Maybe split module is defined but not used.", key_hash = key.1,key = key.0);
     }
 
@@ -131,15 +134,20 @@ pub enum ModuleIdentifier {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct SharedModuleIdentifier(pub Vec<ModuleIdentifier>);
 
-impl SharedModuleIdentifier {
-    pub fn to_string(&self) -> String {
-        self.0.iter().fold(String::new(), |mut acc, n| {
-            if !acc.is_empty() {
-                acc.push('_');
-            }
-            acc + &n.name()
-        })
+impl Display for SharedModuleIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut components = self.0.iter();
+        let Some(first) = components.next() else {
+            return Ok(());
+        };
+
+        write!(f, "{}", first.name())?;
+        components.try_for_each(|n| write!(f, "_{}", n.name()))?;
+        Ok(())
     }
+}
+
+impl SharedModuleIdentifier {
     pub fn contains(&self, module: &ModuleIdentifier) -> bool {
         self.0.iter().any(|m| m == module)
     }
@@ -238,7 +246,7 @@ impl SplitProgramInfo {
 
         for split_point in split_points.iter() {
             roots.remove(&DepNode::Function(split_point.export_func));
-            roots.remove(&DepNode::Function(split_point.import_func.into()));
+            roots.remove(&DepNode::Function(split_point.import_func));
         }
         roots
     }
@@ -262,9 +270,9 @@ impl SplitProgramInfo {
         dep_graph: &DepGraph,
         split_points: &[SplitPoint],
     ) -> anyhow::Result<SplitProgramInfo> {
-        let split_points_by_module = Self::merge_split_points_by_name(&split_points[..]);
+        let split_points_by_module = Self::merge_split_points_by_name(split_points);
 
-        let main_roots = Self::get_main_module_roots(info, &split_points);
+        let main_roots = Self::get_main_module_roots(info, split_points);
 
         // graph root -> dep -> dep
         let main_deps = find_reachable_deps(dep_graph, &main_roots);
@@ -334,7 +342,7 @@ impl SplitProgramInfo {
             .flat_map(|(output_index, (_, info))| {
                 info.defined_symbols
                     .iter()
-                    .map(move |symbol| (symbol.clone(), output_index))
+                    .map(move |symbol| (*symbol, output_index))
             })
             .collect();
 

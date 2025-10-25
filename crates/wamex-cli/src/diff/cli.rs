@@ -153,9 +153,9 @@ impl<'any, 'src> Compare<'any, 'src> {
         }
         let mut tree_builder = ptree::TreeBuilder::new("Changes tree".to_string());
 
-        let mut tree = &mut tree_builder;
+        let tree = &mut tree_builder;
         for root in added_roots.iter() {
-            Self::build_child_tree(root, &new_structure.structure, &added_nodes, &mut tree);
+            Self::build_child_tree(root, &new_structure.structure, &added_nodes, tree);
         }
         // ptree::print_tree(&tree.build()).unwrap();
 
@@ -203,9 +203,9 @@ impl<'any, 'src> Compare<'any, 'src> {
 
         let mut tree_builder = ptree::TreeBuilder::new("Cascade of changes".to_string());
 
-        let mut tree = &mut tree_builder;
+        let tree = &mut tree_builder;
         for leaf in leafs.iter() {
-            Self::build_parent_tree(leaf, &new_structure.structure, &added_nodes, &mut tree);
+            Self::build_parent_tree(leaf, &new_structure.structure, &added_nodes, tree);
         }
         // ptree::print_tree(&tree.build()).unwrap();
 
@@ -260,8 +260,8 @@ impl<'any, 'src> Compare<'any, 'src> {
         module: &read::InputModule<'src>,
     ) -> crate::diff::symbols_map::ModuleStructure {
         let info = crate::analysis::ModuleInfo::new(module).unwrap();
-        let structure = crate::metadata_ext::_build_module_structure(&info);
-        structure
+
+        crate::metadata_ext::_build_module_structure(&info)
     }
     fn print_compare_data(&self) {
         let mut errors = Vec::new();
@@ -289,13 +289,12 @@ impl<'any, 'src> Compare<'any, 'src> {
         }
         let res = errors;
 
-        let process = |left: Option<&Data<'_>>, right: Option<&Data<'_>>| match (left, right) {
-            (Some(left), Some(right)) => {
+        let process = |left: Option<&Data<'_>>, right: Option<&Data<'_>>| {
+            if let (Some(left), Some(right)) = (left, right) {
                 let left = hex::encode(left.data);
                 let right = hex::encode(right.data);
                 print_inline_diff(&left, &right);
             }
-            _ => {}
         };
         if res.is_empty() {
             log::info!("No differences in {} found", stringify!(data.data_segments));

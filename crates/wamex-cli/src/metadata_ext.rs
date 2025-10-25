@@ -54,13 +54,13 @@ impl SymbolSignatureExt for SymbolSignature {
             .expect("Function type should be defined");
         let params = type_info
             .params()
-            .into_iter()
+            .iter()
             .map(Type::try_from)
             .collect::<Result<Vec<_>, _>>()
             .expect("Failed to convert function parameter types");
         let results = type_info
             .results()
-            .into_iter()
+            .iter()
             .map(Type::try_from)
             .collect::<Result<Vec<_>, _>>()
             .expect("Failed to convert function result types");
@@ -119,7 +119,7 @@ impl ModuleExt for Module {
             .fold(BTreeMap::new(), |mut acc, (name, deps)| {
                 if name.is_shared() || name.is_main() {
                     for dep in &deps.exports {
-                        let prev = acc.insert(dep.clone(), name.clone());
+                        let prev = acc.insert(*dep, name.clone());
                         assert!(
                             prev.is_none(),
                             "Duplicate export for {dep:?} in {name:?}, previous was {prev:?}",
@@ -271,7 +271,7 @@ pub fn _build_module_structure(module: &ModuleInfo) -> crate::diff::symbols_map:
                 .get(data_segment)
                 .cloned()
                 .expect("Symbols for data segment not found");
-            let segment_info = module.wasm.linking.segments_info[data_segment].clone();
+            let segment_info = module.wasm.linking.segments_info[data_segment];
 
             DataSegment::new_inner(data.clone(), segment_info, data_symbols, data_relocs)
         })
@@ -301,13 +301,11 @@ pub fn _build_module_structure(module: &ModuleInfo) -> crate::diff::symbols_map:
     }
     log::warn!("Data segments: {print_data_fromat}");
 
-    let registry = crate::diff::symbols_map::ModuleStructure::new_from_module(
+    crate::diff::symbols_map::ModuleStructure::new_from_module(
         module,
         &all_relocations,
         &data_segments,
-    );
-
-    registry
+    )
 }
 
 pub fn build_metadata_and_snapshot(

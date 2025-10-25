@@ -17,20 +17,17 @@ pub(crate) fn print_deps_inner(
     graph: &DepGraph,
 ) {
     let size_fn = |dep: &DepNode| match dep {
-        DepNode::Function(index) => {
-            let size = index
-                .as_raw_index()
-                .checked_sub(info.import_info.imported_funcs.len())
-                .map(|defined_index| {
-                    info.wasm.code.section_payload.defined_funcs
-                        [DefinedFuncId::from_index(defined_index)]
-                    .body
-                    .range()
-                    .len()
-                })
-                .unwrap_or_default();
-            size
-        }
+        DepNode::Function(index) => index
+            .as_raw_index()
+            .checked_sub(info.import_info.imported_funcs.len())
+            .map(|defined_index| {
+                info.wasm.code.section_payload.defined_funcs
+                    [DefinedFuncId::from_index(defined_index)]
+                .body
+                .range()
+                .len()
+            })
+            .unwrap_or_default(),
         DepNode::DataSymbol(segment, idx) => {
             info.wasm.linking.linking_symbols.data_in_segments[*segment][*idx].size as usize
         }
@@ -64,7 +61,7 @@ pub(crate) fn print_deps_inner(
 
     println!("SPLIT: ============== {module_name}");
     for (node, children) in graph.iter_childs() {
-        if !reachable.contains(&node) {
+        if !reachable.contains(node) {
             continue;
         }
 
@@ -178,6 +175,6 @@ impl Debug for OutputModuleInfo {
 
 impl OutputModuleInfo {
     pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo, graph: &DepGraph) {
-        print_deps_inner(module_name, info, &self.defined_symbols, &graph);
+        print_deps_inner(module_name, info, &self.defined_symbols, graph);
     }
 }

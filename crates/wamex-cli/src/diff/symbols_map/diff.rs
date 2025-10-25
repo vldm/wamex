@@ -211,7 +211,7 @@ impl NodeHashContext {
                 }
                 // update content_hash
                 let mut node_context = node_context.clone();
-                node_context.content_hash = new_hash.clone();
+                node_context.content_hash = new_hash;
 
                 next_hashes.insert(node, node_context);
                 nodes_to_update.insert(node);
@@ -346,10 +346,10 @@ impl DiffResult {
                     let mut new_nodes = new_nodes;
                     self.match_list_by_context(&mut old_nodes, &mut new_nodes);
                     // return back non-touched nodes
-                    if old_nodes.len() > 0 {
+                    if !old_nodes.is_empty() {
                         old_map.insert(key.clone(), old_nodes);
                     }
-                    if new_nodes.len() > 0 {
+                    if !new_nodes.is_empty() {
                         new_map.insert(key, new_nodes);
                     }
                 }
@@ -495,8 +495,8 @@ impl DiffResult {
             replaced.push(added_entry);
         }
 
-        changed.extend(removed.into_iter());
-        changed.extend(replaced.into_iter());
+        changed.extend(removed);
+        changed.extend(replaced);
 
         self.changed = changed;
     }

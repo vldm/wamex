@@ -176,11 +176,6 @@ pub fn debug_fmt_mostly_filled<T: Debug>(
     writer
 }
 
-/// Returns an iterator if the condition is true, otherwise returns an empty iterator.
-pub fn iter_if<T>(condition: bool, iter: impl Iterator<Item = T>) -> impl Iterator<Item = T> {
-    condition.then_some(iter).into_iter().flatten()
-}
-
 pub fn encoding_size(n: u32) -> usize {
     let (_value, pos) = leb128fmt::encode_u32(n).unwrap();
     pos

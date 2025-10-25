@@ -41,6 +41,7 @@ pub enum SymbolRelation<'a> {
 pub struct NamedData<'a> {
     name: &'a str,
     index: DataSymbolId,
+    #[allow(dead_code)]
     flags: SymbolFlags,
     relation: SymbolRelation<'a>,
 
@@ -76,7 +77,7 @@ pub struct DataSegment<'a> {
 impl Debug for DataSegment<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = match &self.kind {
-            DataKind::Passive => format!("Passive"),
+            DataKind::Passive => "Passive".to_string(),
             DataKind::Active {
                 offset_expr,
                 memory_index,
@@ -138,7 +139,7 @@ impl<'src> DataSegment<'src> {
                 // Save relocation entries related to this symbol
                 |entry| wasmparser::RelocationEntry {
                     offset: entry.offset - sym.range.start as u32,
-                    ..entry.clone()
+                    ..*entry
                 },
                 |entry| {
                     match sym.range.cmp_range(entry.relocation_range()) {
@@ -202,7 +203,8 @@ impl<'src> DataSegment<'src> {
                         );
                     }
                 }
-                let aligned = (symbol_in_data.start + mem_offset as usize) % field_alignment == 0;
+                let aligned =
+                    (symbol_in_data.start + mem_offset as usize).is_multiple_of(field_alignment);
 
                 log::trace!(
                     "Data symbol {}: offset: {}, size: {}, aligned: {}, alignment: {}",
@@ -215,7 +217,7 @@ impl<'src> DataSegment<'src> {
                 prev = symbol_in_data.clone();
                 SymbolRelation::Regular {
                     chunk: &data.data[symbol_in_data.clone()],
-                    aligned: aligned,
+                    aligned,
                 }
             };
 
@@ -434,7 +436,7 @@ impl<'src> DataSegment<'src> {
         let mut globals = Vec::new();
         for symbol in self.data_parts.iter() {
             match symbol.relation {
-                SymbolRelation::BoundToPrevious { offset, len } => {
+                SymbolRelation::BoundToPrevious { offset, .. } => {
                     // BoundToPrevious symbols are not counted in data length
                     log::debug!(
                         "BoundToPrevious symbol {}: {offset} is not counted in data length",
@@ -448,7 +450,7 @@ impl<'src> DataSegment<'src> {
                     });
                 }
                 SymbolRelation::Regular { chunk, aligned } => {
-                    let total_offset = data.len() + segment_offset as usize;
+                    let total_offset = data.len() + segment_offset;
 
                     // add padding to align data
                     if aligned {
@@ -483,7 +485,7 @@ impl<'src> DataSegment<'src> {
                         offset: entry.offset as i64,
                         entry: wasmparser::RelocationEntry {
                             offset: entry.offset + data.len() as u32,
-                            ..entry.clone()
+                            ..*entry
                         },
                     }));
                     data.extend_from_slice(chunk);
@@ -525,7 +527,7 @@ impl DataSegmentOutput {
                 None => wasm_encoder::DataSegmentMode::Passive,
                 Some(data_init) => wasm_encoder::DataSegmentMode::Active {
                     memory_index,
-                    offset: &data_init,
+                    offset: data_init,
                 },
             },
             data: self.data.clone(),

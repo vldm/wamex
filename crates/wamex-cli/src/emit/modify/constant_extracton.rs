@@ -103,7 +103,7 @@ impl ConstantExtractionEntry {
             );
         };
 
-        let offset = (got_offset as i64 + self.entry.addend) as u64;
+        let offset = (got_offset + self.entry.addend) as u64;
 
         let fix_offset = |memarg: wasmparser::MemArg| wasm_encoder::MemArg {
             align: memarg.align as u32,
@@ -112,68 +112,48 @@ impl ConstantExtractionEntry {
         };
 
         let (store, ix) = match ctx.instruction {
-            Operator::F32Load { memarg } => (None, Instruction::F32Load(fix_offset(memarg.into()))),
-            Operator::F64Load { memarg } => (None, Instruction::F64Load(fix_offset(memarg.into()))),
-            Operator::I32Load { memarg } => (None, Instruction::I32Load(fix_offset(memarg.into()))),
-            Operator::I64Load { memarg } => (None, Instruction::I64Load(fix_offset(memarg.into()))),
-            Operator::I32Load8U { memarg } => {
-                (None, Instruction::I32Load8U(fix_offset(memarg.into())))
-            }
-            Operator::I32Load8S { memarg } => {
-                (None, Instruction::I32Load8S(fix_offset(memarg.into())))
-            }
-            Operator::I32Load16U { memarg } => {
-                (None, Instruction::I32Load16U(fix_offset(memarg.into())))
-            }
-            Operator::I32Load16S { memarg } => {
-                (None, Instruction::I32Load16S(fix_offset(memarg.into())))
-            }
-            Operator::I64Load8U { memarg } => {
-                (None, Instruction::I64Load8U(fix_offset(memarg.into())))
-            }
-            Operator::I64Load8S { memarg } => {
-                (None, Instruction::I64Load8S(fix_offset(memarg.into())))
-            }
-            Operator::I64Load16U { memarg } => {
-                (None, Instruction::I64Load16U(fix_offset(memarg.into())))
-            }
-            Operator::I64Load16S { memarg } => {
-                (None, Instruction::I64Load16S(fix_offset(memarg.into())))
-            }
-            Operator::I64Load32U { memarg } => {
-                (None, Instruction::I64Load32U(fix_offset(memarg.into())))
-            }
-            Operator::I64Load32S { memarg } => {
-                (None, Instruction::I64Load32S(fix_offset(memarg.into())))
-            }
+            Operator::F32Load { memarg } => (None, Instruction::F32Load(fix_offset(memarg))),
+            Operator::F64Load { memarg } => (None, Instruction::F64Load(fix_offset(memarg))),
+            Operator::I32Load { memarg } => (None, Instruction::I32Load(fix_offset(memarg))),
+            Operator::I64Load { memarg } => (None, Instruction::I64Load(fix_offset(memarg))),
+            Operator::I32Load8U { memarg } => (None, Instruction::I32Load8U(fix_offset(memarg))),
+            Operator::I32Load8S { memarg } => (None, Instruction::I32Load8S(fix_offset(memarg))),
+            Operator::I32Load16U { memarg } => (None, Instruction::I32Load16U(fix_offset(memarg))),
+            Operator::I32Load16S { memarg } => (None, Instruction::I32Load16S(fix_offset(memarg))),
+            Operator::I64Load8U { memarg } => (None, Instruction::I64Load8U(fix_offset(memarg))),
+            Operator::I64Load8S { memarg } => (None, Instruction::I64Load8S(fix_offset(memarg))),
+            Operator::I64Load16U { memarg } => (None, Instruction::I64Load16U(fix_offset(memarg))),
+            Operator::I64Load16S { memarg } => (None, Instruction::I64Load16S(fix_offset(memarg))),
+            Operator::I64Load32U { memarg } => (None, Instruction::I64Load32U(fix_offset(memarg))),
+            Operator::I64Load32S { memarg } => (None, Instruction::I64Load32S(fix_offset(memarg))),
 
             Operator::I32Store { memarg } => (
-                Some(StoreType::I32Store),
-                Instruction::I32Store(fix_offset(memarg.into())),
+                Some(StoreType::I32),
+                Instruction::I32Store(fix_offset(memarg)),
             ),
             Operator::I64Store { memarg } => (
-                Some(StoreType::I64Store),
-                Instruction::I64Store(fix_offset(memarg.into())),
+                Some(StoreType::I64),
+                Instruction::I64Store(fix_offset(memarg)),
             ),
             Operator::I32Store8 { memarg } => (
-                Some(StoreType::I32Store),
-                Instruction::I32Store8(fix_offset(memarg.into())),
+                Some(StoreType::I32),
+                Instruction::I32Store8(fix_offset(memarg)),
             ),
             Operator::I32Store16 { memarg } => (
-                Some(StoreType::I32Store),
-                Instruction::I32Store16(fix_offset(memarg.into())),
+                Some(StoreType::I32),
+                Instruction::I32Store16(fix_offset(memarg)),
             ),
             Operator::I64Store8 { memarg } => (
-                Some(StoreType::I64Store),
-                Instruction::I64Store8(fix_offset(memarg.into())),
+                Some(StoreType::I64),
+                Instruction::I64Store8(fix_offset(memarg)),
             ),
             Operator::I64Store16 { memarg } => (
-                Some(StoreType::I64Store),
-                Instruction::I64Store16(fix_offset(memarg.into())),
+                Some(StoreType::I64),
+                Instruction::I64Store16(fix_offset(memarg)),
             ),
             Operator::I64Store32 { memarg } => (
-                Some(StoreType::I64Store),
-                Instruction::I64Store32(fix_offset(memarg.into())),
+                Some(StoreType::I64),
+                Instruction::I64Store32(fix_offset(memarg)),
             ),
 
             _ => {
@@ -198,10 +178,14 @@ impl ConstantExtractionEntry {
             Instruction::GlobalGet(ctx.global_tmps.get(store_type).unwrap().as_raw_index() as u32)
         });
 
-        save_value.map(|v| v.encode(ctx.writer)); // Get <value> from stack to temp storage
+        if let Some(v) = save_value {
+            v.encode(ctx.writer)
+        } // Get <value> from stack to temp storage
         Instruction::GlobalGet(got_global_index.as_raw_index() as u32).encode(ctx.writer);
         Instruction::I32Add.encode(ctx.writer); // add offset from global_index variable to the dyn_offset part of instruction
-        restore_value.map(|v| v.encode(ctx.writer)); // Recover back <value> to stack
+        if let Some(v) = restore_value {
+            v.encode(ctx.writer)
+        } // Recover back <value> to stack
         ix.encode(ctx.writer); // And now push modified original instruction
 
         Ok(())
@@ -253,7 +237,7 @@ impl CustomModify for ConstantExtractionEntry {
             | RelocationType::MemoryAddrSleb
             | RelocationType::TableIndexSleb if context.dyn_relocate =>{
                 Some(Self {
-                    entry: entry.clone(),
+                    entry: *entry,
                 })
             }
             RelocationType::TableIndexI32  // in instruction Sleb or Leb are used I32 is used only in data segment ?

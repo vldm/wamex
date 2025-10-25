@@ -1,7 +1,7 @@
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
-    let _ = env_logger::Builder::new()
+    env_logger::Builder::new()
         .parse_filters("info")
         .parse_default_env()
         .init();

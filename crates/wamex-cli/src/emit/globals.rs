@@ -100,8 +100,8 @@ impl GlobalConstructor {
     }
     pub fn global_type(&self) -> GlobalType {
         match self {
-            GlobalConstructor::DataSymbol(symbol) => symbol.type_info.clone(),
-            GlobalConstructor::TempStore(global_type) => global_type.clone(),
+            GlobalConstructor::DataSymbol(symbol) => symbol.type_info,
+            GlobalConstructor::TempStore(global_type) => *global_type,
         }
     }
 }

@@ -85,14 +85,7 @@ where
 {
     name_map
         .into_iter()
-        .map(|r| {
-            r.map(|naming| {
-                (
-                    crate::index::Id::from_index(naming.index as u32),
-                    naming.name,
-                )
-            })
-        })
+        .map(|r| r.map(|naming| (crate::index::Id::from_index(naming.index), naming.name)))
         .collect::<Result<IdMap<crate::index::Id<T>, &'a str>, _>>()
         .map_err(|e| e.into())
 }
@@ -100,11 +93,11 @@ where
 fn convert_indirect_name_map<'a>(
     indirect_name_map: wasmparser::IndirectNameMap<'a>,
 ) -> Result<VecMap<wasmparser::NameMap<'a>>> {
-    Ok(indirect_name_map
+    indirect_name_map
         .into_iter()
         .map(|r| -> Result<(usize, wasmparser::NameMap<'a>)> {
             let indirect_naming = r?;
             Ok((indirect_naming.index as usize, indirect_naming.names))
         })
-        .collect::<Result<VecMap<_>, _>>()?)
+        .collect::<Result<VecMap<_>, _>>()
 }

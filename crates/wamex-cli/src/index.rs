@@ -263,10 +263,7 @@ impl<Type> Eq for Id<Type> {}
 
 impl<Type> Clone for Id<Type> {
     fn clone(&self) -> Self {
-        Id {
-            id: self.id,
-            _ty: PhantomData,
-        }
+        *self
     }
 }
 
@@ -284,7 +281,7 @@ impl<Type> FromStr for Id<Type> {
 
 impl<Type> PartialOrd for Id<Type> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.id.cmp(&other.id))
+        Some(self.cmp(other))
     }
 }
 impl<Type> Ord for Id<Type> {
@@ -334,7 +331,7 @@ macro_rules! impl_standalone_index {
         $(
             pub enum $priv {}
             pub type $ty = $crate::index::Id<$priv>;
-            impl crate::index::Indexed for $priv {
+            impl $crate::index::Indexed for $priv {
                 type StaticTypeTagForIndex = $priv;
                 type IndexType = Id<$priv>;
             }
@@ -366,7 +363,7 @@ impl<Input> OutputMapType<Input> {
             None => OutputMapType::None,
         }
     }
-    pub fn to_bidirectional(self) -> Option<Input> {
+    pub fn into_bidirectional(self) -> Option<Input> {
         match self {
             OutputMapType::BidirectionalMap(input) => Some(input),
             _ => None,
@@ -427,7 +424,6 @@ impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
 }
 
 /// After building this collection, no modification is allowed.
-
 pub struct WithOriginalIndex<'src, T>
 where
     T: OutputType<'src> + Defined<'src>,
@@ -466,7 +462,7 @@ where
             .enumerate()
             .filter_map(|(i, input_id)| {
                 input_id
-                    .to_bidirectional()
+                    .into_bidirectional()
                     .map(|input_id| (input_id, Id::from_index(i)))
             })
             .collect();
@@ -502,7 +498,7 @@ where
 
     pub fn imports(
         &self,
-    ) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T::Import)> + ExactSizeIterator
+    ) -> impl ExactSizeIterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T::Import)>
     {
         self.collection
             .imports()
@@ -512,8 +508,7 @@ where
     }
     pub fn defined(
         &self,
-    ) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T)> + ExactSizeIterator
-    {
+    ) -> impl ExactSizeIterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T)> {
         let num_imports = self.collection.imports().len();
         self.collection
             .defined()
@@ -548,9 +543,7 @@ where
         }
     }
 
-    pub fn iter_all_ids<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = Id<<T as Indexed>::StaticTypeTagForIndex>> {
+    pub fn iter_all_ids(&self) -> impl Iterator<Item = Id<<T as Indexed>::StaticTypeTagForIndex>> {
         (0..self.len()).map(Id::from_index)
     }
     pub fn len(&self) -> usize {

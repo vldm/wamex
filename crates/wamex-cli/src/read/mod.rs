@@ -103,7 +103,7 @@ impl<'a> InputModule<'a> {
                 Payload::FunctionSection(reader) => {
                     function_types = reader
                         .into_iter()
-                        .map(|t| t.map(|id| crate::index::Id::from_index(id)))
+                        .map(|t| t.map(crate::index::Id::from_index))
                         .collect::<Result<Vec<_>, _>>()?;
                 }
                 Payload::ExportSection(reader) => {

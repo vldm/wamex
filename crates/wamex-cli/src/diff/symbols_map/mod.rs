@@ -73,7 +73,7 @@ fn get_data_chunk<'a>(
     data_symbol: &'a NamedData<'a>,
 ) -> &'a [u8] {
     match data_symbol.symbol_relation() {
-        SymbolRelation::Regular { chunk, .. } => *chunk,
+        SymbolRelation::Regular { chunk, .. } => chunk,
         SymbolRelation::BoundToPrevious { offset, len } => {
             //TODO: hide in DataSegment impl
             let mut iter = segment_info._data_symbols_rev_iter(idx).peekable();
@@ -182,8 +182,8 @@ impl Structure {
     pub fn snapshot(&self) -> crate::metadata_ext::Snapshot {
         let symbols = self
             .nodes
-            .iter()
-            .map(|(_node_id, info)| {
+            .values()
+            .map(|info| {
                 let content_hash = info.body_hash();
                 let signature = info.signature().clone();
                 (signature, content_hash)
@@ -217,8 +217,8 @@ impl Structure {
     /// Diff this structure against another structure to find added, removed, and same nodes
     pub fn diff(&self, other: &Structure) -> DiffResult {
         // Phase 1: Build identity maps
-        let mut old_identity_map = NodeHashContext::build_symbol_map(&self);
-        let mut new_identity_map = NodeHashContext::build_symbol_map(&other);
+        let mut old_identity_map = NodeHashContext::build_symbol_map(self);
+        let mut new_identity_map = NodeHashContext::build_symbol_map(other);
 
         // Debug print duplicate nodes (usually only anonymous data symbols, but can be some hash collisions)
         NodeHashContext::trace_dups("old", &old_identity_map);
@@ -283,19 +283,19 @@ impl ModuleStructure {
             .data_symbols
             .iter()
             .map(|symbol| DepNode::DataSymbol(symbol.segment_index, symbol.symbol_index));
-        let func_iter = module.function_id_iter().map(|id| DepNode::Function(id));
+        let func_iter = module.function_id_iter().map(DepNode::Function);
 
         // 1st pass: collect all children
         for (i, node) in func_iter.chain(data_iter).enumerate() {
             let id = Id::from_index(i);
-            module_nodes.insert(id, node.clone());
+            module_nodes.insert(id, node);
 
             let (content_hash, children) = match node {
                 DepNode::Function(id) => {
                     get_function_content_hash(module, all_relocations, id).unwrap_or_default()
                 }
                 DepNode::DataSymbol(segment, idx) => {
-                    get_data_content_hash(&data_segments, segment, idx)
+                    get_data_content_hash(data_segments, segment, idx)
                 }
             };
             let signature = SymbolSignature::from_node(module, &node);
@@ -313,10 +313,7 @@ impl ModuleStructure {
         }
 
         // Map from Module dep (DepNode) to serializable GraphNode (plain index)
-        let graph_to_struct_id = module_nodes
-            .iter()
-            .map(|(id, node)| (node.clone(), id))
-            .collect();
+        let graph_to_struct_id = module_nodes.iter().map(|(id, node)| (*node, id)).collect();
 
         let mut parents_map = BTreeMap::<GraphNode, Vec<GraphNode>>::new();
 

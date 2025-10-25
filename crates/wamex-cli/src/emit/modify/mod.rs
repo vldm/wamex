@@ -1,8 +1,8 @@
 //! Methods to apply relocations and code replacements.
 //! This module contains two type of methods:
 //! - convenient relocation methods, that can be found at: https://github.com/WebAssembly/tool-conventions/blob/main/Linking.md
-//! - constant replacement technique, that swaps all usage of constant offsets embeded in code with a global variable binding
-//! (something simmilar precalculated GOT + offset).
+//! - constant replacement technique, that swaps all usage of constant offsets embeded in code with a global
+//!   variable binding (something simmilar precalculated GOT + offset).
 //!
 //!
 
@@ -14,15 +14,14 @@ use std::ops::Range;
 
 use anyhow::{bail, Result};
 use constant_extracton::ConstantExtractionEntry;
-use gxhash::{HashMap, HashMapExt};
+use gxhash::HashMap;
 pub use relocation::RelocateState;
 pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
-use wasm_encoder::{reencode::Reencode, ValType};
+use wasm_encoder::reencode::Reencode;
 use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     emit::{index_safety::OutputGlobalId, ComputedModules, ModuleEmitState},
-    helpers::RangeExt,
     index::{DefinedFuncId, InputFuncId, InputGlobalId},
 };
 
@@ -83,7 +82,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let reloc_info = RelocateState {
-            input_module: &module_emit.src.wasm,
+            input_module: module_emit.src.wasm,
             computed_modules,
             emit_module: module_emit,
             global_id_mapper: &global_id_mapper,
@@ -103,7 +102,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 .functions
                 .get(func_id)
                 .copied()
-                .unwrap_or_else(|| "__undefined_function");
+                .unwrap_or("__undefined_function");
             (name, defined_func.body.clone())
         };
         log::debug!(
@@ -238,7 +237,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 "applying relocation {relocation:?} to function {function_name}",
                 function_name = function_name
             );
-            reloc_info.apply_relocation(&mut result, &relocation)?;
+            reloc_info.apply_relocation(&mut result, relocation)?;
         }
         Ok((result, other_relocations))
     }
@@ -253,7 +252,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let reloc_info = RelocateState {
-            input_module: &module_emit.src.wasm,
+            input_module: module_emit.src.wasm,
             computed_modules,
             emit_module: module_emit,
             global_id_mapper: &global_id_mapper,
@@ -272,7 +271,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 .functions
                 .get(func_id)
                 .copied()
-                .unwrap_or_else(|| "__undefined_function");
+                .unwrap_or("__undefined_function");
             (name, defined_func.body.clone())
         };
         log::debug!(
@@ -343,7 +342,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 "applying relocation {relocation:?} to function {function_name}",
                 function_name = function_name
             );
-            reloc_info.apply_relocation(&mut result, &relocation)?;
+            reloc_info.apply_relocation(&mut result, relocation)?;
         }
         Ok((result, other_relocations))
     }
@@ -405,17 +404,17 @@ impl<C: CustomModify> ModifyEntry<C> {
 
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub enum StoreType {
-    I32Store,
-    I64Store,
-    F32Store,
-    F64Store,
+    I32,
+    I64,
+    F32,
+    F64,
 }
 
 pub fn init_each_store_var() -> Vec<(StoreType, wasm_encoder::ValType)> {
     vec![
-        (StoreType::I32Store, wasm_encoder::ValType::I32),
-        (StoreType::I64Store, wasm_encoder::ValType::I64),
-        (StoreType::F32Store, wasm_encoder::ValType::F32),
-        (StoreType::F64Store, wasm_encoder::ValType::F64),
+        (StoreType::I32, wasm_encoder::ValType::I32),
+        (StoreType::I64, wasm_encoder::ValType::I64),
+        (StoreType::F32, wasm_encoder::ValType::F32),
+        (StoreType::F64, wasm_encoder::ValType::F64),
     ]
 }

@@ -174,7 +174,7 @@ impl CustomModify for DataEntry {
 
                 Some(Self {
                     storage,
-                    relocation: entry.clone(),
+                    relocation: *entry,
                 })
             }
 

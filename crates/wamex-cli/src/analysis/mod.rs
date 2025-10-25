@@ -154,8 +154,7 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
             let mut function_list = Vec::with_capacity(functions.count() as usize);
             for function_id in functions.clone().into_iter() {
                 let raw_function_id = function_id
-                    .with_context(|| format!("Failed to read function ID from element {id:?}"))?
-                    as u32;
+                    .with_context(|| format!("Failed to read function ID from element {id:?}"))?;
                 function_list.push(InputFuncId::from_index(raw_function_id));
             }
             indirect_element = Some((id, function_list));
@@ -185,7 +184,7 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
             wasmparser::Operator::End => {}
             op => bail!("Expected End after I32.const: {:?}", op),
         }
-        return val;
+        val
     }
     pub fn function_id_iter<'any>(
         &'any self,
@@ -278,7 +277,7 @@ impl<'a, 'src> ModuleInfo<'a, 'src> {
 
     pub fn find_function_id_containing_range(&self, range: Range<usize>) -> Result<InputFuncId> {
         let func_index = Self::find_by_range(
-            &self.wasm.code.section_payload.defined_funcs.as_slice(),
+            self.wasm.code.section_payload.defined_funcs.as_slice(),
             &range,
             |defined_func| defined_func.body.range(),
         )

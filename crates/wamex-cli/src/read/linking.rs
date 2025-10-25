@@ -77,12 +77,8 @@ pub enum SymbolIndex {
 
 impl Debug for LinkingSymbolsInfo<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let original_indexes_map: BTreeMap<_, _> = self
-            .original_indexes
-            .iter()
-            .enumerate()
-            .map(|(i, idx)| (i, idx))
-            .collect();
+        let original_indexes_map: BTreeMap<_, _> =
+            self.original_indexes.iter().enumerate().collect();
         f.debug_struct("LinkingSymbolsInfo")
             .field("globals", &self.globals)
             .field("funcs", &self.funcs)

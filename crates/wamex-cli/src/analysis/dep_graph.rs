@@ -293,11 +293,8 @@ pub fn get_dependencies(
             )
             .with_context(|| format!("Invalid code relocation entry {entry:?}"))?;
 
-            match entry.ty {
-                RelocationType::TypeIndexLeb => {
-                    continue;
-                } //TODO: refine rest?
-                _ => {}
+            if entry.ty == RelocationType::TypeIndexLeb {
+                continue; //TODO: refine rest?
             }
             add_dep(DepNode::Function(func_index), entry.index);
         }
@@ -415,7 +412,7 @@ impl<Id> NamedGraph<Id> {
                 let module = &mut modules[module_id];
 
                 let top_shared_deps =
-                    Self::reduce_shared_entries(&shared_deps, &module.reachable, &graph);
+                    Self::reduce_shared_entries(&shared_deps, &module.reachable, graph);
                 // imports
                 module.imports.extend(top_shared_deps.clone());
                 // exports

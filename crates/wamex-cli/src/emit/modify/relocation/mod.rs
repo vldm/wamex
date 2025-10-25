@@ -36,7 +36,7 @@ impl FunctionIndexTag {
             .linking
             .linking_symbols
             .original_indexes
-            .get(src_symbol as usize)
+            .get(src_symbol)
         else {
             return None;
         };
@@ -52,14 +52,11 @@ impl EntryTypeTag for FunctionIndexTag {
         src_symbol: AnySymbolId,
     ) -> Option<Self::OutputValue> {
         let input_func_id = FunctionIndexTag::get_input_function_id(input_module, src_symbol)?;
-        let Some(&table_index) = state
+        state
             .indirect_functions
             .function_table_index
             .get(&input_func_id)
-        else {
-            return None;
-        };
-        Some(table_index)
+            .copied()
     }
     fn get_got(got_base: &GotBase) -> OutputGlobalId {
         got_base.table_base_id
@@ -95,7 +92,7 @@ impl EntryTypeTag for DataSymbolTag {
             .linking
             .linking_symbols
             .original_indexes
-            .get(src_symbol as usize)
+            .get(src_symbol)
         else {
             return None;
         };
@@ -145,7 +142,7 @@ impl RelocateState<'_, '_> {
         if let Some(value) = func(&self.computed_modules.main_module) {
             return Ok(SymbolOp::StaticOffset { value });
         }
-        if let Some(value) = func(&self.emit_module) {
+        if let Some(value) = func(self.emit_module) {
             return Ok(SymbolOp::GotBased {
                 value,
                 got: self
@@ -179,7 +176,7 @@ impl RelocateState<'_, '_> {
     ) -> Result<SymbolOp<T::OutputValue>> {
         self._get_symbol_op_with_base::<T, _>(
             |module| {
-                T::get_mapped_value(&self.input_module, &module, relocation.index as AnySymbolId)
+                T::get_mapped_value(self.input_module, module, relocation.index as AnySymbolId)
             },
             || {
                 anyhow!(
@@ -202,7 +199,7 @@ impl RelocateState<'_, '_> {
     ) -> Result<SymbolOp<<DataSymbolTag as EntryTypeTag>::OutputValue>> {
         self._get_symbol_op_with_base::<DataSymbolTag, _>(
             |module| {
-                DataSymbolTag::get_symbol_offset(&module, &segment_id, &data_symbol_id)
+                DataSymbolTag::get_symbol_offset(module, &segment_id, &data_symbol_id)
             },
             || {
                 anyhow!(

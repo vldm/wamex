@@ -129,7 +129,7 @@ pub fn split(args: Split) -> Result<()> {
         args.metadata,
         args.verbose,
         args.precise_modification,
-        args.dry_run.then(|| args.output.as_path()),
+        args.dry_run.then_some(args.output.as_path()),
         |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             if !args.dry_run {
                 let output_filename = identifier.name() + ".wasm";
@@ -153,7 +153,7 @@ pub fn split_inner(
     metadata_output: Option<&Path>,
     emit_module_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> Result<()>,
 ) -> Result<()> {
-    let module = InputModule::parse(&input_wasm)?;
+    let module = InputModule::parse(input_wasm)?;
     let info = analysis::ModuleInfo::new(&module)?;
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
