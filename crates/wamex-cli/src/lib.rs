@@ -10,8 +10,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use gxhash::{HashSet, HashSetExt};
 
 // todo: Refactor analysis and emit modules.
-mod analysis;
-mod emit;
+pub mod analysis;
+pub mod emit;
 mod helpers;
 #[macro_use]
 mod index;
@@ -20,7 +20,7 @@ mod metadata_ext;
 
 mod diff;
 // mod js_glue;
-mod read;
+pub mod read;
 
 pub use read::InputModule;
 use wamex_metadata::BumpVersion;
@@ -49,6 +49,10 @@ pub struct Split {
 
     #[arg(short, long)]
     pub metadata: bool,
+
+    /// Skip writing files (for benchmarking).
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -111,7 +115,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         &info,
         &split_program_info,
         &HashSet::new(),
-        &|_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+        |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             std::fs::write(&args.output, data)?;
             Ok(())
         },
@@ -121,6 +125,33 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
 }
 pub fn split(args: Split) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
+    split_inner(
+        &input_wasm,
+        args.metadata,
+        args.verbose,
+        args.dry_run.then(|| args.output.as_path()),
+        |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+            if !args.dry_run {
+                let output_filename = identifier.name() + ".wasm";
+                std::fs::create_dir_all(&args.output)?;
+                std::fs::write(args.output.join(output_filename), data)?;
+            } else {
+                log::info!("Skipping writing module {} (dry run)", identifier.name());
+            }
+            Ok(())
+        },
+    )
+}
+
+#[doc(hidden)]
+// Full split routine, but without file I/O reading
+pub fn split_inner(
+    input_wasm: &[u8],
+    emit_metadata: bool,
+    verbose: bool,
+    metadata_output: Option<&Path>,
+    emit_module_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> Result<()>,
+) -> Result<()> {
     let module = InputModule::parse(&input_wasm)?;
     let info = analysis::ModuleInfo::new(&module)?;
     //     // println!("names: {:#?}", module.names);
@@ -132,7 +163,7 @@ pub fn split(args: Split) -> Result<()> {
         SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
 
     log::debug!("split_program_info={split_program_info:?}");
-    if args.verbose {
+    if verbose {
         println!("dep_graph={dep_graph:?}");
         for (name, split_deps) in split_program_info.output_modules.iter() {
             split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
@@ -144,29 +175,21 @@ pub fn split(args: Split) -> Result<()> {
 
     // some wbg functions need to be moved to main before splitting.
     let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
-    crate::emit::emit_modules(
-        &info,
-        &split_program_info,
-        &wbg_fns,
-        &|identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
-            let output_filename = identifier.name() + ".wasm";
-            std::fs::create_dir_all(&args.output)?;
-            std::fs::write(args.output.join(output_filename), data)?;
-
-            Ok(())
-        },
-    )?;
+    crate::emit::emit_modules(&info, &split_program_info, &wbg_fns, emit_module_fn)?;
 
     #[cfg(feature = "metadata")]
-    if args.metadata {
-        let metadata_path = args.output.join("metadata.json");
-        let metadata = metadata_ext::build_metadata_and_snapshot(&info, &split_program_info);
-        let metadata_json = if args.verbose {
-            serde_json::to_string_pretty(&metadata)?
-        } else {
-            serde_json::to_string(&metadata)?
-        };
-        std::fs::write(metadata_path, metadata_json)?;
+    if emit_metadata {
+        if let Some(output_path) = metadata_output {
+            let metadata_path = output_path.join("metadata.json");
+            let metadata = metadata_ext::build_metadata_and_snapshot(&info, &split_program_info);
+            let metadata_json = if verbose {
+                serde_json::to_string_pretty(&metadata)?
+            } else {
+                serde_json::to_string(&metadata)?
+            };
+
+            std::fs::write(metadata_path, metadata_json)?;
+        }
     }
 
     Ok(())

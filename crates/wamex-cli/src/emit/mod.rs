@@ -1919,7 +1919,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
 
     fn emit_modules(
         &self,
-        emit_fn: &dyn Fn(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
+        mut emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         for (identifier, state) in self.iter_modules() {
             log::debug!("Generating module {identifier:?}");
@@ -2098,7 +2098,7 @@ pub fn emit_modules<'a, 'src>(
     module: &'a analysis::ModuleInfo<'a, 'src>,
     program_info: &SplitProgramInfo,
     wbg_fns: &HashSet<InputFuncId>,
-    emit_fn: &dyn Fn(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
+    emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let emit_info = CommonEmitInfo::new(&module, program_info)?;
     let calculated = ComputedModules::produce_state(&emit_info, module, program_info, |func_id| {

@@ -34,8 +34,13 @@ wamex_metadata = { version = "0.1.0", path = "../wamex_metadata", optional = tru
 [dev-dependencies]
 tempdir = "0.3"
 insta = "1.43"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 
 [features]
 default = ["metadata"]
 metadata = ["dep:serde_json", "dep:serde", "dep:gxhash", "dep:wamex_metadata"]
+
+[[bench]]
+name = "split_benchmarks"
+harness = false

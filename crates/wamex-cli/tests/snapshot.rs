@@ -17,6 +17,7 @@ fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
         output: output_temp.path().into(),
         verbose: false,
         metadata: false,
+        dry_run: false,
     };
     split(cli)?;
 
