@@ -11,10 +11,10 @@ pub mod emit;
 mod helpers;
 #[macro_use]
 mod index;
+mod diff;
+mod list_set;
 #[cfg(feature = "metadata")]
 mod metadata_ext;
-
-mod diff;
 // mod js_glue;
 pub mod read;
 

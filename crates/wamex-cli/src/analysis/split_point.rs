@@ -12,7 +12,7 @@ use super::dep_graph::{DepGraph, DepNode};
 use crate::{
     analysis::{
         self,
-        dep_graph::{find_reachable_deps, DepList, DepMiniList, NamedGraph},
+        dep_graph::{find_reachable_deps, DepMiniSet, DepSet, NamedGraph},
     },
     index::{ExportId, ImportId, InputFuncId},
     read::InputModule,
@@ -22,10 +22,10 @@ use crate::{
 // The other possible is to emit it as separate chunk and allow linkage.
 #[derive(Default)]
 pub struct OutputModuleInfo {
-    pub defined_symbols: DepList,
+    pub defined_symbols: DepSet,
     // Shared imports that should be imported from other modules.
-    pub imports: DepMiniList,
-    pub exports: DepMiniList,
+    pub imports: DepMiniSet,
+    pub exports: DepMiniSet,
     // TODO: Instead of split points we need list of what "split-points" we exports, and what we imports
     pub split_points: Vec<SplitPoint>,
 }
@@ -227,8 +227,8 @@ impl SplitProgramInfo {
     // TODO: Not sure why imports are used here.
     // Add start_func, exports and imports
     // Filter-out all split points related functions.
-    fn get_main_module_roots(info: &analysis::ModuleInfo, split_points: &[SplitPoint]) -> DepList {
-        let mut roots: DepList = DepList::new();
+    fn get_main_module_roots(info: &analysis::ModuleInfo, split_points: &[SplitPoint]) -> DepSet {
+        let mut roots: DepSet = DepSet::new();
         if let Some(id) = info.wasm.code.section_payload.start_func {
             roots.insert(DepNode::Function(id));
         }
@@ -283,7 +283,7 @@ impl SplitProgramInfo {
         // split module. Symbols may be reachable from more than one split module;
         // these symbols will be moved to a separate module.
         for (module_name, entry_points) in split_points_by_module.iter() {
-            let mut roots = DepList::new();
+            let mut roots = DepSet::new();
             for entry_point in entry_points.iter() {
                 roots.insert(DepNode::Function(entry_point.export_func));
             }
@@ -319,7 +319,7 @@ impl SplitProgramInfo {
                     imports,
                     split_points,
                     // Module can only import symbols from shared modules.
-                    exports: DepMiniList::new(),
+                    exports: DepMiniSet::new(),
                 },
             )
         }));

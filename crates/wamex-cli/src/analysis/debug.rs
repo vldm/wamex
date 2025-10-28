@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use crate::{
     analysis::{
         self,
-        dep_graph::{DepGraph, DepList, DepNode},
+        dep_graph::{DepGraph, DepNode, DepSet},
         split_point::OutputModuleInfo,
     },
     helpers::debug_fmt_mostly_filled,
@@ -13,7 +13,7 @@ use crate::{
 pub(crate) fn print_deps_inner(
     module_name: &str,
     info: &analysis::ModuleInfo,
-    reachable: &DepList,
+    reachable: &DepSet,
     graph: &DepGraph,
 ) {
     let size_fn = |dep: &DepNode| match dep {

@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 
-use crate::analysis::dep_graph::{DepGraph, DepList};
+use crate::analysis::dep_graph::{DepGraph, DepSet};
 
 mod dot_parser;
 
@@ -21,11 +21,11 @@ pub fn parse_deps(input: &str) -> anyhow::Result<DepGraph> {
 ///
 /// The input string should be in format of `&` separated list of nodes.
 /// For example: `D(5, 6) & D(8, 9) & F(4) & F(7)`.
-pub fn uniq_nodes(input: &str) -> anyhow::Result<DepList> {
+pub fn uniq_nodes(input: &str) -> anyhow::Result<DepSet> {
     let (_input, deps) =
         dot_parser::parse_list(input).map_err(|e| anyhow!("Failed to parse list: {e}"))?;
 
-    let mut nodes = DepList::new();
+    let mut nodes = DepSet::new();
     for value in deps {
         nodes.insert(value);
     }

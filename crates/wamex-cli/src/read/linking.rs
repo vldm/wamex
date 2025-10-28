@@ -91,6 +91,7 @@ impl Debug for LinkingSymbolsInfo<'_> {
             .finish()
     }
 }
+/// Store information by symbol type
 #[derive(Default)]
 pub struct LinkingSymbolsInfo<'a> {
     pub globals: IdMap<InputGlobalId, section::SymInfo<'a>>,
