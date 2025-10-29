@@ -8,14 +8,13 @@ use gxhash::{HashMap, HashMapExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 
-use super::dep_graph::{DepGraph, DepNode};
+use super::dep_graph::DepGraph;
 use crate::{
     analysis::{
         self,
         dep_graph::{find_reachable_deps, DepMiniSet, DepSet, NamedGraph},
     },
-    index::{ExportId, ImportId, InputFuncId},
-    read::InputModule,
+    index::{ExportId, ImportId, InputFuncId, SymbolId},
 };
 
 // TODO: impl merge and use it in emit_modules as one of strategies to emit modules.
@@ -47,10 +46,7 @@ pub struct SplitPoint {
 /// Search for _wasm_split_00<module_name>00_import_<import_id> and
 /// _wasm_split_00<module_name>00_export_<export_id> functions
 /// and extract them as SplitPoints.
-pub fn find_split_points(
-    module: &InputModule,
-    info: &analysis::ModuleInfo,
-) -> anyhow::Result<Vec<SplitPoint>> {
+pub fn find_split_points(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
     macro_rules! process_imports_or_exports {
         ($pattern:expr, $map:ident, $member:ident, $id_ty:ty) => {
             let mut $map = HashMap::<(String, String), $id_ty>::new();
@@ -59,7 +55,7 @@ pub fn find_split_points(
                     static ref PATTERN: Regex = Regex::new($pattern).unwrap();
                 }
 
-                for (id, item) in module.$member.iter() {
+                for (id, item) in info.wasm.$member.iter() {
                     let Some(captures) = PATTERN.captures(&item.name) else {
                         continue;
                     };
@@ -89,7 +85,7 @@ pub fn find_split_points(
             let export_id = export_map.remove(&key).ok_or_else(|| {
                 anyhow::anyhow!("No corresponding export for split import {key:?}")
             })?;
-            let export = module.exports[export_id];
+            let export = info.wasm.exports[export_id];
             let wasmparser::Export {
                 kind: wasmparser::ExternalKind::Func,
                 index,
@@ -105,7 +101,7 @@ pub fn find_split_points(
                 .ok_or_else(|| {
                     anyhow!(
                         "Expected imported function but received: {:?}",
-                        &module.imports[import_id]
+                        &info.wasm.imports[import_id]
                     )
                 })?;
             Ok(SplitPoint {
@@ -220,7 +216,7 @@ impl SplitModuleIdentifier {
 #[derive(Debug, Default)]
 pub struct SplitProgramInfo {
     pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
-    pub symbol_output_module: HashMap<DepNode, usize>,
+    pub symbol_output_module: HashMap<SymbolId, usize>,
 }
 
 impl SplitProgramInfo {
@@ -230,7 +226,7 @@ impl SplitProgramInfo {
     fn get_main_module_roots(info: &analysis::ModuleInfo, split_points: &[SplitPoint]) -> DepSet {
         let mut roots: DepSet = DepSet::new();
         if let Some(id) = info.wasm.code.section_payload.start_func {
-            roots.insert(DepNode::Function(id));
+            roots.insert(info.symbols.get_function_symbol(id).unwrap());
         }
         for (_id, export) in info.wasm.exports.iter() {
             let wasmparser::Export {
@@ -241,12 +237,26 @@ impl SplitProgramInfo {
             else {
                 continue;
             };
-            roots.insert(DepNode::Function(InputFuncId::from_index(*index)));
+            roots.insert(
+                info.symbols
+                    .get_function_symbol(InputFuncId::from_index(*index))
+                    .unwrap(),
+            );
         }
 
         for split_point in split_points.iter() {
-            roots.remove(&DepNode::Function(split_point.export_func));
-            roots.remove(&DepNode::Function(split_point.import_func));
+            roots.remove(
+                &info
+                    .symbols
+                    .get_function_symbol(split_point.export_func)
+                    .unwrap(),
+            );
+            roots.remove(
+                &info
+                    .symbols
+                    .get_function_symbol(split_point.import_func)
+                    .unwrap(),
+            );
         }
         roots
     }
@@ -285,7 +295,11 @@ impl SplitProgramInfo {
         for (module_name, entry_points) in split_points_by_module.iter() {
             let mut roots = DepSet::new();
             for entry_point in entry_points.iter() {
-                roots.insert(DepNode::Function(entry_point.export_func));
+                roots.insert(
+                    info.symbols
+                        .get_function_symbol(entry_point.export_func)
+                        .unwrap(),
+                );
             }
 
             let split_functions = find_reachable_deps(dep_graph, &roots);

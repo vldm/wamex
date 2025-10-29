@@ -13,54 +13,33 @@
 use gxhash::{HashMap, HashMapExt, HashSet};
 use nom::{
     branch::alt,
-    bytes::{tag, take_while},
-    character::{complete, multispace0},
+    bytes::{complete::take_while, tag},
+    character::complete::multispace0,
     combinator::map_res,
     IResult, Parser,
 };
 
-use crate::{
-    analysis::dep_graph::DepNode,
-    index::{DataSegmentId, DataSymbolId, InputFuncId},
-};
+use crate::index::SymbolId;
 
-fn parse_fn_node(input: &str) -> IResult<&str, DepNode> {
-    let (input, _) = (tag("F("), multispace0()).parse(input)?;
-
+fn parse_symbol_id(input: &str) -> IResult<&str, SymbolId> {
     let (input, val) = map_res(take_while(|c: char| c.is_digit(10)), |s: &str| {
-        s.parse::<InputFuncId>()
+        s.parse::<SymbolId>()
     })
     .parse(input)?;
 
-    let (input, _) = (multispace0(), tag(")")).parse(input)?;
-    Ok((input, DepNode::Function(val)))
+    Ok((input, val))
 }
 
-fn parse_data_node(input: &str) -> IResult<&str, DepNode> {
-    let (input, _) = (tag("D("), multispace0()).parse(input)?;
-    let (input, segment) = map_res(take_while(|c: char| c.is_digit(10)), |s: &str| {
-        s.parse::<DataSegmentId>()
-    })
-    .parse(input)?;
+fn parse_any_node(input: &str) -> IResult<&str, SymbolId> {
+    let (input, _space) = multispace0(input)?;
+    let (input, dep_node) = parse_symbol_id(input)?;
+    let (input, _space) = multispace0(input)?;
 
-    let (input, _) = (multispace0(), tag(","), multispace0()).parse(input)?;
-
-    let (input, symbol) = map_res(take_while(|c: char| c.is_digit(10)), |s: &str| {
-        s.parse::<DataSymbolId>()
-    })
-    .parse(input)?;
-    let (input, _) = (multispace0(), tag(")")).parse(input)?;
-    Ok((input, DepNode::DataSymbol(segment, symbol)))
-}
-
-fn parse_any_node(input: &str) -> IResult<&str, DepNode> {
-    let (input, (_space, dep_node)) =
-        (multispace0(), alt((parse_fn_node, parse_data_node))).parse(input)?;
     Ok((input, dep_node))
 }
 
 fn parse_operator(input: &str) -> IResult<&str, Operator> {
-    let (input, (_space, op)) = (multispace0(), alt((tag("->"), tag("&")))).parse(input)?;
+    let (input, (_space, op)) = (multispace0, alt((tag("->"), tag("&")))).parse(input)?;
     let operator = match op {
         "->" => Operator::Arrow,
         "&" => Operator::Ampersand,
@@ -74,13 +53,13 @@ enum Operator {
     Ampersand,
 }
 
-fn parse_oneline_deps(input: &str) -> IResult<&str, HashMap<DepNode, HashSet<DepNode>>> {
+fn parse_oneline_deps(input: &str) -> IResult<&str, HashMap<SymbolId, HashSet<SymbolId>>> {
     if input.trim().is_empty() {
         return Ok((input, HashMap::new()));
     }
 
     let (input, first_node) = parse_any_node(input)?;
-    let mut nodes: HashMap<DepNode, HashSet<DepNode>> = HashMap::new();
+    let mut nodes: HashMap<SymbolId, HashSet<SymbolId>> = HashMap::new();
     let mut last_parrent = first_node;
 
     let (input, operator) = parse_operator(input)?;
@@ -116,20 +95,20 @@ fn parse_oneline_deps(input: &str) -> IResult<&str, HashMap<DepNode, HashSet<Dep
         }
         last_child = next_node;
 
-        let (next_input, _) = complete::multispace0(input)?;
+        let (next_input, _) = multispace0(input)?;
         input = next_input;
     }
 
     Ok((input, nodes))
 }
 
-pub fn parse_deps(input: &str) -> IResult<&str, HashMap<DepNode, HashSet<DepNode>>> {
-    let mut deps: HashMap<DepNode, HashSet<DepNode>> = HashMap::new();
+pub fn parse_deps(input: &str) -> IResult<&str, HashMap<SymbolId, HashSet<SymbolId>>> {
+    let mut deps: HashMap<SymbolId, HashSet<SymbolId>> = HashMap::new();
 
     let mut input = input;
     while !input.is_empty() {
         // Remove leading whitespace and newlines
-        let (next_input, val) = nom::bytes::complete::take_while(|c| c != '\n').parse(input)?;
+        let (next_input, val) = take_while(|c| c != '\n').parse(input)?;
 
         let (_, nodes) = parse_oneline_deps(val)?;
 
@@ -137,27 +116,26 @@ pub fn parse_deps(input: &str) -> IResult<&str, HashMap<DepNode, HashSet<DepNode
             deps.entry(parent).or_default().extend(children);
         }
 
-        let (next_input, _) = complete::multispace0(next_input)?;
+        let (next_input, _) = multispace0(next_input)?;
         input = next_input;
     }
 
     Ok((input, deps))
 }
 
-pub fn parse_list(input: &str) -> IResult<&str, Vec<DepNode>> {
+pub fn parse_list(input: &str) -> IResult<&str, Vec<SymbolId>> {
     let mut nodes = Vec::new();
     let mut input = input;
 
     while !input.is_empty() {
         // Remove leading whitespace and newlines
-        let (next_input, val) = nom::bytes::complete::take_while(|c| c != '\n').parse(input)?;
+        let (next_input, val) = take_while(|c| c != '\n').parse(input)?;
 
         let mut line = val;
         while !line.is_empty() {
             let (next_input, node) = parse_any_node(line)?;
             nodes.push(node);
 
-            let (next_input, _) = complete::multispace0(next_input)?;
             if next_input.is_empty() {
                 break;
             }
@@ -172,7 +150,7 @@ pub fn parse_list(input: &str) -> IResult<&str, Vec<DepNode>> {
             line = next_input;
         }
 
-        let (next_input, _) = complete::multispace0(next_input)?;
+        let (next_input, _) = multispace0(next_input)?;
         input = next_input;
     }
 
@@ -183,51 +161,49 @@ pub fn parse_list(input: &str) -> IResult<&str, Vec<DepNode>> {
 pub mod tests {
     use gxhash::{HashMap, HashMapExt};
 
-    use crate::index::Id;
+    use crate::index::SymbolId;
 
-    pub fn function(id: u32) -> super::DepNode {
-        super::DepNode::Function(Id::from_index(id))
+    pub fn symbol(id: u32) -> super::SymbolId {
+        SymbolId::from_index(id)
     }
-    pub fn data_symbol(segment: u32, symbol: u32) -> super::DepNode {
-        super::DepNode::DataSymbol(Id::from_index(segment), Id::from_index(symbol))
-    }
+
     #[test]
     fn test_parse_fn() {
-        let input = "F(123)";
-        let (remaining, dep_node) = super::parse_fn_node(input).unwrap();
+        let input = "123";
+        let (remaining, dep_node) = super::parse_any_node(input).unwrap();
         assert_eq!(remaining, "");
-        assert_eq!(dep_node, function(123));
+        assert_eq!(dep_node, symbol(123));
 
-        let input = "F( 456 )";
-        let (remaining, dep_node) = super::parse_fn_node(input).unwrap();
+        let input = " 456 ";
+        let (remaining, dep_node) = super::parse_any_node(input).unwrap();
 
         assert_eq!(remaining, "");
-        assert_eq!(dep_node, function(456));
+        assert_eq!(dep_node, symbol(456));
     }
 
     #[test]
     fn test_parse_dep() {
-        let input = "D(789, 1011)";
-        let (remaining, dep_node) = super::parse_data_node(input).unwrap();
+        let input = "789001011";
+        let (remaining, dep_node) = super::parse_any_node(input).unwrap();
         assert_eq!(remaining, "");
-        assert_eq!(dep_node, data_symbol(789, 1011));
+        assert_eq!(dep_node, symbol(789001011));
     }
 
     #[test]
     fn test_simple_dep() {
-        let input = "F(1) -> D(2, 3)";
+        let input = "1 -> 2000003";
         let (remaining, nodes) = super::parse_oneline_deps(input).unwrap();
         assert_eq!(remaining, "");
         assert_eq!(nodes, {
             let mut map = HashMap::new();
-            map.insert(function(1), vec![data_symbol(2, 3)].into_iter().collect());
+            map.insert(symbol(1), vec![symbol(2000003)].into_iter().collect());
             map
         });
     }
 
     #[test]
     fn test_more_deps() {
-        let input = "F(1) -> D(2, 3) & F(4) -> D(5, 6)";
+        let input = "1 -> 2000003 & 4 -> 5000006";
         let (remaining, same_nodes) = super::parse_oneline_deps(input).unwrap();
         assert_eq!(remaining, "");
         let (remaining, nodes) = super::parse_deps(input).unwrap();
@@ -237,10 +213,10 @@ pub mod tests {
         assert_eq!(nodes, {
             let mut map = HashMap::new();
             map.insert(
-                function(1),
-                vec![data_symbol(2, 3), function(4)].into_iter().collect(),
+                symbol(1),
+                vec![symbol(2000003), symbol(4)].into_iter().collect(),
             );
-            map.insert(function(4), vec![data_symbol(5, 6)].into_iter().collect());
+            map.insert(symbol(4), vec![symbol(5000006)].into_iter().collect());
             map
         });
     }
@@ -248,49 +224,29 @@ pub mod tests {
     #[test]
     fn test_multiline_even_more_deps() {
         let input = r#"
-        F(1) -> D(2, 3) & F(4) -> D(5, 6) & F(7) -> D(8, 9)
-        F(10) -> D(11, 12)
-        F(13) -> F(1) & F(4) 
+        1 -> 2 & 4 -> 6 & 7 -> 9
+        10 -> 11
+        13 -> 1 & 4
         "#;
         let (remaining, nodes) = super::parse_deps(input).unwrap();
         assert_eq!(remaining, "");
         assert_eq!(nodes, {
             let mut map = HashMap::new();
 
-            map.insert(
-                function(1),
-                vec![data_symbol(2, 3), function(4)].into_iter().collect(),
-            );
-            map.insert(
-                function(4),
-                vec![data_symbol(5, 6), function(7)].into_iter().collect(),
-            );
-            map.insert(function(7), vec![data_symbol(8, 9)].into_iter().collect());
-            map.insert(
-                function(10),
-                vec![data_symbol(11, 12)].into_iter().collect(),
-            );
-            map.insert(
-                function(13),
-                vec![function(1), function(4)].into_iter().collect(),
-            );
+            map.insert(symbol(1), vec![symbol(2), symbol(4)].into_iter().collect());
+            map.insert(symbol(4), vec![symbol(6), symbol(7)].into_iter().collect());
+            map.insert(symbol(7), vec![symbol(9)].into_iter().collect());
+            map.insert(symbol(10), vec![symbol(11)].into_iter().collect());
+            map.insert(symbol(13), vec![symbol(1), symbol(4)].into_iter().collect());
             map
         });
     }
 
     #[test]
     fn test_list() {
-        let input = "F(1) & D(2, 3) & F(4) & D(5, 6)";
+        let input = "1 & 2 & 4 & 5";
         let (remaining, nodes) = super::parse_list(input).unwrap();
         assert_eq!(remaining, "");
-        assert_eq!(
-            nodes,
-            vec![
-                function(1),
-                data_symbol(2, 3),
-                function(4),
-                data_symbol(5, 6)
-            ]
-        );
+        assert_eq!(nodes, vec![symbol(1), symbol(2), symbol(4), symbol(5)]);
     }
 }

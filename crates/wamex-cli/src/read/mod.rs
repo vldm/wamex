@@ -1,4 +1,7 @@
+use std::fmt::Debug;
+
 use anyhow::{anyhow, bail, Result};
+use vec_map::VecMap;
 use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
@@ -54,7 +57,7 @@ pub struct InputModule<'a> {
     // Activated features
     pub target_features: TargetFeatures,
     // other sections
-    pub custom_sections: Vec<Ind<CustomSection<'a>>>,
+    pub custom_sections: VecMap<Ind<CustomSection<'a>>>,
 }
 
 impl<'a> InputModule<'a> {
@@ -119,7 +122,7 @@ impl<'a> InputModule<'a> {
                     let starting_offset = reader.range().start;
 
                     let data = DataSection {
-                        data_segments: reader.into_iter().collect::<Result<Vec<_>, _>>()?,
+                        data_segments: reader.into_iter().collect::<Result<IdVec<_>, _>>()?,
                     };
                     module.data = Ind {
                         section_payload: data,
@@ -160,11 +163,14 @@ impl<'a> InputModule<'a> {
                             name: reader.name().into(),
                             data: reader.data().into(),
                         };
-                        module.custom_sections.push(Ind {
-                            section_payload: custom_section,
+                        module.custom_sections.insert(
                             section_index,
-                            starting_offset: reader.range().start,
-                        });
+                            Ind {
+                                section_payload: custom_section,
+                                section_index,
+                                starting_offset: reader.range().start,
+                            },
+                        );
                     }
                 }
                 // process after loop

@@ -2,19 +2,20 @@ use std::{
     fmt::Debug,
     hash::Hash,
     marker::PhantomData,
-    ops::{Deref, Index},
+    ops::{Deref, Index, IndexMut},
     str::FromStr,
 };
 
 use vec_map::VecMap;
 use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::read::{
-    code::{FunctionWithBody, InputFunction},
-    linking::section::DataInSegment,
+use crate::{
+    analysis::{symbols::SymbolRecord, DataSymbol},
+    read::code::{FunctionWithBody, InputFunction},
 };
 
 pub type AnySymbolId = usize;
+pub type SymbolId = Id<SymbolRecord<'static>>;
 pub type SectionId = usize;
 pub type OutputSymbolDataId = usize;
 
@@ -28,7 +29,7 @@ pub type MemoryId = Id<MemoryType>;
 pub type InputGlobalId = Id<Global<'static>>;
 pub type ElementId = Id<Element<'static>>;
 pub type DataSegmentId = Id<Data<'static>>;
-pub type DataSymbolId = Id<DataInSegment<'static>>;
+pub type DataSymbolId = Id<DataSymbol>;
 pub type DataId = (DataSegmentId, DataSymbolId);
 pub type TagId = Id<TagType>;
 // TODO: Maybe replace Vecs with id_arena?
@@ -61,7 +62,7 @@ impl<TypeTag> Id<TypeTag> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub struct IdMap<Idx, Res> {
     vecmap: VecMap<Res>,
     _res: PhantomCovariant<Idx>,
@@ -76,17 +77,13 @@ where
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct IdVec<
-    Type,
-    // Allow customization of index type, in case where you have sub-collection for some data Type
-    Idx = <Type as Indexed>::IndexType,
-> {
+pub struct IdVec<Type: Indexed> {
     types: Vec<Type>,
-    _idx: PhantomCovariant<Idx>,
+    _idx: PhantomCovariant<<Type as Indexed>::IndexType>,
 }
-impl<Type, Idx> Debug for IdVec<Type, Idx>
+impl<Type> Debug for IdVec<Type>
 where
-    Type: Debug,
+    Type: Debug + Indexed,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.types.fmt(f)
@@ -123,7 +120,7 @@ impl<T: Default> Default for IndexedSection<T> {
     }
 }
 
-impl<Type, Idx> Default for IdVec<Type, Idx> {
+impl<Type: Indexed> Default for IdVec<Type> {
     fn default() -> Self {
         IdVec {
             types: Vec::new(),
@@ -141,7 +138,7 @@ impl<Type, Result> Default for IdMap<Id<Type>, Result> {
     }
 }
 
-impl<Type, Idx> FromIterator<Type> for IdVec<Type, Idx> {
+impl<Type: Indexed> FromIterator<Type> for IdVec<Type> {
     fn from_iter<T: IntoIterator<Item = Type>>(iter: T) -> Self {
         let vec = Vec::from_iter(iter);
         IdVec {
@@ -160,15 +157,21 @@ impl<Type, Res> FromIterator<(Id<Type>, Res)> for IdMap<Id<Type>, Res> {
     }
 }
 
-impl<T, Idx> IdVec<T, Id<Idx>> {
+impl<T: Indexed> IdVec<T> {
     pub fn new() -> Self {
         IdVec {
             types: Vec::new(),
             _idx: PhantomData,
         }
     }
+    pub fn from_vec(vec: Vec<T>) -> Self {
+        IdVec {
+            types: vec,
+            _idx: PhantomData,
+        }
+    }
 
-    pub fn push(&mut self, item: T) -> Id<Idx> {
+    pub fn push(&mut self, item: T) -> Id<<T as Indexed>::StaticTypeTagForIndex> {
         let id = self.types.len();
         self.types.push(item);
         Id {
@@ -177,11 +180,11 @@ impl<T, Idx> IdVec<T, Id<Idx>> {
         }
     }
 
-    pub fn get(&self, id: Id<Idx>) -> Option<&T> {
+    pub fn get(&self, id: Id<<T as Indexed>::StaticTypeTagForIndex>) -> Option<&T> {
         self.types.get(id.id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (Id<Idx>, &T)> {
+    pub fn iter(&self) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T)> {
         self.types.iter().enumerate().map(|(id, ty)| {
             (
                 Id {
@@ -228,16 +231,44 @@ impl<Type, Res> IdMap<Id<Type>, Res> {
             )
         })
     }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Id<Type>, &mut Res)> {
+        self.vecmap.iter_mut().map(|(id, res)| {
+            (
+                Id {
+                    id,
+                    _ty: PhantomData,
+                },
+                res,
+            )
+        })
+    }
+    pub fn into_iter(self) -> impl Iterator<Item = (Id<Type>, Res)> {
+        self.vecmap.into_iter().map(|(id, res)| {
+            (
+                Id {
+                    id,
+                    _ty: PhantomData,
+                },
+                res,
+            )
+        })
+    }
+
     pub fn entry(&mut self, id: Id<Type>) -> vec_map::Entry<'_, Res> {
         self.vecmap.entry(id.id)
     }
 }
 
-impl<T: Indexed, Idx> Index<Id<Idx>> for IdVec<T, Id<Idx>> {
+impl<T: Indexed> Index<Id<T::StaticTypeTagForIndex>> for IdVec<T> {
     type Output = T;
 
-    fn index(&self, id: Id<Idx>) -> &Self::Output {
+    fn index(&self, id: Id<T::StaticTypeTagForIndex>) -> &Self::Output {
         &self.types[id.id]
+    }
+}
+impl<T: Indexed> IndexMut<Id<T::StaticTypeTagForIndex>> for IdVec<T> {
+    fn index_mut(&mut self, id: Id<T::StaticTypeTagForIndex>) -> &mut Self::Output {
+        &mut self.types[id.id]
     }
 }
 impl<T: Indexed, Res> Index<Id<T::StaticTypeTagForIndex>> for IdMap<Id<T>, Res> {
@@ -245,6 +276,11 @@ impl<T: Indexed, Res> Index<Id<T::StaticTypeTagForIndex>> for IdMap<Id<T>, Res> 
 
     fn index(&self, id: Id<T::StaticTypeTagForIndex>) -> &Self::Output {
         self.vecmap.index(id.id)
+    }
+}
+impl<T: Indexed, Res> IndexMut<Id<T::StaticTypeTagForIndex>> for IdMap<Id<T>, Res> {
+    fn index_mut(&mut self, id: Id<T::StaticTypeTagForIndex>) -> &mut Self::Output {
+        self.vecmap.index_mut(id.id)
     }
 }
 
@@ -319,9 +355,9 @@ macro_rules! impl_indexed_type {
     };
 }
 
-impl_indexed_type!(@lf InputFunction, FunctionWithBody, Import, Export, Table, Global, Element, Data, DataInSegment);
+impl_indexed_type!(@lf InputFunction, FunctionWithBody, Import, Export, Table, Global, Element, Data, SymbolRecord);
 
-impl_indexed_type!(MemoryType, FuncType, TagType);
+impl_indexed_type!(MemoryType, FuncType, TagType, DataSymbol);
 
 // TODO: replace with macro_metavar_expr_concat
 // Currently need explicitly define private type for each index

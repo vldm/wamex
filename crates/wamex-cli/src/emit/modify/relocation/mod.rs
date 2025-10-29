@@ -10,7 +10,7 @@ use crate::{
         index_safety::OutputGlobalId, modify::SymbolOp, ComputedModules, GotBase, ModuleEmitState,
     },
     index::{AnySymbolId, DataSegmentId, DataSymbolId, InputFuncId, InputGlobalId},
-    read::{linking::SymbolIndex, InputModule},
+    read::InputModule,
 };
 
 pub trait EntryTypeTag {

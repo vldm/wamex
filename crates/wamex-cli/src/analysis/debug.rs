@@ -3,11 +3,12 @@ use std::fmt::Debug;
 use crate::{
     analysis::{
         self,
-        dep_graph::{DepGraph, DepNode, DepSet},
+        dep_graph::{DepGraph, DepSet},
         split_point::OutputModuleInfo,
+        symbols::{SymbolKind, SymbolRecord},
     },
     helpers::debug_fmt_mostly_filled,
-    index::DefinedFuncId,
+    index::SymbolId,
 };
 
 pub(crate) fn print_deps_inner(
@@ -16,158 +17,96 @@ pub(crate) fn print_deps_inner(
     reachable: &DepSet,
     graph: &DepGraph,
 ) {
-    let size_fn = |dep: &DepNode| match dep {
-        DepNode::Function(index) => index
-            .as_raw_index()
-            .checked_sub(info.import_info.imported_funcs.len())
-            .map(|defined_index| {
-                info.wasm.code.section_payload.defined_funcs
-                    [DefinedFuncId::from_index(defined_index)]
-                .body
-                .range()
-                .len()
-            })
-            .unwrap_or_default(),
-        DepNode::DataSymbol(segment, idx) => {
-            info.wasm.linking.linking_symbols.data_in_segments[*segment][*idx].size as usize
+    let size_fn = |symbol: &SymbolRecord| match symbol.kind {
+        SymbolKind::DataDefined { length, .. } => length,
+        SymbolKind::Func { input_id } => {
+            if let Some(defined_id) = info.as_defined_function_id(input_id) {
+                info.wasm.code.defined_funcs[defined_id].body.range().len()
+            } else {
+                0
+            }
         }
+        _ => unreachable!(),
     };
-
-    let format_dep = |dep: &DepNode| match dep {
-        DepNode::Function(index) => {
-            let name = info
-                .wasm
-                .names
-                .functions
-                .get(*index)
-                .map(|n| crate::helpers::demangle_full(n));
-            format!("func[{index}] <{name:?}> (size={})", size_fn(dep))
-        }
-        DepNode::DataSymbol(segment, idx) => {
-            let symbol = crate::helpers::demangle_full(
-                info.wasm
-                    .linking
-                    .get_data_in_segment(*segment, *idx)
-                    .expect("indexes should be valid")
-                    .name,
-            );
-            let segment_name = info.wasm.names.data_segments[*segment];
-            format!(
-                "data[{segment}:{idx}] {segment_name}<{symbol:?}> (size={})",
-                size_fn(dep)
-            )
+    let format_dep = |dep: SymbolId| {
+        let symbol = info.symbols.get(dep).expect("dep should be valid");
+        let name = crate::helpers::demangle_full(&symbol.name);
+        match symbol.kind {
+            SymbolKind::Func { input_id } => {
+                format!("func[{input_id}] <{name:?}> (size={})", size_fn(symbol))
+            }
+            SymbolKind::DataDefined {
+                segment_id,
+                offset,
+                length,
+                ..
+            } => {
+                let segment_name = info
+                    .wasm
+                    .names
+                    .data_segments
+                    .get(segment_id)
+                    .cloned()
+                    .unwrap_or_default();
+                format!(
+                    "data[{segment_name}({segment_id}):{start}..{end}]  <{name:?}> (size={})",
+                    size_fn(symbol),
+                    start = offset,
+                    end = offset + length
+                )
+            }
+            _ => unreachable!(),
         }
     };
 
     println!("SPLIT: ============== {module_name}");
     for (node, children) in graph.iter_childs() {
-        if !reachable.contains(node) {
+        if !reachable.contains(&node) {
             continue;
         }
 
         println!("---{}---", format_dep(node));
         for parent in graph.get_parents(node).into_iter().flatten() {
-            println!("<=={} (parent)", format_dep(parent));
+            println!("<=={} (parent)", format_dep(*parent));
         }
         println!("-------------");
         for child in children {
-            println!("==>{}", format_dep(child));
+            println!("==>{}", format_dep(*child));
         }
     }
 
     let mut total_size: usize = 0;
     for r in reachable.iter() {
-        total_size += size_fn(r);
+        let symbol = info.symbols.get(*r).expect("dep should be valid");
+        total_size += size_fn(symbol);
     }
     println!("SPLIT: ============== {module_name} : total size: {total_size}");
 }
 
 impl Debug for OutputModuleInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut included_fns = self
-            .defined_symbols
-            .iter()
-            .filter_map(|dep| match dep {
-                DepNode::Function(func_id) => Some(*func_id),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        included_fns.sort_unstable();
+        let mut defined_symbols = self.defined_symbols.iter().copied().collect::<Vec<_>>();
 
-        let mut included_datas = self
-            .defined_symbols
-            .iter()
-            .filter_map(|dep| match dep {
-                DepNode::DataSymbol(segment, data_id) => Some((*segment, *data_id)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        included_datas.sort_unstable();
+        let mut imported_symbols = self.imports.iter().copied().collect::<Vec<_>>();
 
-        let mut imported_fns = self
-            .imports
-            .iter()
-            .filter_map(|dep| match dep {
-                DepNode::Function(func_id) => Some(*func_id),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        let mut exported_symbols = self.exports.iter().copied().collect::<Vec<_>>();
 
-        let mut imported_datas = self
-            .imports
-            .iter()
-            .filter_map(|dep| match dep {
-                DepNode::DataSymbol(segment, data_id) => Some((*segment, *data_id)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        let mut exported_fns = self
-            .exports
-            .iter()
-            .filter_map(|dep| match dep {
-                DepNode::Function(func_id) => Some(*func_id),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let mut exported_datas = self
-            .exports
-            .iter()
-            .filter_map(|dep| match dep {
-                DepNode::DataSymbol(segment, data_id) => Some((*segment, *data_id)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        imported_fns.sort_unstable();
-        imported_datas.sort_unstable();
-        exported_fns.sort_unstable();
-        exported_datas.sort_unstable();
+        defined_symbols.sort_unstable();
+        imported_symbols.sort_unstable();
+        exported_symbols.sort_unstable();
 
         f.debug_struct("OutputModuleInfo")
             .field(
-                "imported_fns",
-                &debug_fmt_mostly_filled(&imported_fns, 4, 15, "...", |a, b| a.next() != *b),
+                "imported_symbols",
+                &debug_fmt_mostly_filled(&imported_symbols, 3, 7, "...", |a, b| a.next() != *b),
             )
             .field(
-                "imported_datas",
-                &debug_fmt_mostly_filled(&imported_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
+                "exported_symbols",
+                &debug_fmt_mostly_filled(&exported_symbols, 3, 7, "...", |a, b| a.next() != *b),
             )
             .field(
-                "exported_fns",
-                &debug_fmt_mostly_filled(&exported_fns, 4, 15, "...", |a, b| a.next() != *b),
-            )
-            .field(
-                "exported_datas",
-                &debug_fmt_mostly_filled(&exported_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
-            )
-            .field(
-                "included_fns",
-                &debug_fmt_mostly_filled(&included_fns, 4, 15, "...", |a, b| a.next() != *b),
-            )
-            .field(
-                "included_datas",
-                &debug_fmt_mostly_filled(&included_datas, 3, 7, "...", |a, b| a.1.next() != b.1),
+                "defined_symbols",
+                &debug_fmt_mostly_filled(&defined_symbols, 3, 7, "...", |a, b| a.next() != *b),
             )
             .finish()
     }

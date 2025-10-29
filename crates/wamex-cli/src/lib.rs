@@ -7,14 +7,14 @@ use gxhash::{HashSet, HashSetExt};
 
 // todo: Refactor analysis and emit modules.
 pub mod analysis;
-pub mod emit;
+// pub mod emit;
 mod helpers;
 #[macro_use]
 mod index;
-mod diff;
+// mod diff;
 mod list_set;
-#[cfg(feature = "metadata")]
-mod metadata_ext;
+// #[cfg(feature = "metadata")]
+// mod metadata_ext;
 // mod js_glue;
 pub mod read;
 
@@ -99,9 +99,9 @@ pub fn main(args: Cli) -> Result<()> {
 pub fn roundtrip(args: Roundtrip) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
     let module = InputModule::parse(&input_wasm)?;
-    let info = analysis::ModuleInfo::new(&module)?;
+    let info = analysis::ModuleInfo::from_raw_module(module)?;
     //     // println!("names: {:#?}", module.names);
-    let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
+    let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
 
     let split_program_info = SplitProgramInfo::compute_split_modules(&info, &dep_graph, &[])?;
 
@@ -109,16 +109,16 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         split_program_info.output_modules.len() == 1,
         "Roundtrip should produce single module",
     );
-    crate::emit::emit_modules(
-        &info,
-        &split_program_info,
-        &HashSet::new(),
-        false,
-        |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
-            std::fs::write(&args.output, data)?;
-            Ok(())
-        },
-    )?;
+    // crate::emit::emit_modules(
+    //     &info,
+    //     &split_program_info,
+    //     &HashSet::new(),
+    //     false,
+    //     |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+    //         std::fs::write(&args.output, data)?;
+    //         Ok(())
+    //     },
+    // )?;
 
     Ok(())
 }
@@ -154,10 +154,10 @@ pub fn split_inner(
     emit_module_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> Result<()>,
 ) -> Result<()> {
     let module = InputModule::parse(input_wasm)?;
-    let info = analysis::ModuleInfo::new(&module)?;
+    let info = analysis::ModuleInfo::from_raw_module(module)?;
     //     // println!("names: {:#?}", module.names);
-    let dep_graph = analysis::dep_graph::get_dependencies(&module, &info)?;
-    let split_points = analysis::split_point::find_split_points(&module, &info)?;
+    let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
+    let split_points = analysis::split_point::find_split_points(&info)?;
 
     log::debug!("split_points={split_points:?}");
     let mut split_program_info =
@@ -170,34 +170,34 @@ pub fn split_inner(
             split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
         }
     }
-    // one of the possible mode is to merge all shared with main chunks into main module.
-    // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
-    crate::emit::merge_main_shared(&mut split_program_info);
+    // // one of the possible mode is to merge all shared with main chunks into main module.
+    // // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
+    // crate::emit::merge_main_shared(&mut split_program_info);
 
-    // some wbg functions need to be moved to main before splitting.
-    let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
-    crate::emit::emit_modules(
-        &info,
-        &split_program_info,
-        &wbg_fns,
-        precise_modification,
-        emit_module_fn,
-    )?;
+    // // some wbg functions need to be moved to main before splitting.
+    // let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
+    // crate::emit::emit_modules(
+    //     &info,
+    //     &split_program_info,
+    //     &wbg_fns,
+    //     precise_modification,
+    //     emit_module_fn,
+    // )?;
 
-    #[cfg(feature = "metadata")]
-    if emit_metadata {
-        if let Some(output_path) = metadata_output {
-            let metadata_path = output_path.join("metadata.json");
-            let metadata = metadata_ext::build_metadata_and_snapshot(&info, &split_program_info);
-            let metadata_json = if verbose {
-                serde_json::to_string_pretty(&metadata)?
-            } else {
-                serde_json::to_string(&metadata)?
-            };
+    // #[cfg(feature = "metadata")]
+    // if emit_metadata {
+    //     if let Some(output_path) = metadata_output {
+    //         let metadata_path = output_path.join("metadata.json");
+    //         let metadata = metadata_ext::build_metadata_and_snapshot(&info, &split_program_info);
+    //         let metadata_json = if verbose {
+    //             serde_json::to_string_pretty(&metadata)?
+    //         } else {
+    //             serde_json::to_string(&metadata)?
+    //         };
 
-            std::fs::write(metadata_path, metadata_json)?;
-        }
-    }
+    //         std::fs::write(metadata_path, metadata_json)?;
+    //     }
+    // }
 
     Ok(())
 }
@@ -208,8 +208,8 @@ pub fn diff(args: Diff) -> Result<()> {
     let left_module = InputModule::parse(&left)?;
     let right_module = InputModule::parse(&right)?;
 
-    let diff = diff::Compare::new(&left_module, &right_module, args.structural);
-    diff.print_diff()?;
+    // let diff = diff::Compare::new(&left_module, &right_module, args.structural);
+    // diff.print_diff()?;
 
     Ok(())
 }

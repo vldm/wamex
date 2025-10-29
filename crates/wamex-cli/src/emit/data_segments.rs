@@ -176,7 +176,7 @@ impl<'src> DataSegment<'src> {
                     "DataSymbol intersects with previous, offset: {}, entries: {:?}, index {}",
                     offset,
                     entries,
-                    sym.symbol_index
+                    sym.data_symbol_index
                 );
                 // range.intersect(other)
                 SymbolRelation::BoundToPrevious {
@@ -223,7 +223,7 @@ impl<'src> DataSegment<'src> {
 
             let part = NamedData {
                 name: sym.data_in_segment.name,
-                index: sym.symbol_index,
+                index: sym.data_symbol_index,
                 flags: sym.data_in_segment.flags,
                 relocations: entries,
                 relation,

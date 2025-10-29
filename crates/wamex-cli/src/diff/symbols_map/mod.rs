@@ -282,7 +282,7 @@ impl ModuleStructure {
         let data_iter = module
             .data_symbols
             .iter()
-            .map(|symbol| DepNode::DataSymbol(symbol.segment_index, symbol.symbol_index));
+            .map(|symbol| DepNode::DataSymbol(symbol.segment_id, symbol.data_symbol_index));
         let func_iter = module.function_id_iter().map(DepNode::Function);
 
         // 1st pass: collect all children

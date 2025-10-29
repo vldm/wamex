@@ -255,7 +255,7 @@ pub fn _build_module_structure(module: &ModuleInfo) -> crate::diff::symbols_map:
     // TODO: reuse from emit modules
     let data_segments_symbols = module
         .data_symbols
-        .chunk_by(|left, right| left.segment_index == right.segment_index)
+        .chunk_by(|left, right| left.segment_id == right.segment_id)
         .collect::<Vec<_>>();
     let data_segments = module
         .wasm

@@ -1660,7 +1660,7 @@ impl<'src> CommonEmitInfo<'src> {
         // re-build data_segments (using only available symbols)
         let data_segments_symbols = module
             .data_symbols
-            .chunk_by(|left, right| left.segment_index == right.segment_index)
+            .chunk_by(|left, right| left.segment_id == right.segment_id)
             .collect::<Vec<_>>();
         let data_segments: IdVec<DataSegment<'src>> = module
             .wasm

@@ -30,7 +30,7 @@ fn list_data_segments(src: &InputModule) -> Vec<String> {
     src.data
         .data_segments
         .iter()
-        .map(|s| hex::encode(s.data))
+        .map(|(_id, s)| hex::encode(s.data))
         .collect()
 }
 fn list_imports(src: &InputModule) -> BTreeSet<String> {
