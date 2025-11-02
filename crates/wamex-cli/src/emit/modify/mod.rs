@@ -106,10 +106,10 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
             (name, defined_func.body.clone())
         };
 
-        let debug_entries = Self::format_entries(entries);
         log::debug!(
             "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {debug_entries}",
             range = src_body.range(),
+            debug_entries = Self::format_entries(entries)
         );
 
         log::trace!("src_body {:?}", src_body.as_bytes());
@@ -301,10 +301,10 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 .unwrap_or("__undefined_function");
             (name, defined_func.body.clone())
         };
-        let debug_entries = Self::format_entries(entries);
         log::debug!(
             "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {debug_entries}",
             range = src_body.range(),
+            debug_entries = Self::format_entries(entries)
         );
 
         let src = src_body.as_bytes();

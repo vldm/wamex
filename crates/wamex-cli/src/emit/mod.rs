@@ -514,14 +514,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             let defined_id = module_info.as_defined_function_id(func_id).unwrap();
             // Collect all relocation entries that modify something within this function.
             let func_info = &module_info.wasm.code.defined_funcs[defined_id];
-            let range = func_info.body.range();
-            let func_relocs = Self::get_relocations_for_range(&emit_info.all_relocations, &range);
+            let func_relocs = &*module_info.symbols.get(sym_id).unwrap().relocs;
 
             let modification_list = func_relocs
                 .iter()
                 .map(|entry| {
-                    // TODO: Avoid cloning?
-                    let entry = entry.shift_left(range.start);
                     let relocation_context = modify::RelocationContext {
                         dyn_relocate: !main_module && !is_static_symbol(entry.index as AnySymbolId),
                         containing_symbol: None,
@@ -697,19 +694,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         None
     }
 
-    pub fn get_relocations_for_range<'b>(
-        all_relocations: &'b [wasmparser::RelocationEntry],
-        range: &Range<usize>,
-    ) -> &'b [wasmparser::RelocationEntry] {
-        let start = all_relocations
-            .binary_search_by_key(&range.start, |reloc| reloc.offset as usize)
-            .map_or_else(identity, identity);
-        let end = all_relocations
-            .binary_search_by_key(&range.end, |reloc| reloc.offset as usize)
-            .map_or_else(identity, identity);
-
-        &all_relocations[start..end]
-    }
     fn is_main(&self) -> bool {
         self.sub_module_extra.is_none()
     }
@@ -1577,11 +1561,6 @@ pub struct ModuleDecl {
 
 #[derive(Debug)]
 pub struct CommonEmitInfo<'src> {
-    // All relocations, ordered by offset, which are relative to the start of
-    // the file rather than the start of the section.
-    // TODO: move to analysis
-    pub all_relocations: Vec<RelocationEntry>,
-
     pub src_data_segments: IdVec<SegmentLayout<'src>>,
 
     // Imports (corresponding to split points) to exclude from all modules.
@@ -1627,7 +1606,6 @@ impl<'src> CommonEmitInfo<'src> {
         verbose: bool,
         program_info: &SplitProgramInfo,
     ) -> Result<Self> {
-        let all_relocations = Self::all_relocations(&module.wasm)?;
         let mut split_point_imports = BTreeSet::new();
         let mut modules_decl = HashMap::new();
         for (module_index, (id, output_module)) in program_info.output_modules.iter().enumerate() {
@@ -1681,38 +1659,10 @@ impl<'src> CommonEmitInfo<'src> {
             SegmentLayout::debug_layout(&module.symbols, String::from("input"), &data_segments);
         }
         Ok(CommonEmitInfo {
-            all_relocations,
             split_point_imports,
             src_data_segments: data_segments,
             modules_decl,
         })
-    }
-
-    pub fn all_relocations(module: &InputModule<'_>) -> Result<Vec<RelocationEntry>> {
-        let mut all_relocations = Vec::new();
-        for (section_index, section_offset) in [
-            (module.code.section_index, module.code.starting_offset),
-            (module.data.section_index, module.data.starting_offset),
-        ] {
-            let Some(section_relocs) = module.relocs.relocs.get(section_index) else {
-                continue;
-            };
-            for reloc in &section_relocs.entries {
-                let mut reloc = *reloc;
-                reloc.offset =
-                    reloc
-                        .offset
-                        .checked_add(section_offset as u32)
-                        .ok_or_else(|| {
-                            anyhow!(
-                            "Invalid relocation {reloc:?} for section offset {section_offset:?}"
-                        )
-                        })?;
-                all_relocations.push(reloc);
-            }
-        }
-        all_relocations.sort_by_key(|reloc| reloc.offset);
-        Ok(all_relocations)
     }
 
     fn chunk_by<F, U>(items: impl Iterator<Item = U>, comparator: F) -> Vec<Vec<U>>
