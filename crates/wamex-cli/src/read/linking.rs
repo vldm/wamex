@@ -1,13 +1,9 @@
-use std::{collections::BTreeMap, fmt::Debug};
+use std::fmt::Debug;
 
 use anyhow::Result;
-use vec_map::VecMap;
 use wasmparser::{Comdat, InitFunc, Segment};
 
 use super::CustomSectionReader;
-use crate::index::{
-    DataSegmentId, DataSymbolId, IdMap, IdVec, InputFuncId, InputGlobalId, SectionId,
-};
 
 #[allow(dead_code)]
 pub mod section {

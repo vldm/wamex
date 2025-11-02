@@ -10,14 +10,13 @@ use vec_map::VecMap;
 use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
 use crate::{
-    analysis::{symbols::SymbolRecord, DataSymbol},
+    analysis::symbols::SymbolRecord,
     read::code::{FunctionWithBody, InputFunction},
 };
 
 pub type AnySymbolId = usize;
 pub type SymbolId = Id<SymbolRecord<'static>>;
 pub type SectionId = usize;
-pub type OutputSymbolDataId = usize;
 
 pub type FuncTypeId = Id<FuncType>;
 pub type InputFuncId = Id<InputFunction<'static>>;
@@ -29,8 +28,6 @@ pub type MemoryId = Id<MemoryType>;
 pub type InputGlobalId = Id<Global<'static>>;
 pub type ElementId = Id<Element<'static>>;
 pub type DataSegmentId = Id<Data<'static>>;
-pub type DataSymbolId = Id<DataSymbol>;
-pub type DataId = (DataSegmentId, DataSymbolId);
 pub type TagId = Id<TagType>;
 // TODO: Maybe replace Vecs with id_arena?
 // Currently the only difference is that we also use
@@ -214,8 +211,8 @@ impl<Type, Res> IdMap<Id<Type>, Res> {
             _res: PhantomData,
         }
     }
-    pub fn insert(&mut self, id: Id<Type>, res: Res) {
-        self.vecmap.insert(id.id, res);
+    pub fn insert(&mut self, id: Id<Type>, res: Res) -> Option<Res> {
+        self.vecmap.insert(id.id, res)
     }
     pub fn get(&self, id: Id<Type>) -> Option<&Res> {
         self.vecmap.get(id.id)
@@ -357,7 +354,7 @@ macro_rules! impl_indexed_type {
 
 impl_indexed_type!(@lf InputFunction, FunctionWithBody, Import, Export, Table, Global, Element, Data, SymbolRecord);
 
-impl_indexed_type!(MemoryType, FuncType, TagType, DataSymbol);
+impl_indexed_type!(MemoryType, FuncType, TagType);
 
 // TODO: replace with macro_metavar_expr_concat
 // Currently need explicitly define private type for each index

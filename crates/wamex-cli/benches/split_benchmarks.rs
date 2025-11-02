@@ -53,13 +53,11 @@ fn benchmark_parse_module(c: &mut Criterion) {
 fn benchmark_dependency_analysis(c: &mut Criterion) {
     let lazy_routes_wasm = load_lazy_routes_wasm();
     let module = InputModule::parse(&lazy_routes_wasm).unwrap();
-    let info = analysis::ModuleInfo::from_raw_module(&module).unwrap();
+    let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
 
     c.bench_function("get_dependencies", |b| {
         b.iter(|| {
-            let dep_graph =
-                analysis::dep_graph::get_dependencies(black_box(&module), black_box(&info))
-                    .unwrap();
+            let dep_graph = analysis::dep_graph::get_dependencies(black_box(&info)).unwrap();
             hint_black_box(dep_graph);
         })
     });
@@ -68,9 +66,9 @@ fn benchmark_dependency_analysis(c: &mut Criterion) {
 fn benchmark_compute_split_modules(c: &mut Criterion) {
     let lazy_routes_wasm = load_lazy_routes_wasm();
     let module = InputModule::parse(&lazy_routes_wasm).unwrap();
-    let info = analysis::ModuleInfo::from_raw_module(&module).unwrap();
-    let dep_graph = analysis::dep_graph::get_dependencies(&module, &info).unwrap();
-    let split_points = analysis::split_point::find_split_points(&module, &info).unwrap();
+    let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
+    let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
+    let split_points = analysis::split_point::find_split_points(&info).unwrap();
 
     c.bench_function("compute_split_modules", |b| {
         b.iter(|| {
@@ -88,9 +86,9 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
 fn benchmark_emit_modules(c: &mut Criterion) {
     let lazy_routes_wasm = load_lazy_routes_wasm();
     let module = InputModule::parse(&lazy_routes_wasm).unwrap();
-    let info = analysis::ModuleInfo::from_raw_module(&module).unwrap();
-    let dep_graph = analysis::dep_graph::get_dependencies(&module, &info).unwrap();
-    let split_points = analysis::split_point::find_split_points(&module, &info).unwrap();
+    let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
+    let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
+    let split_points = analysis::split_point::find_split_points(&info).unwrap();
     let mut split_program_info =
         SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points).unwrap();
 
@@ -103,6 +101,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
             let mut output_counter = 0;
             let result = emit::emit_modules(
                 black_box(&info),
+                false,
                 black_box(&split_program_info),
                 black_box(&wbg_fns),
                 false,
@@ -122,6 +121,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
             let mut output_counter = 0;
             let result = emit::emit_modules(
                 black_box(&info),
+                false,
                 black_box(&split_program_info),
                 black_box(&wbg_fns),
                 true,

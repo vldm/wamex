@@ -7,7 +7,7 @@ use gxhash::{HashSet, HashSetExt};
 
 // todo: Refactor analysis and emit modules.
 pub mod analysis;
-// pub mod emit;
+pub mod emit;
 mod helpers;
 #[macro_use]
 mod index;
@@ -15,7 +15,6 @@ mod index;
 mod list_set;
 // #[cfg(feature = "metadata")]
 // mod metadata_ext;
-// mod js_glue;
 pub mod read;
 
 pub use read::InputModule;
@@ -166,23 +165,25 @@ pub fn split_inner(
     log::debug!("split_program_info={split_program_info:?}");
     if verbose {
         println!("dep_graph={dep_graph:?}");
+        info.symbols.print_debug();
         for (name, split_deps) in split_program_info.output_modules.iter() {
             split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
         }
     }
-    // // one of the possible mode is to merge all shared with main chunks into main module.
-    // // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
-    // crate::emit::merge_main_shared(&mut split_program_info);
+    // one of the possible mode is to merge all shared with main chunks into main module.
+    // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
+    crate::emit::merge_main_shared(&mut split_program_info);
 
-    // // some wbg functions need to be moved to main before splitting.
-    // let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
-    // crate::emit::emit_modules(
-    //     &info,
-    //     &split_program_info,
-    //     &wbg_fns,
-    //     precise_modification,
-    //     emit_module_fn,
-    // )?;
+    // some wbg functions need to be moved to main before splitting.
+    let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
+    crate::emit::emit_modules(
+        &info,
+        verbose,
+        &split_program_info,
+        &wbg_fns,
+        precise_modification,
+        emit_module_fn,
+    )?;
 
     // #[cfg(feature = "metadata")]
     // if emit_metadata {

@@ -33,7 +33,10 @@ pub(crate) fn print_deps_inner(
         let name = crate::helpers::demangle_full(&symbol.name);
         match symbol.kind {
             SymbolKind::Func { input_id } => {
-                format!("func[{input_id}] <{name:?}> (size={})", size_fn(symbol))
+                format!(
+                    "{dep} func[{input_id}] <{name:?}> (size={})",
+                    size_fn(symbol)
+                )
             }
             SymbolKind::DataDefined {
                 segment_id,
@@ -49,7 +52,7 @@ pub(crate) fn print_deps_inner(
                     .cloned()
                     .unwrap_or_default();
                 format!(
-                    "data[{segment_name}({segment_id}):{start}..{end}]  <{name:?}> (size={})",
+                    "{dep} data[{segment_name}({segment_id}):{start}..{end}]  <{name:?}> (size={})",
                     size_fn(symbol),
                     start = offset,
                     end = offset + length

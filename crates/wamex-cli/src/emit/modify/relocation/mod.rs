@@ -6,10 +6,11 @@ use anyhow::{anyhow, bail, Result};
 use wasmparser::RelocationEntry;
 
 use crate::{
+    analysis::{self, symbols::SymbolKind, ModuleInfo},
     emit::{
         index_safety::OutputGlobalId, modify::SymbolOp, ComputedModules, GotBase, ModuleEmitState,
     },
-    index::{AnySymbolId, DataSegmentId, DataSymbolId, InputFuncId, InputGlobalId},
+    index::{DataSegmentId, Id, InputFuncId, InputGlobalId, SymbolId},
     read::InputModule,
 };
 
@@ -17,9 +18,9 @@ pub trait EntryTypeTag {
     type OutputValue;
     // Index or offset of symbol in corresponding module
     fn get_mapped_value(
-        input_module: &InputModule<'_>,
+        input: &analysis::ModuleInfo<'_>,
         state: &ModuleEmitState,
-        src_symbol: AnySymbolId,
+        src_symbol: SymbolId,
     ) -> Option<Self::OutputValue>;
     fn get_got(got_base: &GotBase) -> OutputGlobalId;
 }
@@ -29,29 +30,24 @@ pub enum DataSymbolTag {}
 
 impl FunctionIndexTag {
     fn get_input_function_id(
-        input_module: &InputModule<'_>,
-        src_symbol: AnySymbolId,
+        input: &analysis::ModuleInfo<'_>,
+        src_symbol: SymbolId,
     ) -> Option<InputFuncId> {
-        let Some(SymbolIndex::Func(input_func_id)) = input_module
-            .linking
-            .linking_symbols
-            .original_indexes
-            .get(src_symbol)
-        else {
+        let SymbolKind::Func { input_id } = input.symbols.get(src_symbol)?.kind else {
             return None;
         };
-        Some(*input_func_id)
+        Some(input_id)
     }
 }
 
 impl EntryTypeTag for FunctionIndexTag {
     type OutputValue = usize;
     fn get_mapped_value(
-        input_module: &InputModule<'_>,
+        input: &analysis::ModuleInfo<'_>,
         state: &ModuleEmitState,
-        src_symbol: AnySymbolId,
+        src_symbol: SymbolId,
     ) -> Option<Self::OutputValue> {
-        let input_func_id = FunctionIndexTag::get_input_function_id(input_module, src_symbol)?;
+        let input_func_id = FunctionIndexTag::get_input_function_id(input, src_symbol)?;
         state
             .indirect_functions
             .function_table_index
@@ -66,38 +62,30 @@ impl EntryTypeTag for FunctionIndexTag {
 impl DataSymbolTag {
     fn get_symbol_offset(
         state: &ModuleEmitState,
-        segment_id: &DataSegmentId,
-        data_symbol_id: &DataSymbolId,
+        segment_id: DataSegmentId,
+        data_symbol_id: SymbolId,
     ) -> Option<<DataSymbolTag as EntryTypeTag>::OutputValue> {
-        let (segment_id, data_index): &(DataSegmentId, usize) = state
-            .input_data_to_output_id
-            .get(&(*segment_id, *data_symbol_id))?;
-        let segment = state.data.get(*segment_id)?;
-        let data = segment.symbols().get(*data_index)?;
-        if !segment.is_active() {
+        let segment = state.data.get(segment_id)?;
+        let symbol = segment.symbols().get(&data_symbol_id);
+        let Some(symbol) = symbol else {
             return None;
-        }
+        };
 
-        Some(segment.memory_offset() as i64 + data.data_offset as i64)
+        Some(segment.memory_offset() as i64 + symbol.data_mem_offset as i64)
     }
 }
 impl EntryTypeTag for DataSymbolTag {
     type OutputValue = i64;
     fn get_mapped_value(
-        input_module: &InputModule<'_>,
+        input: &ModuleInfo<'_>,
         state: &ModuleEmitState,
-        src_symbol: AnySymbolId,
+        src_symbol: SymbolId,
     ) -> Option<Self::OutputValue> {
-        let Some(SymbolIndex::DataDefined(segment_id, data_index)) = input_module
-            .linking
-            .linking_symbols
-            .original_indexes
-            .get(src_symbol)
-        else {
+        let SymbolKind::DataDefined { segment_id, .. } = input.symbols.get(src_symbol)?.kind else {
             return None;
         };
 
-        DataSymbolTag::get_symbol_offset(state, segment_id, data_index)
+        DataSymbolTag::get_symbol_offset(state, segment_id, src_symbol)
     }
     fn get_got(got_base: &GotBase) -> OutputGlobalId {
         got_base.lib_base_id
@@ -106,7 +94,7 @@ impl EntryTypeTag for DataSymbolTag {
 
 #[derive(Clone)]
 pub struct RelocateState<'any, 'src> {
-    pub input_module: &'any InputModule<'src>,
+    pub input_module: &'any analysis::ModuleInfo<'src>,
     pub computed_modules: &'any ComputedModules<'any, 'src>,
     pub global_id_mapper: &'any dyn Fn(InputGlobalId) -> Option<OutputGlobalId>,
     pub emit_module: &'any ModuleEmitState<'any, 'src>,
@@ -122,27 +110,17 @@ impl Debug for RelocateState<'_, '_> {
     }
 }
 
-// macro_rules! get_symbol_op{
-//     (
-//         $self:expr,
-//         @static($value) =>
-//         @not_found =>
-//         @no_got => $
-//     )
-
-// }
-
 impl RelocateState<'_, '_> {
-    fn _get_symbol_op_with_base<T: EntryTypeTag, U>(
+    fn _get_symbol_op<T: EntryTypeTag, U>(
         &self,
-        func: impl Fn(&ModuleEmitState) -> Option<U>,
+        getter: impl Fn(&ModuleEmitState) -> Option<U>,
         not_found: impl FnOnce() -> anyhow::Error,
         no_got: impl FnOnce() -> anyhow::Error,
     ) -> Result<SymbolOp<U>> {
-        if let Some(value) = func(&self.computed_modules.main_module) {
+        if let Some(value) = getter(&self.computed_modules.main_module) {
             return Ok(SymbolOp::StaticOffset { value });
         }
-        if let Some(value) = func(self.emit_module) {
+        if let Some(value) = getter(self.emit_module) {
             return Ok(SymbolOp::GotBased {
                 value,
                 got: self
@@ -154,7 +132,7 @@ impl RelocateState<'_, '_> {
         }
 
         for (id, module) in &self.computed_modules.shared_modules {
-            if let Some(value) = func(module) {
+            if let Some(value) = getter(module) {
                 return Ok(SymbolOp::GotBased {
                     value,
 
@@ -174,9 +152,9 @@ impl RelocateState<'_, '_> {
         &self,
         relocation: &RelocationEntry,
     ) -> Result<SymbolOp<T::OutputValue>> {
-        self._get_symbol_op_with_base::<T, _>(
+        self._get_symbol_op::<T, _>(
             |module| {
-                T::get_mapped_value(self.input_module, module, relocation.index as AnySymbolId)
+                T::get_mapped_value(self.input_module, module, Id::from_index(relocation.index))
             },
             || {
                 anyhow!(
@@ -195,11 +173,11 @@ impl RelocateState<'_, '_> {
     pub fn get_data_symbol_op(
         &self,
         segment_id: DataSegmentId,
-        data_symbol_id: DataSymbolId,
+        data_symbol_id: SymbolId,
     ) -> Result<SymbolOp<<DataSymbolTag as EntryTypeTag>::OutputValue>> {
-        self._get_symbol_op_with_base::<DataSymbolTag, _>(
+        self._get_symbol_op::<DataSymbolTag, _>(
             |module| {
-                DataSymbolTag::get_symbol_offset(module, &segment_id, &data_symbol_id)
+                DataSymbolTag::get_symbol_offset(module, segment_id, data_symbol_id)
             },
             || {
                 anyhow!(
@@ -217,7 +195,7 @@ impl RelocateState<'_, '_> {
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
         let Some(input_func_id) = FunctionIndexTag::get_input_function_id(
             self.input_module,
-            relocation.index as AnySymbolId,
+            Id::from_index(relocation.index),
         ) else {
             bail!("Relocation {relocation:?} does not refer to a valid function")
         };
@@ -248,16 +226,21 @@ impl RelocateState<'_, '_> {
     }
 
     fn get_global_id(&self, relocation: &RelocationEntry) -> Result<usize> {
-        let Some(SymbolIndex::Global(original_global_id)) = self
+        let symbol = self
             .input_module
-            .linking
-            .linking_symbols
-            .original_indexes
-            .get(relocation.index as usize)
-        else {
-            bail!("Relocation {relocation:?} does not refer to a valid global");
+            .symbols
+            .get(Id::from_index(relocation.index))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Relocation {relocation:?} refers to invalid symbol id {}",
+                    relocation.index
+                )
+            })?;
+        let SymbolKind::Global(original_global_id) = symbol.kind else {
+            bail!("Relocation {relocation:?} does not refer to a global symbol, instead got {symbol:?}");
         };
-        let global_id = (self.global_id_mapper)(*original_global_id)
+
+        let global_id = (self.global_id_mapper)(original_global_id)
             .ok_or_else(|| {
                 anyhow!(
                     "Dependency analysis error: No output global for input global {original_global_id} referenced by relocation {relocation:?}"

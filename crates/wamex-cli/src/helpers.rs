@@ -91,16 +91,16 @@ impl RangeExt for Range<usize> {
     fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp {
         let other = other.borrow();
         {
-            if self.start >= other.end {
-                RangeComp::Right
-            } else if self.end <= other.start {
-                RangeComp::Left
-            } else if self.start == other.start && self.end == other.end {
+            if self.start == other.start && self.end == other.end {
                 RangeComp::Equal
             } else if self.start <= other.start && self.end >= other.end {
                 RangeComp::Overlap
             } else if self.start >= other.start && self.end <= other.end {
                 RangeComp::Within
+            } else if self.start >= other.end {
+                RangeComp::Right
+            } else if self.end <= other.start {
+                RangeComp::Left
             } else {
                 RangeComp::NonComparable
             }
@@ -244,6 +244,14 @@ mod tests {
         assert_eq!(range1.cmp_range(25..35), super::RangeComp::Left);
 
         assert_eq!(range1.cmp_range(2..40), super::RangeComp::Within);
+    }
+
+    #[test]
+    fn test_cmp_range_from_file() {
+        let range = 8916..8917;
+        let other = 8916..8916;
+
+        assert_eq!(range.cmp_range(other), super::RangeComp::Overlap);
     }
 
     #[test]

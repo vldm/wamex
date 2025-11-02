@@ -119,7 +119,13 @@ pub struct SharedEntries<Id> {
 pub fn get_dependencies(info: &analysis::ModuleInfo) -> anyhow::Result<DepGraph> {
     let mut deps = DepGraph::new();
 
+    // TypeIndexLeb relocations index is not in symbol index space.
+    let non_type_index = |entry: &&wasmparser::RelocationEntry| {
+        use wasmparser::RelocationType;
+        !matches!(entry.ty, RelocationType::TypeIndexLeb)
+    };
     let is_fn_or_data = |id: &SymbolId| info.symbols.is_function(*id) || info.symbols.is_data(*id);
+
     for (id, child) in info.symbols.iter() {
         if !is_fn_or_data(&id) {
             continue;
@@ -128,7 +134,9 @@ pub fn get_dependencies(info: &analysis::ModuleInfo) -> anyhow::Result<DepGraph>
             child
                 .relocs
                 .iter()
+                .filter(non_type_index)
                 .map(|entry| Id::from_index(entry.index))
+                .filter_map(|index| info.symbols.as_duplicate_mapped(index).or(Some(index)))
                 .filter(is_fn_or_data),
         );
 

@@ -1,19 +1,22 @@
-use std::{fmt::Debug, iter::Peekable};
+use std::{borrow::Cow, collections::BTreeMap, fmt::Debug, io::IsTerminal, iter::Peekable};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use gxhash::HashSet;
 use wasm_encoder::Encode;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
-    analysis,
-    emit::globals::DataSymbol,
+    analysis::{
+        self,
+        symbols::{self, SymbolKind},
+    },
+    emit::index_safety::OutputGlobalId,
     helpers::{encoding_size, RangeComp, RangeExt},
-    index::{DataSymbolId, Indexed},
+    index::{DataSegmentId, Id, IdMap, IdVec, Indexed, SymbolId},
 };
+mod hexdump;
 
 /// Describes how a data symbol relates to its neighboring symbols within a segment.
-
 #[derive(Clone, Debug)]
 pub enum SymbolRelation<'a> {
     /// A standalone symbol with no binding constraints.
@@ -38,20 +41,20 @@ pub enum SymbolRelation<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub struct NamedData<'a> {
-    name: &'a str,
-    index: DataSymbolId,
+pub struct DataChunk<'a> {
+    name: Cow<'a, str>,
     #[allow(dead_code)]
     flags: SymbolFlags,
     relation: SymbolRelation<'a>,
+    symbol_index: SymbolId,
 
     // offset related to this symbol
     relocations: Vec<wasmparser::RelocationEntry>,
 }
 
-impl NamedData<'_> {
+impl DataChunk<'_> {
     pub fn name(&self) -> &str {
-        self.name
+        &self.name
     }
     pub fn relocations(&self) -> &[wasmparser::RelocationEntry] {
         &self.relocations
@@ -60,21 +63,17 @@ impl NamedData<'_> {
     pub fn symbol_relation(&self) -> &SymbolRelation<'_> {
         &self.relation
     }
-    pub fn index(&self) -> DataSymbolId {
-        self.index
-    }
 }
 
 #[derive(Clone)]
-pub struct DataSegment<'a> {
-    data_parts: Vec<NamedData<'a>>,
-
+pub struct SegmentLayout<'a> {
+    data_parts: Vec<DataChunk<'a>>,
     alignment: usize,
     kind: DataKind<'a>,
     mem_offset: usize,
 }
 
-impl Debug for DataSegment<'_> {
+impl Debug for SegmentLayout<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = match &self.kind {
             DataKind::Passive => "Passive".to_string(),
@@ -104,20 +103,19 @@ impl Debug for DataSegment<'_> {
     }
 }
 
-impl<'src> DataSegment<'src> {
-    pub fn new_inner(
-        data: Data<'src>,
-        segment_info: wasmparser::Segment<'_>,
-        symbols: &[analysis::DataSymbol<'_, 'src>],
-        // Save relocations related to each symbol
-        relocations: &[wasmparser::RelocationEntry],
-    ) -> Result<DataSegment<'src>> {
+impl<'src> SegmentLayout<'src> {
+    pub fn new_inner<'a>(
+        data: &Data<'src>,
+        segment_info: &wasmparser::Segment<'src>,
+        data_symbols: impl Iterator<Item = (SymbolId, &'a analysis::symbols::SymbolRecord<'src>)>,
+    ) -> Result<SegmentLayout<'src>>
+    where
+        'src: 'a,
+    {
         let alignment = (2usize).pow(segment_info.alignment);
-        // skip header of data segment
-        let data_start = data.range.end - data.data.len();
 
         let mem_offset = match &data.kind {
-            DataKind::Passive => 0,
+            DataKind::Passive => panic!("Passive data is not currently supported"),
             DataKind::Active { offset_expr, .. } => {
                 crate::analysis::ModuleInfo::read_const_expr(offset_expr)?
             }
@@ -131,75 +129,48 @@ impl<'src> DataSegment<'src> {
         );
 
         let mut data_parts = vec![];
-        let mut relocation_iter = relocations.iter().peekable();
-        let mut prev = 0..0;
-        for sym in symbols {
-            let entries = Self::collect_and_map_while(
-                &mut relocation_iter,
-                // Save relocation entries related to this symbol
-                |entry| wasmparser::RelocationEntry {
-                    offset: entry.offset - sym.range.start as u32,
-                    ..*entry
-                },
-                |entry| {
-                    match sym.range.cmp_range(entry.relocation_range()) {
-                        // In case relocations is not ordered, or related to more than one symbol.
-                        RangeComp::Right | RangeComp::NonComparable | RangeComp::Within => {
-                            panic!(
-                                "BUG: Relocation entry is not related to symbols: {:?} and {:?}",
-                                sym, entry
-                            );
-                        }
-                        RangeComp::Overlap | RangeComp::Equal => true,
-                        RangeComp::Left => false,
-                    }
-                },
-            );
+        let mut last_regular = 0..0;
+        for (sym_id, sym) in data_symbols {
+            let SymbolKind::DataDefined { offset, length, .. } = &sym.kind else {
+                unreachable!("Expected DataDefined symbol kind for data segment symbol");
+            };
 
-            let symbol_in_data = sym.range.clone().shift_left(data_start);
-
+            let symbol_in_data = offset.clone()..(offset + length);
             let field_alignment = Self::data_symbol_alignment(alignment, symbol_in_data.len());
 
-            let relation = if prev.end > symbol_in_data.start {
+            let relation = if last_regular.end > symbol_in_data.start {
                 log::warn!(
                     "DataSymbol intersects with previous, this is currently in testing: {:?} range:{:?} prev_range: {:?}",
                     sym,
                     symbol_in_data,
-                    prev
+                    last_regular
                 );
                 assert!(matches!(
-                    prev.cmp_range(&symbol_in_data),
+                    last_regular.cmp_range(&symbol_in_data),
                     RangeComp::Overlap | RangeComp::Equal
                 ));
-                let offset = prev.end - symbol_in_data.start;
-                log::warn!(
-                    "DataSymbol intersects with previous, offset: {}, entries: {:?}, index {}",
-                    offset,
-                    entries,
-                    sym.data_symbol_index
-                );
-                // range.intersect(other)
+                let offset = last_regular.end - symbol_in_data.start;
                 SymbolRelation::BoundToPrevious {
                     offset,
                     len: symbol_in_data.len(),
                 }
             } else {
-                if prev.end < symbol_in_data.start {
-                    let gap_range = prev.end..symbol_in_data.start;
+                if last_regular.end < symbol_in_data.start {
+                    let gap_range = last_regular.end..symbol_in_data.start;
 
                     if gap_range.len() >= alignment {
                         log::error!(
                             "Data segment has gap larger than alignment: {:?} > {} before {}",
                             gap_range,
                             alignment,
-                            sym.data_in_segment.name
+                            sym.name
                         );
                     } else {
                         log::debug!(
                             "Data segment has gap: {:?} ({} bytes) before {}",
                             gap_range,
                             gap_range.len(),
-                            sym.data_in_segment.name
+                            sym.name
                         );
                     }
                 }
@@ -208,24 +179,24 @@ impl<'src> DataSegment<'src> {
 
                 log::trace!(
                     "Data symbol {}: offset: {}, size: {}, aligned: {}, alignment: {}",
-                    sym.data_in_segment.name,
+                    sym.name,
                     symbol_in_data.start,
                     symbol_in_data.len(),
                     aligned,
                     field_alignment
                 );
-                prev = symbol_in_data.clone();
+                last_regular = symbol_in_data.clone();
                 SymbolRelation::Regular {
                     chunk: &data.data[symbol_in_data.clone()],
                     aligned,
                 }
             };
 
-            let part = NamedData {
-                name: sym.data_in_segment.name,
-                index: sym.data_symbol_index,
-                flags: sym.data_in_segment.flags,
-                relocations: entries,
+            let part = DataChunk {
+                name: sym.name.clone(),
+                flags: sym.flags,
+                relocations: sym.relocs.clone(),
+                symbol_index: sym_id,
                 relation,
             };
             log::trace!("Data part: {part:?}");
@@ -234,33 +205,71 @@ impl<'src> DataSegment<'src> {
 
         let kind = data.kind.clone();
 
-        Ok(DataSegment {
+        Ok(SegmentLayout {
             alignment,
             data_parts,
             kind,
             mem_offset: mem_offset as usize,
         })
     }
-    pub fn _data_symbols_iter(&self) -> impl Iterator<Item = &NamedData<'src>> {
-        self.data_parts.iter()
-    }
-    pub fn _data_symbols_rev_iter(
-        &self,
-        idx: DataSymbolId,
-    ) -> impl Iterator<Item = &NamedData<'src>> {
-        let idx = self
-            .data_parts
-            .iter()
-            .enumerate()
-            .find(|(_, part)| part.index == idx);
-        let end = idx.map(|(end, _)| end).unwrap();
-        self.data_parts[..end].iter().rev()
-    }
 
-    pub fn get_data_symbol(&self, idx: DataSymbolId) -> Option<&NamedData<'src>> {
-        self.data_parts.iter().find(|part| part.index == idx)
-    }
+    pub fn debug_layout(
+        symbol_table: &symbols::SymbolMap,
+        module_name: String,
+        data_segments: &IdVec<SegmentLayout<'_>>,
+    ) {
+        use std::fmt::Write;
+        let mut print_data_format = String::new();
+        writeln!(print_data_format, "<Module {module_name}>").unwrap();
 
+        let mut base = 0;
+        for (i, segment) in data_segments.iter() {
+            for symbol in segment.data_parts.iter() {
+                writeln!(
+                    print_data_format,
+                    "Data symbol [{i}.{index}]: {name}",
+                    i = i,
+                    index = symbol.symbol_index,
+                    name = symbol.name(),
+                )
+                .unwrap();
+                match symbol.symbol_relation() {
+                    SymbolRelation::Regular { chunk, .. } => {
+                        let input_symbol = symbol_table.get(symbol.symbol_index).unwrap();
+                        let refs = input_symbol
+                            .relocs
+                            .iter()
+                            .map(|reloc| {
+                                let reloc_symbol =
+                                    symbol_table.get(Id::from_index(reloc.index)).unwrap();
+                                hexdump::Ref {
+                                    range: reloc.relocation_range(),
+                                    name: &reloc_symbol.name,
+                                }
+                            })
+                            .collect();
+                        let part = hexdump::DataPart {
+                            name: symbol.name(),
+                            bytes: chunk,
+                            refs,
+                        };
+                        hexdump::render_part(
+                            &mut print_data_format,
+                            base,
+                            &part,
+                            std::io::stderr().is_terminal(),
+                        );
+                        // TODO: add padding
+                        base += chunk.len();
+                    }
+                    SymbolRelation::BoundToPrevious { .. } => {
+                        writeln!(print_data_format, "<bound to previous>").unwrap()
+                    }
+                };
+            }
+        }
+        log::warn!("Data segments {print_data_format}");
+    }
     pub fn memory_offset(&self) -> usize {
         self.mem_offset
     }
@@ -281,14 +290,14 @@ impl<'src> DataSegment<'src> {
     }
 
     // Keeps only symbols with id is in `indexes`.
-    pub fn new_with_whitelist(mut self, indexes: &HashSet<DataSymbolId>) -> Self {
+    pub fn new_with_whitelist(mut self, indexes: &HashSet<SymbolId>) -> Self {
         let mut result = vec![];
 
         {
             let mut parts_iter = self.data_parts.drain(..).peekable();
             let mut last_regular_removed = false;
             for item in &mut parts_iter {
-                let remove = !indexes.contains(&item.index);
+                let remove = !indexes.contains(&item.symbol_index);
 
                 match item.relation {
                     SymbolRelation::BoundToPrevious { .. } => {
@@ -296,7 +305,7 @@ impl<'src> DataSegment<'src> {
                             // TODO: Add dep in DepGraph for BoundToPrevious symbol
                             log::error!(
                                 "BUG: Data segment symbol {} has bound to symbol that was removed, but previous symbol removed: {}",
-                                item.index,
+                                item.symbol_index,
                                 last_regular_removed
                             );
                         }
@@ -339,32 +348,7 @@ impl<'src> DataSegment<'src> {
         len
     }
 
-    pub fn header_len(
-        &self,
-        memory_index: u32,
-        lib_base_global_id: Option<u32>,
-        mem_start: usize,
-        segment_offset: usize,
-    ) -> usize {
-        let (data_init, segment_offset) =
-            self.segment_header(mem_start, segment_offset, lib_base_global_id);
-        let len = match data_init {
-            None => 1,
-            Some(data_init) => {
-                let mut len = 1;
-                if memory_index != 0 {
-                    len += encoding_size(memory_index);
-                }
-                let mut buf = Vec::new();
-                data_init.encode(&mut buf);
-                len + buf.len()
-            }
-        };
-
-        len + encoding_size(self.data_len(segment_offset) as u32)
-    }
-
-    /// Compute data init offset and alligned segment_offset.
+    /// Compute data init offset.
     /// Returns (offset_expr, segment_offset)
     fn segment_header(
         &self,
@@ -416,7 +400,8 @@ impl<'src> DataSegment<'src> {
         }
     }
 
-    pub fn to_lib_output(
+    /// Compute data init offset and alligned segment_offset.
+    pub fn to_segment_output(
         &self,
         lib_base_global_id: Option<u32>,
         mem_start: usize,
@@ -424,7 +409,6 @@ impl<'src> DataSegment<'src> {
         //TODO: move segment_offset padding outside
     ) -> (usize, DataSegmentOutput) {
         const BYTE_FILLER: u8 = 0;
-        let mut all_relocations = Vec::new();
 
         let mut data = Vec::new();
 
@@ -433,7 +417,8 @@ impl<'src> DataSegment<'src> {
             self.segment_header(mem_start, segment_offset, lib_base_global_id);
 
         log::debug!("Segment offset is {}", mem_start + segment_offset);
-        let mut globals = Vec::new();
+        let mut globals = BTreeMap::new();
+        let segment_in_mem_start = mem_start + segment_offset;
         for symbol in self.data_parts.iter() {
             match symbol.relation {
                 SymbolRelation::BoundToPrevious { offset, .. } => {
@@ -443,14 +428,15 @@ impl<'src> DataSegment<'src> {
                         symbol.name
                     );
 
-                    globals.push(DataSymbol {
-                        data_offset: data.len() - offset,
-                        symbol_index: symbol.index,
-                        type_info: super::globals::GlobalConstructor::POINTER_TYPE,
-                    });
+                    globals.insert(
+                        symbol.symbol_index,
+                        DataSymbolRefs {
+                            data_mem_offset: data.len() - offset,
+                        },
+                    );
                 }
                 SymbolRelation::Regular { chunk, aligned } => {
-                    let total_offset = data.len() + segment_offset;
+                    let total_offset = data.len() + segment_in_mem_start;
 
                     // add padding to align data
                     if aligned {
@@ -475,19 +461,12 @@ impl<'src> DataSegment<'src> {
                         aligned
                     );
 
-                    globals.push(DataSymbol {
-                        data_offset: data.len(),
-                        symbol_index: symbol.index,
-                        type_info: super::globals::GlobalConstructor::POINTER_TYPE,
-                    });
-                    all_relocations.extend(symbol.relocations.iter().map(|entry| SymbolReloc {
-                        reloc_in_symbol_index: symbol.index,
-                        offset: entry.offset as i64,
-                        entry: wasmparser::RelocationEntry {
-                            offset: entry.offset + data.len() as u32,
-                            ..*entry
+                    globals.insert(
+                        symbol.symbol_index,
+                        DataSymbolRefs {
+                            data_mem_offset: data.len(),
                         },
-                    }));
+                    );
                     data.extend_from_slice(chunk);
                 }
             }
@@ -495,62 +474,57 @@ impl<'src> DataSegment<'src> {
         (
             segment_offset,
             DataSegmentOutput {
-                memory_offset: mem_start + segment_offset,
-                data_init,
+                data_init: data_init.expect("Active data segment should have offset"),
                 data,
-                symbols: globals,
-                relocations: all_relocations,
+                data_symbols: globals,
+                memory_offset: mem_start + segment_offset,
             },
         )
     }
 }
 
-pub struct SymbolReloc {
-    pub reloc_in_symbol_index: DataSymbolId,
-    pub offset: i64,
-    pub entry: wasmparser::RelocationEntry,
+#[derive(Debug)]
+pub struct DataSymbolRefs {
+    // Relative to lib_base for submodules
+    pub data_mem_offset: usize,
 }
+
 // generate data segment and global initializers
+/// Representation of calculated data segment for output module.
+/// Contain data chunk
+#[derive(Debug)]
 pub struct DataSegmentOutput {
-    data_init: Option<wasm_encoder::ConstExpr>,
     // only for active segments
+    data_init: wasm_encoder::ConstExpr,
     memory_offset: usize,
+
     data: Vec<u8>,
-    symbols: Vec<super::globals::DataSymbol>,
-    relocations: Vec<SymbolReloc>,
+    data_symbols: BTreeMap<SymbolId, DataSymbolRefs>,
 }
 
 impl DataSegmentOutput {
     pub fn data_segment<'a>(&'a self, memory_index: u32) -> wasm_encoder::DataSegment<'a, Vec<u8>> {
         wasm_encoder::DataSegment {
-            mode: match self.data_init.as_ref() {
-                None => wasm_encoder::DataSegmentMode::Passive,
-                Some(data_init) => wasm_encoder::DataSegmentMode::Active {
-                    memory_index,
-                    offset: data_init,
-                },
+            mode: wasm_encoder::DataSegmentMode::Active {
+                memory_index,
+                offset: &self.data_init,
             },
+
             data: self.data.clone(),
         }
     }
     pub fn as_raw(&self) -> &[u8] {
         &self.data
     }
-    pub fn symbols(&self) -> &[super::globals::DataSymbol] {
-        &self.symbols
-    }
-    pub fn relocations(&self) -> &[SymbolReloc] {
-        &self.relocations
-    }
-    pub fn is_active(&self) -> bool {
-        self.data_init.is_some()
-    }
     pub fn memory_offset(&self) -> usize {
         self.memory_offset
     }
+    pub fn symbols(&self) -> &BTreeMap<SymbolId, DataSymbolRefs> {
+        &self.data_symbols
+    }
 }
 
-impl<'a> Indexed for crate::emit::DataSegment<'a> {
+impl<'a> Indexed for crate::emit::SegmentLayout<'a> {
     type StaticTypeTagForIndex = Data<'static>;
     type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
 }

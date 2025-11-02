@@ -22,3 +22,5 @@
 8. Experimental:
 - Box::pin(load_inner) can reduce size of extracted modules (the dep will be fully emited inside main module)
 
+
+- SymbolMap can contain multiple definitions of same symbol. We need to merge them.

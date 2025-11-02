@@ -32,13 +32,6 @@ pub struct ImportInfo {
     pub imported_global_map: IdMap<ImportId, InputGlobalId>,
 }
 
-#[derive(Debug, Clone)]
-pub struct DataSymbol {
-    pub linking_symbol_index: SymbolId,
-    // Range relative to the start of the WebAssembly file.
-    pub range: Range<usize>,
-}
-
 /// Provides a additional info about module.
 /// Like ordered_data_symbols - ordered by offsets where symbol is defined (relative to module start)
 /// and info about imported functions

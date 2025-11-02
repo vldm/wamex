@@ -14,15 +14,15 @@ use crate::{
         CustomModify, DataModifyEntry, ModifyEntry, RelocateState, RelocationContext, SymbolOffset,
         SymbolOp, SymbolUOffset,
     },
-    index::{DataSegmentId, DataSymbolId},
+    index::{DataSegmentId, SymbolId},
 };
 
 #[derive(Debug, Clone)]
 
 pub struct DataSymbolWithOffset {
     pub storage_segment_id: DataSegmentId,
-    pub storage_symbol_id: DataSymbolId,
-    pub storage_offset_in_data: i64,
+    pub storage_symbol_id: SymbolId,
+    pub storage_offset_in_data: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -73,7 +73,7 @@ impl StartFnGen {
                     data_entry.storage.storage_segment_id,
                     data_entry.storage.storage_symbol_id,
                 )?
-                .map(|v| v + data_entry.storage.storage_offset_in_data);
+                .map(|offset| offset + data_entry.storage.storage_offset_in_data as i64);
 
             log::warn!(
                 "Data symbol storage: {:?}, entry: {:?}",

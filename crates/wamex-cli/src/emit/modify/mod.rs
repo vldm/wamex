@@ -82,7 +82,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let reloc_info = RelocateState {
-            input_module: module_emit.src.wasm,
+            input_module: &module_emit.src,
             computed_modules,
             emit_module: module_emit,
             global_id_mapper: &global_id_mapper,
@@ -105,8 +105,10 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 .unwrap_or("__undefined_function");
             (name, defined_func.body.clone())
         };
+
+        let debug_entries = Self::format_entries(entries);
         log::debug!(
-            "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {entries:#?}]",
+            "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {debug_entries}",
             range = src_body.range(),
         );
 
@@ -242,6 +244,31 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         Ok((result, other_relocations))
     }
 
+    fn format_entries(entries: &[CodeModifyEntry]) -> String {
+        use std::fmt::Write;
+        let mut result = String::new();
+        let mut new_line = false;
+        for entry in entries {
+            if new_line {
+                writeln!(result, "").ok();
+            }
+            let reloc = match entry {
+                ModifyEntry::Custom(c) => {
+                    write!(result, "Custom {:?}", c).ok();
+                    &c.entry
+                }
+                ModifyEntry::Other(o) => o,
+            };
+            write!(
+                result,
+                "Other {:?} index:{}, offset:{}, addend:{}",
+                reloc.ty, reloc.index, reloc.offset, reloc.addend
+            )
+            .ok();
+            new_line = true;
+        }
+        result
+    }
     // Same as emit_code_with_changes, but avoid deserializing.
     pub fn emit_code_in_place(
         module_emit: &'any ModuleEmitState<'any, 'src>,
@@ -252,7 +279,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let reloc_info = RelocateState {
-            input_module: module_emit.src.wasm,
+            input_module: &module_emit.src,
             computed_modules,
             emit_module: module_emit,
             global_id_mapper: &global_id_mapper,
@@ -274,8 +301,9 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 .unwrap_or("__undefined_function");
             (name, defined_func.body.clone())
         };
+        let debug_entries = Self::format_entries(entries);
         log::debug!(
-            "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {entries:#?}]",
+            "processing function: {function_name}[{input_function_id}] for [{range:?}], entries: {debug_entries}",
             range = src_body.range(),
         );
 

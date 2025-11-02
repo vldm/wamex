@@ -135,7 +135,7 @@ macro_rules! test_list_contain {
 #[test]
 fn test_correct_imports_exports() {
     let _ = env_logger::Builder::new()
-        .filter(None, log::LevelFilter::Warn)
+        .filter(None, log::LevelFilter::Debug)
         .parse_env("RUST_LOG")
         .try_init();
     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
@@ -304,6 +304,7 @@ fn check_precise_modification_mode() {
     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
     src.push("test-data");
     for file in ["example.wasm", "extended-example.wasm", "lazy_routes.wasm"] {
+        log::error!("processing file {}", file);
         let mut file_path = src.clone();
         file_path.push(file);
         check_that_precise_modification_works(file_path);
