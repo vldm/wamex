@@ -12,7 +12,7 @@ pub fn static_str() -> Pin<Box<&'static str>> {
 #[cfg_attr(feature = "split", wasm_split(string_from_static))]
 pub fn string_build() -> Pin<Box<String>> {
     let mut new = String::from("OTHER STATIC STRING");
-    new.push_str(&inner_context());
+    new.push_str("small addition");
 
     Box::pin(new)
 }
@@ -51,8 +51,4 @@ pub async fn dep_dyn() -> String {
 #[inline(never)]
 pub fn dyn_fns_inner(func: &dyn Fn() -> String) -> String {
     func()
-}
-
-pub fn inner_context() -> String {
-    "INNER CONTEXT 3".to_string()
 }

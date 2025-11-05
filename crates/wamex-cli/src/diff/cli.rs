@@ -87,6 +87,7 @@ impl<'any, 'src> Compare<'any, 'src> {
                 }
             };
         }
+        // TODO: Handle exports/imports index changes
 
         print_compare_section!(types);
         print_compare_section!(imports);

@@ -57,6 +57,9 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         self.refine_mapping(&mut mapping);
         self.build_diff(&mapping)
     }
+    fn is_anon_name(name: &str) -> bool {
+        name.starts_with(".L") || name.starts_with("$L")
+    }
 
     fn build_name_mapping(&self) -> SymbolMapping {
         //1. Build name -> symbol id maps for first_module;
@@ -65,6 +68,9 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         let mut duplicate_left: BTreeMap<&str, SVec<SymbolId>> = BTreeMap::new();
         for (sym_id, symbol) in self.left.symbols.iter() {
             if let Some(name) = &symbol.linking_name {
+                if Self::is_anon_name(name) {
+                    continue;
+                }
                 if let Some(prev) = name_to_left_symbol.insert(name, sym_id) {
                     duplicate_left.entry(name).or_default().push(prev);
                 }
@@ -85,7 +91,7 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         let mut non_matched_right_symbols: Vec<SymbolId> = Vec::new();
         let mut dups: SVec<_, 16> = SVec::new();
         for (right_sym_id, right_symbol) in self.right.symbols.iter() {
-            if let Some(name) = &right_symbol.linking_name {
+            if let Some(name) = &right_symbol.linking_name && !Self::is_anon_name(name){
                 if let Some(&left_sym_id) = name_to_left_symbol.get(name) {
                     if let Some(dup) = mapping.insert(left_sym_id, right_sym_id) {
                         dups.push(left_sym_id);
