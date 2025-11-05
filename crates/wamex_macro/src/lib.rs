@@ -26,9 +26,10 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let name = &item_fn.sig.ident;
 
-    let unique_identifier = base16::encode_lower(
-        &sha2::Sha256::digest(format!("{name} {span:?}", span = name.span()))[..16],
-    );
+    // Unique identifier can help avoid name clashes when the same function is defined in multiple modules.
+    // But using span for this make incremental extraction impossible - since a lot of symbols changes each time.
+    // TODO: Instead of span we can use file path. But currently we don't have access to it here, so just force user to provide unique function names.
+    let unique_identifier = base16::encode_lower(&sha2::Sha256::digest(format!("{name}",))[..16]);
 
     let impl_import_ident =
         format_ident!("__wasm_split_00{module_name}00_import_{unique_identifier}_{name}");

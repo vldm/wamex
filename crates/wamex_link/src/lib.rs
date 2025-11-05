@@ -1,7 +1,7 @@
 extern crate alloc;
 use alloc::collections::BTreeMap;
 use core::error;
-use std::{cell::RefCell, fmt::Display};
+use std::cell::RefCell;
 
 use js_sys::{
     Object, Reflect,

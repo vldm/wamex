@@ -1,27 +1,30 @@
 //! Find a difference between two wasm modules.
 //!
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use colored::Colorize;
 use similar::{ChangeTag, TextDiff};
 use wasmparser::{Data, Global};
 
 use crate::{
-    diff::symbols_map::GraphNode,
+    analysis::{
+        self,
+        symbols::{DiffEntry, DiffResult},
+    },
     index::{Id, IdVec, Indexed},
     read::{self, code::FunctionWithBody},
 };
 pub struct Compare<'any, 'src> {
-    left: &'any read::InputModule<'src>,
-    right: &'any read::InputModule<'src>,
+    left: &'any analysis::ModuleInfo<'src>,
+    right: &'any analysis::ModuleInfo<'src>,
     structural: bool,
 }
 
 impl<'any, 'src> Compare<'any, 'src> {
     pub fn new(
-        left: &'any read::InputModule<'src>,
-        right: &'any read::InputModule<'src>,
+        left: &'any analysis::ModuleInfo<'src>,
+        right: &'any analysis::ModuleInfo<'src>,
         structural: bool,
     ) -> Self {
         Self {
@@ -38,7 +41,7 @@ impl<'any, 'src> Compare<'any, 'src> {
                 let num_imports = 27;
                 let raw_id = $id.as_raw_index() + num_imports;
                 let id = crate::index::Id::from_index(raw_id);
-                log::info!("name: {}", self.left.names.functions[id]);
+                log::info!("name: {}", self.left.wasm.names.functions[id]);
                 match ($left, $right) {
                     (Some(left), Some(right)) => {
                         let left = hex::encode(left.body.as_bytes());
@@ -65,13 +68,13 @@ impl<'any, 'src> Compare<'any, 'src> {
                 print_compare_section!(print_elements, $($path).+);
             };
             ($v: ident, $($path:ident).+) => {
-                let res = Self::compare_vec(&self.left.$($path).+, &self.right.$($path).+);
+                let res = Self::compare_vec(&self.left.wasm.$($path).+, &self.right.wasm.$($path).+);
                 if res.is_empty() {
                     log::info!("No differences in {} found", stringify!($($path).+));
                 }
                 for (id, err) in res {
-                    let left = self.left.$($path).+.get(id);
-                    let right = self.right.$($path).+.get(id);
+                    let left = self.left.wasm.$($path).+.get(id);
+                    let right = self.right.wasm.$($path).+.get(id);
 
                     log::error!(
                         "Section {} differ at index: {} - {}",
@@ -95,13 +98,19 @@ impl<'any, 'src> Compare<'any, 'src> {
         print_compare_section!(memories);
 
         if self.structural {
-            let left_structure = Self::module_structure_from_module(self.left);
-            let right_structure = Self::module_structure_from_module(self.right);
-            let diff = left_structure.structure.diff(&right_structure.structure);
+            let differ = crate::analysis::symbols::Differ::new(&self.left, &self.right);
+            let diff_result = differ.diff();
+            differ.debug_diff(&diff_result);
+            // TODO: rebuild structure using graph
 
-            diff.debug();
-            Self::print_node_tree_changes(&left_structure, &right_structure, &diff);
-            Self::print_cascade_of_changes(&left_structure, &right_structure, &diff);
+            self.print_changed_modules(&differ, &diff_result)?;
+            // let left_structure = Self::module_structure_from_module(self.left);
+            // let right_structure = Self::module_structure_from_module(self.right);
+            // let diff = left_structure.structure.diff(&right_structure.structure);
+
+            // diff.debug();
+            // Self::print_node_tree_changes(&left_structure, &right_structure, &diff);
+            // Self::print_cascade_of_changes(&left_structure, &right_structure, &diff);
         } else {
             self.print_compare_data();
 
@@ -115,160 +124,211 @@ impl<'any, 'src> Compare<'any, 'src> {
         Ok(())
     }
 
-    // During diff calculation one changed node cause all its parents to be marked as changed.
-    // This function will print tree of changes
-    //  - starting from root nodes (the ones that are exported)
-    //  - going to bottom-most (leaf that actually was changed)
-    fn print_node_tree_changes(
-        old_structure: &crate::diff::symbols_map::ModuleStructure,
-        new_structure: &crate::diff::symbols_map::ModuleStructure,
-        diff: &crate::diff::symbols_map::DiffResult,
-    ) {
-        let mut added_nodes = BTreeSet::new();
-        let mut removed_nodes = BTreeSet::new();
+    // Print info about split modules - which modules were changed.
+    // Mark changed modules and print what caused the change.
+    fn print_changed_modules(
+        &self,
+        differ: &crate::analysis::symbols::Differ<'_, '_, '_>,
+        diff_result: &crate::analysis::symbols::DiffResult,
+    ) -> Result<(), anyhow::Error> {
+        let split_points = crate::analysis::split_point::find_split_points(&self.right)?;
+        let dep_graph = crate::analysis::dep_graph::get_dependencies(&self.right)?;
+        let split_program_info =
+            crate::analysis::split_point::SplitProgramInfo::compute_split_modules(
+                &self.right,
+                &dep_graph,
+                &split_points,
+            )?;
 
-        for change in diff.all_changes() {
-            if let Some(node) = &change.new {
-                added_nodes.insert(node.node_id());
-            };
-            if let Some(node) = &change.old {
-                removed_nodes.insert(node.node_id());
-            };
-        }
-        let mut added_roots = BTreeSet::new();
-        for node in added_nodes.iter() {
-            // if no roots parents in changes - this is root of diff
-            if !new_structure.structure.nodes[node]
-                .parents
-                .iter()
-                .any(|p| added_nodes.contains(p))
-            {
-                added_roots.insert(*node);
-            }
-        }
-
-        for id in added_roots.iter() {
-            let node = &new_structure.module_nodes.get(*id).unwrap();
-            log::info!("Root {} => {:?}", id, node);
-        }
-        let mut tree_builder = ptree::TreeBuilder::new("Changes tree".to_string());
-
-        let tree = &mut tree_builder;
-        for root in added_roots.iter() {
-            Self::build_child_tree(root, &new_structure.structure, &added_nodes, tree);
-        }
-        // ptree::print_tree(&tree.build()).unwrap();
-
-        log::warn!("Added nodes: {added_nodes:?}");
-        log::warn!("Removed nodes: {removed_nodes:?}");
-        log::warn!("Added roots: {added_roots:?}");
-    }
-
-    // Print tree of changes
-    // - starting from leafs (the one that was really changed)
-    // - going to top-most (should be root nodes - one that exported to world)
-    fn print_cascade_of_changes(
-        old_structure: &crate::diff::symbols_map::ModuleStructure,
-        new_structure: &crate::diff::symbols_map::ModuleStructure,
-        diff: &crate::diff::symbols_map::DiffResult,
-    ) {
-        let mut added_nodes = BTreeSet::new();
-        let mut removed_nodes = BTreeSet::new();
-
-        for change in diff.all_changes() {
-            if let Some(node) = &change.new {
-                added_nodes.insert(node.node_id());
-            };
-            if let Some(node) = &change.old {
-                removed_nodes.insert(node.node_id());
-            };
-        }
-
-        let mut leafs = BTreeSet::new();
-
-        for node in added_nodes.iter() {
-            if !new_structure.structure.nodes[node]
-                .children
-                .iter()
-                .any(|c| match c {
-                    crate::diff::symbols_map::NodeMarker::Lazy { node: child_id, .. } => {
-                        added_nodes.contains(child_id)
+        let changed_deps = diff_result
+            .entries()
+            .filter_map(|entry| {
+                let right = match entry {
+                    DiffEntry::Added { right } => right,
+                    DiffEntry::Replaced { right, .. } => right,
+                    _ => {
+                        return None;
                     }
-                    _ => false,
-                })
-            {
-                leafs.insert(*node);
-            }
-        }
+                };
+                Some((*right, entry.clone()))
+            })
+            .collect::<BTreeMap<_, _>>();
 
-        let mut tree_builder = ptree::TreeBuilder::new("Cascade of changes".to_string());
-
-        let tree = &mut tree_builder;
-        for leaf in leafs.iter() {
-            Self::build_parent_tree(leaf, &new_structure.structure, &added_nodes, tree);
-        }
-        // ptree::print_tree(&tree.build()).unwrap();
-
-        log::warn!("Added nodes: {added_nodes:?}");
-        log::warn!("Added leafs: {leafs:?}");
-    }
-
-    fn build_child_tree(
-        node_id: &GraphNode,
-        structure: &crate::diff::symbols_map::Structure,
-        changed_nodes: &BTreeSet<GraphNode>,
-        tree: &mut ptree::TreeBuilder,
-    ) {
-        let mut used_childs = BTreeSet::new();
-        let node = &structure.nodes[node_id];
-        let name = node.signature().display_signature();
-        tree.begin_child(name.clone());
-        for child in node.children.iter() {
-            let crate::diff::symbols_map::NodeMarker::Lazy { node: child_id, .. } = child else {
-                continue;
-            };
-            if !changed_nodes.contains(child_id) || used_childs.contains(child_id) {
+        let mut changed_modules = BTreeMap::new();
+        for (module_name, split_deps) in split_program_info.output_modules.iter() {
+            let changed_defined_symbols: DiffResult = split_deps
+                .defined_symbols
+                .iter()
+                .filter_map(|sym_id| changed_deps.get(sym_id))
+                .copied()
+                .collect();
+            if changed_defined_symbols.is_empty() {
                 continue;
             }
-            used_childs.insert(child_id);
-            Self::build_child_tree(child_id, structure, changed_nodes, tree);
+            changed_modules.insert(module_name.clone(), changed_defined_symbols);
         }
-        tree.end_child();
-    }
 
-    fn build_parent_tree(
-        node_id: &GraphNode,
-        structure: &crate::diff::symbols_map::Structure,
-        changed_nodes: &BTreeSet<GraphNode>,
-        tree: &mut ptree::TreeBuilder,
-    ) {
-        let mut used_parents = BTreeSet::new();
-        let node = &structure.nodes[node_id];
-        let name = node.signature().display_signature();
-        tree.begin_child(name.clone());
-        for parent in node.parents.iter() {
-            if !changed_nodes.contains(parent) || used_parents.contains(parent) {
-                continue;
-            }
-            used_parents.insert(parent);
-            Self::build_parent_tree(parent, structure, changed_nodes, tree);
+        for (name, structure) in changed_modules.iter() {
+            log::warn!("Changed module: {}", name.name());
+            differ.debug_diff(&structure);
         }
-        tree.end_child();
+        Ok(())
     }
 
-    fn module_structure_from_module(
-        module: &read::InputModule<'src>,
-    ) -> crate::diff::symbols_map::ModuleStructure {
-        let info = crate::analysis::ModuleInfo::new(module).unwrap();
+    // // During diff calculation one changed node cause all its parents to be marked as changed.
+    // // This function will print tree of changes
+    // //  - starting from root nodes (the ones that are exported)
+    // //  - going to bottom-most (leaf that actually was changed)
+    // fn print_node_tree_changes(
+    //     old_structure: &crate::diff::symbols_map::ModuleStructure,
+    //     new_structure: &crate::diff::symbols_map::ModuleStructure,
+    //     diff: &crate::diff::symbols_map::DiffResult,
+    // ) {
+    //     let mut added_nodes = BTreeSet::new();
+    //     let mut removed_nodes = BTreeSet::new();
 
-        crate::metadata_ext::_build_module_structure(&info)
-    }
+    //     for change in diff.all_changes() {
+    //         if let Some(node) = &change.new {
+    //             added_nodes.insert(node.node_id());
+    //         };
+    //         if let Some(node) = &change.old {
+    //             removed_nodes.insert(node.node_id());
+    //         };
+    //     }
+    //     let mut added_roots = BTreeSet::new();
+    //     for node in added_nodes.iter() {
+    //         // if no roots parents in changes - this is root of diff
+    //         if !new_structure.structure.nodes[node]
+    //             .parents
+    //             .iter()
+    //             .any(|p| added_nodes.contains(p))
+    //         {
+    //             added_roots.insert(*node);
+    //         }
+    //     }
+
+    //     for id in added_roots.iter() {
+    //         let node = &new_structure.module_nodes.get(*id).unwrap();
+    //         log::info!("Root {} => {:?}", id, node);
+    //     }
+    //     let mut tree_builder = ptree::TreeBuilder::new("Changes tree".to_string());
+
+    //     let tree = &mut tree_builder;
+    //     for root in added_roots.iter() {
+    //         Self::build_child_tree(root, &new_structure.structure, &added_nodes, tree);
+    //     }
+    //     // ptree::print_tree(&tree.build()).unwrap();
+
+    //     log::warn!("Added nodes: {added_nodes:?}");
+    //     log::warn!("Removed nodes: {removed_nodes:?}");
+    //     log::warn!("Added roots: {added_roots:?}");
+    // }
+
+    // // Print tree of changes
+    // // - starting from leafs (the one that was really changed)
+    // // - going to top-most (should be root nodes - one that exported to world)
+    // fn print_cascade_of_changes(
+    //     old_structure: &crate::diff::symbols_map::ModuleStructure,
+    //     new_structure: &crate::diff::symbols_map::ModuleStructure,
+    //     diff: &crate::diff::symbols_map::DiffResult,
+    // ) {
+    //     let mut added_nodes = BTreeSet::new();
+    //     let mut removed_nodes = BTreeSet::new();
+
+    //     for change in diff.all_changes() {
+    //         if let Some(node) = &change.new {
+    //             added_nodes.insert(node.node_id());
+    //         };
+    //         if let Some(node) = &change.old {
+    //             removed_nodes.insert(node.node_id());
+    //         };
+    //     }
+
+    //     let mut leafs = BTreeSet::new();
+
+    //     for node in added_nodes.iter() {
+    //         if !new_structure.structure.nodes[node]
+    //             .children
+    //             .iter()
+    //             .any(|c| match c {
+    //                 crate::diff::symbols_map::NodeMarker::Lazy { node: child_id, .. } => {
+    //                     added_nodes.contains(child_id)
+    //                 }
+    //                 _ => false,
+    //             })
+    //         {
+    //             leafs.insert(*node);
+    //         }
+    //     }
+
+    //     let mut tree_builder = ptree::TreeBuilder::new("Cascade of changes".to_string());
+
+    //     let tree = &mut tree_builder;
+    //     for leaf in leafs.iter() {
+    //         Self::build_parent_tree(leaf, &new_structure.structure, &added_nodes, tree);
+    //     }
+    //     // ptree::print_tree(&tree.build()).unwrap();
+
+    //     log::warn!("Added nodes: {added_nodes:?}");
+    //     log::warn!("Added leafs: {leafs:?}");
+    // }
+
+    // fn build_child_tree(
+    //     node_id: &GraphNode,
+    //     structure: &crate::diff::symbols_map::Structure,
+    //     changed_nodes: &BTreeSet<GraphNode>,
+    //     tree: &mut ptree::TreeBuilder,
+    // ) {
+    //     let mut used_childs = BTreeSet::new();
+    //     let node = &structure.nodes[node_id];
+    //     let name = node.signature().display_signature();
+    //     tree.begin_child(name.clone());
+    //     for child in node.children.iter() {
+    //         let crate::diff::symbols_map::NodeMarker::Lazy { node: child_id, .. } = child else {
+    //             continue;
+    //         };
+    //         if !changed_nodes.contains(child_id) || used_childs.contains(child_id) {
+    //             continue;
+    //         }
+    //         used_childs.insert(child_id);
+    //         Self::build_child_tree(child_id, structure, changed_nodes, tree);
+    //     }
+    //     tree.end_child();
+    // }
+
+    // fn build_parent_tree(
+    //     node_id: &GraphNode,
+    //     structure: &crate::diff::symbols_map::Structure,
+    //     changed_nodes: &BTreeSet<GraphNode>,
+    //     tree: &mut ptree::TreeBuilder,
+    // ) {
+    //     let mut used_parents = BTreeSet::new();
+    //     let node = &structure.nodes[node_id];
+    //     let name = node.signature().display_signature();
+    //     tree.begin_child(name.clone());
+    //     for parent in node.parents.iter() {
+    //         if !changed_nodes.contains(parent) || used_parents.contains(parent) {
+    //             continue;
+    //         }
+    //         used_parents.insert(parent);
+    //         Self::build_parent_tree(parent, structure, changed_nodes, tree);
+    //     }
+    //     tree.end_child();
+    // }
+
+    // fn module_structure_from_module(
+    //     module: &read::InputModule<'src>,
+    // ) -> crate::diff::symbols_map::ModuleStructure {
+    //     let info = crate::analysis::ModuleInfo::new(module).unwrap();
+
+    //     crate::metadata_ext::_build_module_structure(&info)
+    // }
     fn print_compare_data(&self) {
         let mut errors = Vec::new();
-        let left = &self.left.data.data_segments;
-        let right = &self.right.data.data_segments;
-        let mut left_iter = left.iter().enumerate();
-        let mut right_iter = right.iter().enumerate();
+        let left = &self.left.wasm.data.data_segments;
+        let right = &self.right.wasm.data.data_segments;
+        let mut left_iter = left.iter();
+        let mut right_iter = right.iter();
         for ((left_id, left), (_, right)) in (&mut left_iter).zip(&mut right_iter) {
             if let Err(e) = left.compare(right).map_err(|err| (left_id, err)) {
                 errors.push(e);
@@ -300,8 +360,8 @@ impl<'any, 'src> Compare<'any, 'src> {
             log::info!("No differences in {} found", stringify!(data.data_segments));
         }
         for (id, err) in res {
-            let left = self.left.data.data_segments.get(id);
-            let right = self.right.data.data_segments.get(id);
+            let left = self.left.wasm.data.data_segments.get(id);
+            let right = self.right.wasm.data.data_segments.get(id);
 
             process(left, right);
             log::error!(
@@ -314,8 +374,8 @@ impl<'any, 'src> Compare<'any, 'src> {
     }
 
     fn compare_vec<Type>(
-        left: &IdVec<Type, Id<<Type as Indexed>::StaticTypeTagForIndex>>,
-        right: &IdVec<Type, Id<<Type as Indexed>::StaticTypeTagForIndex>>,
+        left: &IdVec<Type>,
+        right: &IdVec<Type>,
     ) -> Vec<(Id<<Type as Indexed>::StaticTypeTagForIndex>, anyhow::Error)>
     where
         Type: Indexed + DiffExt,

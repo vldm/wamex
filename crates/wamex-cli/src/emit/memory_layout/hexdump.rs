@@ -1,43 +1,8 @@
 use std::ops::Range;
 
-pub fn hexdump(data: &[u8]) -> String {
-    const W: usize = 16;
-    let mut output = String::new();
-    use std::fmt::Write;
-    write!(output, "\n").unwrap();
-    for (i, chunk) in data.chunks(W).enumerate() {
-        // смещение
-        write!(output, "{:08X}: ", i * W).unwrap();
-
-        // hex зона
-        for j in 0..W {
-            if j < chunk.len() {
-                write!(output, "{:02X} ", chunk[j]).unwrap();
-            } else {
-                write!(output, "   ").unwrap();
-            }
-            if j == 7 {
-                write!(output, " ").unwrap();
-            }
-        }
-
-        write!(output, "|").unwrap();
-        for &b in chunk {
-            let c = if (0x20..=0x7E).contains(&b) {
-                b as char
-            } else {
-                '.'
-            };
-            write!(output, "{c}").unwrap();
-        }
-        write!(output, "|\n").unwrap();
-    }
-    output
-}
-
 #[derive(Clone, Debug)]
 pub struct DataPart<'a> {
-    pub name: &'a str,
+    // pub name: &'a str,
     pub bytes: &'a [u8],
     pub refs: Vec<Ref<'a>>,
 }
@@ -205,7 +170,6 @@ mod tests {
     #[test]
     fn show_example() {
         let part = DataPart {
-            name: "Header".into(),
             bytes: &[
                 0x01, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0xDE, 0xAD,
                 0xBE, 0xEF, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x00, 0x00, 0x00, 0x34, 0x12, 0x00, 0x00,

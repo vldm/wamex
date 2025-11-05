@@ -11,7 +11,6 @@ use crate::{
         index_safety::OutputGlobalId, modify::SymbolOp, ComputedModules, GotBase, ModuleEmitState,
     },
     index::{DataSegmentId, Id, InputFuncId, InputGlobalId, SymbolId},
-    read::InputModule,
 };
 
 pub trait EntryTypeTag {

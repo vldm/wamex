@@ -1,7 +1,6 @@
 use std::{
     borrow::{self, Cow},
     collections::{BTreeMap, BTreeSet},
-    convert::identity,
     ops::Range,
 };
 
@@ -22,19 +21,18 @@ use crate::{
             ModuleIdentifier, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint,
             SplitProgramInfo,
         },
-        symbols::{self, SymbolKind},
+        symbols::SymbolKind,
     },
     emit::{
         globals::{DefinedGlobal, GlobalImport},
         index_safety::OutputGlobalId,
         modify::{RelocateState, StartFnGen},
     },
-    helpers::{encoding_size, RangeExt},
+    helpers::encoding_size,
     index::{
         AnySymbolId, DataSegmentId, FuncTypeId, Id, IdMap, IdVec, ImportsOrDefined, Indexed,
         InputFuncId, InputGlobalId, MemoryId, SymbolId, WithOriginalIndex,
     },
-    read::{data, InputModule},
 };
 
 mod globals;
@@ -511,9 +509,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let mut defined_functions = vec![];
 
         for &(func_id, mut export, sym_id) in &funcs_to_define {
-            let defined_id = module_info.as_defined_function_id(func_id).unwrap();
             // Collect all relocation entries that modify something within this function.
-            let func_info = &module_info.wasm.code.defined_funcs[defined_id];
             let func_relocs = &*module_info.symbols.get(sym_id).unwrap().relocs;
 
             let modification_list = func_relocs
@@ -1601,7 +1597,7 @@ impl<'src> CommonEmitInfo<'src> {
         self.split_point_imports.len() as u64
     }
 
-    fn new(
+    pub fn new(
         module: &analysis::ModuleInfo<'src>,
         verbose: bool,
         program_info: &SplitProgramInfo,

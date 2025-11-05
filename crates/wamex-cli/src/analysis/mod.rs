@@ -11,7 +11,7 @@ use wasmparser::{ElementItems, ElementKind, TypeRef};
 use crate::{
     index::{
         AnySymbolId, DefinedFuncId, ElementId, ExportId, FuncTypeId, IdMap, ImportId, InputFuncId,
-        InputGlobalId, SymbolId, TableId,
+        InputGlobalId, TableId,
     },
     read,
 };

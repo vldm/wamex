@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use analysis::split_point::SplitProgramInfo;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
-use gxhash::{HashSet, HashSetExt};
 
 // todo: Refactor analysis and emit modules.
 pub mod analysis;
@@ -11,7 +10,7 @@ pub mod emit;
 mod helpers;
 #[macro_use]
 mod index;
-// mod diff;
+mod diff;
 mod list_set;
 // #[cfg(feature = "metadata")]
 // mod metadata_ext;
@@ -19,7 +18,7 @@ pub mod read;
 
 pub use read::InputModule;
 
-use crate::analysis::split_point::SplitModuleIdentifier;
+use crate::{analysis::split_point::SplitModuleIdentifier, emit::CommonEmitInfo};
 
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
@@ -61,6 +60,11 @@ pub struct Diff {
 }
 
 #[derive(Debug, Args)]
+pub struct Debug {
+    pub input: PathBuf,
+}
+
+#[derive(Debug, Args)]
 pub struct Roundtrip {
     pub input: PathBuf,
     pub output: PathBuf,
@@ -76,6 +80,8 @@ pub enum Command {
 
     /// Roundtrip wasm module.
     Roundtrip(Roundtrip),
+
+    Debug(Debug),
 }
 
 //The flow of the program is simple:
@@ -92,6 +98,7 @@ pub fn main(args: Cli) -> Result<()> {
         Command::Split(args) => split(args)?,
         Command::Diff(args) => diff(args)?,
         Command::Roundtrip(args) => roundtrip(args)?,
+        Command::Debug(args) => debug(args)?,
     };
     Ok(())
 }
@@ -208,9 +215,24 @@ pub fn diff(args: Diff) -> Result<()> {
     let right = std::fs::read(&args.right)?;
     let left_module = InputModule::parse(&left)?;
     let right_module = InputModule::parse(&right)?;
+    let left_module_info = analysis::ModuleInfo::from_raw_module(left_module)?;
+    let right_module_info = analysis::ModuleInfo::from_raw_module(right_module)?;
 
-    // let diff = diff::Compare::new(&left_module, &right_module, args.structural);
-    // diff.print_diff()?;
+    let diff = diff::Compare::new(&left_module_info, &right_module_info, args.structural);
+    diff.print_diff()?;
+
+    Ok(())
+}
+
+pub fn debug(args: Debug) -> Result<()> {
+    let input = std::fs::read(&args.input)?;
+    let module = InputModule::parse(&input)?;
+    let info = analysis::ModuleInfo::from_raw_module(module)?;
+
+    let program_info = analysis::split_point::SplitProgramInfo::default();
+    // verbose flag will print debug info as side effect.
+    // TODO: make it more functional.
+    let _info = CommonEmitInfo::new(&info, true, &program_info)?;
 
     Ok(())
 }

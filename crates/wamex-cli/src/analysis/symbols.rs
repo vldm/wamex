@@ -5,13 +5,16 @@ use std::{
 };
 
 use anyhow::{ensure, Result};
+pub use diff::{DiffEntry, DiffResult, Differ};
 use smallvec::SmallVec;
 
 use crate::{
-    helpers::{RangeComp, RangeExt},
+    analysis,
+    helpers::{Hash, RangeComp, RangeExt},
     index::{DataSegmentId, Id, IdMap, IdVec, InputFuncId, InputGlobalId, SymbolId, TableId},
     InputModule,
 };
+mod diff;
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum SymbolKind {
@@ -40,6 +43,77 @@ pub struct SymbolRecord<'a> {
     /// Except for TypeIndexLeb relocations, which is in type index space.
     pub relocs: Vec<wasmparser::RelocationEntry>,
     pub kind: SymbolKind,
+}
+
+impl SymbolRecord<'_> {
+    fn apply_empty_relocs(body: &mut [u8], relocations: &[wasmparser::RelocationEntry]) {
+        for rel in relocations {
+            let reloc_range = rel.relocation_range();
+            body[reloc_range].fill(0);
+        }
+    }
+
+    pub fn stable_name(&self) -> Option<&str> {
+        match self.kind {
+            SymbolKind::Func { .. } => Some(&self.name),
+            _ => None,
+        }
+    }
+
+    // Return content with cleared relocations.
+    pub fn stable_content(&self, input: &analysis::ModuleInfo) -> Option<Vec<u8>> {
+        match self.kind {
+            SymbolKind::Func { input_id } => {
+                let Some(defined_id) = input.as_defined_function_id(input_id) else {
+                    // No content for imported functions
+                    return None;
+                };
+
+                let func = &input.wasm.code.defined_funcs[defined_id];
+                let mut body = func.body.as_bytes().to_vec();
+                Self::apply_empty_relocs(&mut body, &self.relocs);
+                Some(body)
+            }
+            SymbolKind::DataDefined {
+                segment_id,
+                offset,
+                length,
+            } => {
+                let segment = &input.wasm.data.data_segments[segment_id];
+                let start = offset;
+                let end = start + length;
+                let mut data = segment.data[start..end].to_vec();
+                Self::apply_empty_relocs(&mut data, &self.relocs);
+                Some(data)
+            }
+            SymbolKind::Global(_) | SymbolKind::Table(_) | SymbolKind::Duplicate(_) => {
+                // No content for globals/tables/duplicates
+                None
+            }
+        }
+    }
+
+    pub fn childs(&self) -> impl Iterator<Item = SymbolId> + '_ {
+        let filter_non_types = |reloc: &&wasmparser::RelocationEntry| {
+            !matches!(reloc.ty, wasmparser::RelocationType::TypeIndexLeb)
+        };
+
+        let duplicate_iter = match self.kind {
+            SymbolKind::Duplicate(original_id) => Some(original_id),
+            _ => None,
+        };
+        self.relocs
+            .iter()
+            .filter(filter_non_types)
+            .map(|reloc| Id::from_index(reloc.index))
+            .chain(duplicate_iter)
+    }
+
+    pub fn content_hash(&self, input: &analysis::ModuleInfo) -> Hash {
+        self.stable_content(input)
+            .map(|content| Hash::hash_bytes(&content))
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -178,7 +252,7 @@ impl<'src> SymbolMap<'src> {
                     SymIm {
                         flags,
                         name: name.into(),
-                        linking_name: None,
+                        linking_name: name.into(),
                         symbol_kind: SymbolKind::DataDefined {
                             segment_id,
                             offset: defined.offset as usize,

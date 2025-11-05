@@ -1,8 +1,7 @@
-use std::{borrow::Cow, collections::BTreeMap, fmt::Debug, io::IsTerminal, iter::Peekable};
+use std::{borrow::Cow, collections::BTreeMap, fmt::Debug, io::IsTerminal};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use gxhash::HashSet;
-use wasm_encoder::Encode;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
@@ -10,9 +9,8 @@ use crate::{
         self,
         symbols::{self, SymbolKind},
     },
-    emit::index_safety::OutputGlobalId,
-    helpers::{encoding_size, RangeComp, RangeExt},
-    index::{DataSegmentId, Id, IdMap, IdVec, Indexed, SymbolId},
+    helpers::{RangeComp, RangeExt},
+    index::{Id, IdVec, Indexed, SymbolId},
 };
 mod hexdump;
 
@@ -248,11 +246,7 @@ impl<'src> SegmentLayout<'src> {
                                 }
                             })
                             .collect();
-                        let part = hexdump::DataPart {
-                            name: symbol.name(),
-                            bytes: chunk,
-                            refs,
-                        };
+                        let part = hexdump::DataPart { bytes: chunk, refs };
                         hexdump::render_part(
                             &mut print_data_format,
                             base,
@@ -272,21 +266,6 @@ impl<'src> SegmentLayout<'src> {
     }
     pub fn memory_offset(&self) -> usize {
         self.mem_offset
-    }
-
-    fn collect_and_map_while<'any, I, U>(
-        iterator: &mut Peekable<I>,
-        map: impl Fn(&'any wasmparser::RelocationEntry) -> U,
-        condition: impl Fn(&&'any wasmparser::RelocationEntry) -> bool + Copy,
-    ) -> Vec<U>
-    where
-        I: Iterator<Item = &'any wasmparser::RelocationEntry>,
-    {
-        let mut result = vec![];
-        while let Some(entry) = iterator.next_if(condition) {
-            result.push(map(entry));
-        }
-        result
     }
 
     // Keeps only symbols with id is in `indexes`.

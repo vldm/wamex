@@ -1,7 +1,5 @@
 use std::borrow::Cow;
 
-use wasm_encoder::GlobalType;
-
 use crate::{emit::ImportedEntity, index::InputGlobalId};
 
 #[derive(Debug)]
@@ -50,14 +48,6 @@ impl GlobalImport<'_> {
             GlobalImport::New { global_type, .. } => global_type,
         }
     }
-}
-
-// uses https://github.com/WebAssembly/extended-const proposal (not yet merged, but accepted)
-// so it is not supported by all runtimes/toolings but webkit/chromium/firefox support it.
-pub fn global_init(data_offset: usize, lib_base_id: u32) -> wasm_encoder::ConstExpr {
-    wasm_encoder::ConstExpr::global_get(lib_base_id)
-        .with_i32_const(data_offset.try_into().unwrap())
-        .with_i32_add()
 }
 
 pub fn global_init_tmp(val_type: wasm_encoder::ValType) -> wasm_encoder::ConstExpr {

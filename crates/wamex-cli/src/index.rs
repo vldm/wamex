@@ -211,12 +211,19 @@ impl<Type, Res> IdMap<Id<Type>, Res> {
             _res: PhantomData,
         }
     }
+    pub fn len(&self) -> usize {
+        self.vecmap.len()
+    }
     pub fn insert(&mut self, id: Id<Type>, res: Res) -> Option<Res> {
         self.vecmap.insert(id.id, res)
+    }
+    pub fn remove(&mut self, id: Id<Type>) -> Option<Res> {
+        self.vecmap.remove(id.id)
     }
     pub fn get(&self, id: Id<Type>) -> Option<&Res> {
         self.vecmap.get(id.id)
     }
+
     pub fn iter(&self) -> impl Iterator<Item = (Id<Type>, &Res)> {
         self.vecmap.iter().map(|(id, res)| {
             (

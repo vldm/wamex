@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use anyhow::{anyhow, bail, Result};
 use vec_map::VecMap;
 use wasm_encoder::CustomSection;
