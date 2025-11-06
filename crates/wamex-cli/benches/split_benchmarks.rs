@@ -7,6 +7,7 @@ use criterion::{
     measurement::{Measurement, ValueFormatter},
 };
 use wamex_cli::{
+    SplitPointExtractor,
     analysis::{self, split_point::SplitProgramInfo},
     emit,
     read::InputModule,
@@ -67,7 +68,7 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
     let module = InputModule::parse(&lazy_routes_wasm).unwrap();
     let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
     let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
-    let split_points = analysis::split_point::find_split_points(&info).unwrap();
+    let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
 
     c.bench_function("compute_split_modules", |b| {
         b.iter(|| {
@@ -87,7 +88,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
     let module = InputModule::parse(&lazy_routes_wasm).unwrap();
     let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
     let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
-    let split_points = analysis::split_point::find_split_points(&info).unwrap();
+    let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
     let mut split_program_info =
         SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points).unwrap();
 
@@ -143,8 +144,13 @@ fn benchmark_full_split_pipeline(c: &mut Criterion) {
     c.bench_function("full_split_lazy_routes", |b| {
         b.iter(|| {
             // Use the CLI API with dry_run to avoid file I/O
-            let result =
-                wamex_cli::split_inner(black_box(&lazy_routes_wasm), false, true, |_, _| Ok(()));
+            let result = wamex_cli::split_inner(
+                black_box(&lazy_routes_wasm),
+                false,
+                true,
+                SplitPointExtractor::Legacy,
+                |_, _| Ok(()),
+            );
             hint_black_box(result.unwrap());
         })
     });
@@ -159,8 +165,12 @@ fn benchmark_memory_usage_patterns(c: &mut Criterion<MemUsage>) {
             for _ in 0..iters {
                 let mut oneshot = false;
                 // Use CLI API and hook into emit_module_fn to measure peak memory during emission
-                let _ =
-                    wamex_cli::split_inner(black_box(&lazy_routes_wasm), false, true, |_, _| {
+                let _ = wamex_cli::split_inner(
+                    black_box(&lazy_routes_wasm),
+                    false,
+                    true,
+                    SplitPointExtractor::Legacy,
+                    |_, _| {
                         if oneshot {
                             return Ok(());
                         }
@@ -170,7 +180,8 @@ fn benchmark_memory_usage_patterns(c: &mut Criterion<MemUsage>) {
                             accumulated_mem_usage += current_mem;
                         }
                         Ok(())
-                    });
+                    },
+                );
             }
 
             accumulated_mem_usage

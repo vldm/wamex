@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use analysis::split_point::SplitProgramInfo;
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 // todo: Refactor analysis and emit modules.
 pub mod analysis;
@@ -38,12 +38,26 @@ pub struct Split {
     #[arg(short, long)]
     pub verbose: bool,
 
+    /// Parse instructions when creating pic modules (slower, but more robust to wasm spec changes).
     #[arg(short, long)]
     pub precise_modification: bool,
 
     /// Skip writing files (for benchmarking).
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Specify the split point extraction strategy.
+    #[arg(value_enum)]
+    pub split_point_extractor: SplitPointExtractor,
+}
+
+/// This is temporary solution to support old __wamex__ split points
+#[derive(Debug, ValueEnum, Clone, Copy)]
+pub enum SplitPointExtractor {
+    /// Use regexp and _wasm_split_ prefix to identify split points.
+    Legacy,
+    /// Use _wamex_ prefix and .start_with instead of regexp.
+    Wamex,
 }
 
 #[derive(Debug, Args)]
@@ -129,6 +143,7 @@ pub fn split(args: Split) -> Result<()> {
         &input_wasm,
         args.verbose,
         args.precise_modification,
+        args.split_point_extractor,
         |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             if !args.dry_run {
                 let output_filename = identifier.name() + ".wasm";
@@ -148,13 +163,14 @@ pub fn split_inner(
     input_wasm: &[u8],
     verbose: bool,
     precise_modification: bool,
+    split_point_extractor: SplitPointExtractor,
     emit_module_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> Result<()>,
 ) -> Result<()> {
     let module = InputModule::parse(input_wasm)?;
     let info = analysis::ModuleInfo::from_raw_module(module)?;
     //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
-    let split_points = analysis::split_point::find_split_points(&info)?;
+    let split_points = analysis::split_point::find_split_points(&info, split_point_extractor)?;
 
     log::debug!("split_points={split_points:?}");
     let mut split_program_info =

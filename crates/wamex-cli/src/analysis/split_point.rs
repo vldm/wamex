@@ -4,11 +4,10 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
-use lazy_static::lazy_static;
-use regex::Regex;
 
 use super::dep_graph::DepGraph;
 use crate::{
+    SplitPointExtractor,
     analysis::{
         self,
         dep_graph::{DepMiniSet, DepSet, NamedGraph, find_reachable_deps},
@@ -42,41 +41,43 @@ pub struct SplitPoint {
     pub export_func: InputFuncId,
 }
 
-/// Search for _wasm_split_00<module_name>00_import_<import_id> and
-/// _wasm_split_00<module_name>00_export_<export_id> functions
-/// and extract them as SplitPoints.
-pub fn find_split_points(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
-    macro_rules! process_imports_or_exports {
-        ($pattern:expr, $map:ident, $member:ident, $id_ty:ty) => {
-            let mut $map = BTreeMap::<(String, String), $id_ty>::new();
-            {
-                lazy_static! {
-                    static ref PATTERN: Regex = Regex::new($pattern).unwrap();
-                }
+fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {
+    if !name.starts_with(prefix) {
+        return None;
+    }
+    dbg!(name);
+    let name = &name[prefix.len()..];
+    let postfix_index = name.find(postfix)?;
+    let module_name = &name[..postfix_index];
+    let fn_name = &name[postfix_index + postfix.len()..];
 
-                for (id, item) in info.wasm.$member.iter() {
-                    let Some(captures) = PATTERN.captures(&item.name) else {
-                        continue;
-                    };
-                    let (_, [module_name, unique_id]) = captures.extract();
-                    $map.insert((module_name.into(), unique_id.into()), id);
-                }
-            }
+    Some((module_name, fn_name))
+}
+
+fn find_split_points_with_prefix(
+    info: &analysis::ModuleInfo,
+    prefix: &str,
+) -> anyhow::Result<Vec<SplitPoint>> {
+    macro_rules! process_imports_or_exports {
+        ($postfix: expr, $map:ident, $member:ident, $id_ty:ty) => {
+            let $map = info
+                .wasm
+                .$member
+                .iter()
+                .filter_map(|(id, item)| {
+                    if let Some((module_name, unique_id)) = parser(&item.name, prefix, $postfix) {
+                        Some(dbg!(((module_name.into(), unique_id.into()), id)))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<BTreeMap<(String, String), $id_ty>>();
         };
     }
 
-    process_imports_or_exports!(
-        "__wasm_split_00(.*)00_import_([0-9a-f]{32})",
-        import_map,
-        imports,
-        ImportId
-    );
-    process_imports_or_exports!(
-        "__wasm_split_00(.*)00_export_([0-9a-f]{32})",
-        export_map,
-        exports,
-        ExportId
-    );
+    process_imports_or_exports!("00_import_", import_map, imports, ImportId);
+    process_imports_or_exports!("00_export_", export_map, exports, ExportId);
+    let mut export_map = export_map;
 
     let split_points = import_map
         .into_iter()
@@ -122,6 +123,29 @@ pub fn find_split_points(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<Spli
     }
 
     Ok(split_points)
+}
+
+/// Search for _wasm_split_00<module_name>00_import_<import_id> and
+/// _wasm_split_00<module_name>00_export_<export_id> functions
+/// and extract them as SplitPoints.
+pub fn find_split_points_legacy(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
+    find_split_points_with_prefix(info, "__wasm_split_00")
+}
+/// Search for __wamex_00<module_name>00_import_<import_id> and
+/// __wamex_00<module_name>00_export_<export_id> functions
+/// and extract them as SplitPoints.
+fn find_split_points_wamex(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
+    find_split_points_with_prefix(info, "__wamex_00")
+}
+
+pub fn find_split_points(
+    info: &analysis::ModuleInfo,
+    split_point_type: SplitPointExtractor,
+) -> anyhow::Result<Vec<SplitPoint>> {
+    match split_point_type {
+        SplitPointExtractor::Legacy => find_split_points_legacy(info),
+        SplitPointExtractor::Wamex => find_split_points_wamex(info),
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]

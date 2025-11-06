@@ -300,7 +300,7 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     obj_set!(&new_exports, "__table_base", entry.table_start());
 
     let imports = Object::new();
-    obj_set!(&imports, "__wasm_split", new_exports);
+    obj_set!(&imports, "__wamex", new_exports);
 
     debug!("Instantiate module, imports: {:?}", imports);
     // 5. Instantiate module.

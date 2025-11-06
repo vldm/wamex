@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Result, bail};
 use tempdir::TempDir;
-use wamex_cli::{InputModule, Split, split};
+use wamex_cli::{InputModule, Split, SplitPointExtractor, split};
 
 fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
     let output_temp = TempDir::new("wasm_split_test")?;
@@ -19,6 +19,7 @@ fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
         verbose: false,
         dry_run: false,
         precise_modification: true,
+        split_point_extractor: SplitPointExtractor::Legacy,
     };
     split(cli)?;
 
@@ -279,6 +280,7 @@ fn check_that_precise_modification_works(src: PathBuf) {
         verbose: false,
         dry_run: false,
         precise_modification: false,
+        split_point_extractor: SplitPointExtractor::Legacy,
     };
     split(cli).unwrap();
 

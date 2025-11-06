@@ -1,15 +1,12 @@
 use std::pin::Pin;
 
-#[cfg(feature = "split")]
-use wamex::wasm_split;
-
 pub const SOME_STATIC_SHARED: &str = "SUPER STATIC SHARED STRING";
-#[cfg_attr(feature = "split", wasm_split(static_str))]
+#[cfg_attr(feature = "split", wamex::split(static_str))]
 pub fn static_str() -> Pin<Box<&'static str>> {
     Box::pin(SOME_STATIC_SHARED)
 }
 
-#[cfg_attr(feature = "split", wasm_split(string_from_static))]
+#[cfg_attr(feature = "split", wamex::split(string_from_static))]
 pub fn string_build() -> Pin<Box<String>> {
     let mut new = String::from("OTHER STATIC STRING");
     new.push_str("small addition");
@@ -17,7 +14,7 @@ pub fn string_build() -> Pin<Box<String>> {
     Box::pin(new)
 }
 
-#[cfg_attr(feature = "split", wasm_split(string_build_with_shared_const))]
+#[cfg_attr(feature = "split", wamex::split(string_build_with_shared_const))]
 pub fn string_build_with_shared_const() -> Pin<Box<String>> {
     let mut new = String::from(SOME_STATIC_SHARED);
     new.push_str("hi");
@@ -25,7 +22,7 @@ pub fn string_build_with_shared_const() -> Pin<Box<String>> {
     Box::pin(new)
 }
 
-#[cfg_attr(feature = "split", wasm_split(async_string))]
+#[cfg_attr(feature = "split", wamex::split(async_string))]
 pub async fn async_string() -> String {
     async { "ASYNC STRING".to_string() }.await
 }
@@ -34,7 +31,7 @@ fn impl_dyn_fns() -> String {
     "DYN FNS".to_string()
 }
 
-#[cfg_attr(feature = "split", wasm_split(multiple_dyn_fns))]
+#[cfg_attr(feature = "split", wamex::split(multiple_dyn_fns))]
 pub fn multiple_dyn_fns(first_part: bool) -> String {
     if first_part {
         dyn_fns_inner(&|| impl_dyn_fns().split(' ').next().unwrap().to_string())
@@ -43,7 +40,7 @@ pub fn multiple_dyn_fns(first_part: bool) -> String {
     }
 }
 
-#[cfg_attr(feature = "split", wasm_split(dep_dyn))]
+#[cfg_attr(feature = "split", wamex::split(dep_dyn))]
 pub async fn dep_dyn() -> String {
     multiple_dyn_fns(false).await
 }

@@ -18,7 +18,7 @@ impl Parse for SplitArgs {
 }
 
 #[proc_macro_attribute]
-pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn split(args: TokenStream, input: TokenStream) -> TokenStream {
     let SplitArgs { module_name } = parse_macro_input!(args as SplitArgs);
     let item_fn = parse_macro_input!(input as ItemFn);
 
@@ -32,9 +32,9 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
     let unique_identifier = base16::encode_lower(&sha2::Sha256::digest(format!("{name}",))[..16]);
 
     let impl_import_ident =
-        format_ident!("__wasm_split_00{module_name}00_import_{unique_identifier}_{name}");
+        format_ident!("__wamex_00{module_name}00_import_{unique_identifier}_{name}");
     let impl_export_ident =
-        format_ident!("__wasm_split_00{module_name}00_export_{unique_identifier}_{name}");
+        format_ident!("__wamex_00{module_name}00_export_{unique_identifier}_{name}");
 
     let mut import_sig = Signature {
         ident: impl_import_ident.clone(),
@@ -76,7 +76,7 @@ pub fn wasm_split(args: TokenStream, input: TokenStream) -> TokenStream {
     for (i, param) in wrapper_sig.inputs.iter_mut().enumerate() {
         match param {
             syn::FnArg::Typed(pat_type) => {
-                let param_ident = format_ident!("__wasm_split_arg_{i}");
+                let param_ident = format_ident!("__wamex_arg_{i}");
                 args.push(param_ident.clone());
                 pat_type.pat = Box::new(syn::Pat::Ident(syn::PatIdent {
                     attrs: vec![],

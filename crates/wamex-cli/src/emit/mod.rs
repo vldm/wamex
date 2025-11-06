@@ -129,8 +129,8 @@ impl ImportedEntity for ImportedFunction<'_> {
         match self.kind {
             ImportFunctionKind::Existing { module_name, .. } => module_name.into(),
             ImportFunctionKind::New { .. } => {
-                "__wasm_split".into()
-                // format!("__wasm_split_link_{}", link_module)
+                "__wamex_".into()
+                // format!("__wamex_link_{}", link_module)
             }
         }
     }
@@ -797,7 +797,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 }
 
                 section.import(
-                    "__wasm_split",
+                    "__wamex",
                     "__indirect_function_table",
                     computed_modules
                         .main_module
@@ -808,11 +808,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 // Import all memories defined by the input module.
                 for (memory_index, memory) in self.src.wasm.memories.iter() {
                     let ty: wasm_encoder::MemoryType = (*memory).into();
-                    section.import(
-                        "__wasm_split",
-                        self.get_memory_name(memory_index).as_str(),
-                        ty,
-                    );
+                    section.import("__wamex", self.get_memory_name(memory_index).as_str(), ty);
                 }
             }
         }

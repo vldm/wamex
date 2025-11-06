@@ -21,6 +21,7 @@ pub enum RangeComp {
     Right,
 }
 
+#[allow(dead_code)]
 impl RangeComp {
     /// Converts the RangeComp to a PartialOrd, usefull for sorting ranges.
     /// Returns None if the RangeComp is NonComparable.
@@ -34,6 +35,7 @@ impl RangeComp {
     }
 }
 
+#[allow(dead_code)]
 pub trait RangeExt {
     fn shift_left(&self, offset: usize) -> Self;
     fn shift_right(&self, offset: usize) -> Self;

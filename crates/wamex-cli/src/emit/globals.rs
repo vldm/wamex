@@ -30,7 +30,7 @@ impl ImportedEntity for GlobalImport<'_> {
     fn module_name(&self) -> Cow<'_, str> {
         match self {
             GlobalImport::Existing { module_name, .. } => (*module_name).into(),
-            GlobalImport::New { .. } => "__wasm_split".into(),
+            GlobalImport::New { .. } => "__wamex".into(),
         }
     }
     fn import_name(&self) -> Cow<'_, str> {

@@ -132,7 +132,10 @@ impl<'any, 'src> Compare<'any, 'src> {
         differ: &crate::analysis::symbols::Differ<'_, '_, '_>,
         diff_result: &crate::analysis::symbols::DiffResult,
     ) -> Result<(), anyhow::Error> {
-        let split_points = crate::analysis::split_point::find_split_points(&self.right)?;
+        let split_points = crate::analysis::split_point::find_split_points(
+            &self.right,
+            crate::SplitPointExtractor::Wamex,
+        )?;
         let dep_graph = crate::analysis::dep_graph::get_dependencies(&self.right)?;
         let split_program_info =
             crate::analysis::split_point::SplitProgramInfo::compute_split_modules(
