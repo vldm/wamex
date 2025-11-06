@@ -1,14 +1,12 @@
 use js_sys::WebAssembly::Module;
-use wamex_metadata::BumpVersion;
+use wamex_types::{BumpVersion, dylink0::Dylink0Section};
 use wasm_bindgen::JsValue;
 
 use super::Error;
 
-pub fn deserialize_metadata(
-    array: &[u8],
-) -> Result<wamex_metadata::dylink0::Dylink0Section<'_>, Error> {
+pub fn deserialize_metadata(array: &[u8]) -> Result<Dylink0Section<'_>, Error> {
     let decoded = wasmparser::Dylink0SectionReader::new(wasmparser::BinaryReader::new(&array, 0));
-    wamex_metadata::dylink0::Dylink0Section::from_reader(decoded).map_err(|e| {
+    Dylink0Section::from_reader(decoded).map_err(|e| {
         Error::DeserializationError(format!("Failed to parse dylink.0 section: {e}").into())
     })
 }

@@ -26,10 +26,11 @@ linear-map = "1.2.0"
 
 serde_json = { version = "1.0.104", optional = true }
 serde = { version = "1.0.130", features = ["derive"], optional = true }
-gxhash = { version = "3.5", optional = true }
-wamex_metadata = { version = "0.1.0", path = "../wamex_metadata", optional = true, features = [
+gxhash = { version = "3.5" }
+wamex_types = { version = "0.1.0", path = "../wamex_types", optional = true, features = [
     "full",
 ] }
+rustc-demangle = "0.1.21"
 
 [dev-dependencies]
 tempdir = "0.3"
@@ -39,7 +40,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
 default = ["metadata"]
-metadata = ["dep:serde_json", "dep:serde", "dep:gxhash", "dep:wamex_metadata"]
+metadata = ["dep:wamex_types"]
 
 [[bench]]
 name = "split_benchmarks"

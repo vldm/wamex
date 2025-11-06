@@ -7,7 +7,7 @@ use js_sys::{
     Object, Reflect,
     WebAssembly::{self},
 };
-use wamex_metadata::BumpVersion;
+use wamex_types::{BumpVersion, ModuleId};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, Response};
@@ -47,51 +47,9 @@ pub enum Error {
     DeserializationError(#[from] Box<dyn error::Error + Send + Sync>),
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Hash, Clone)]
-pub struct ModuleId {
-    name: String,
-    version: Option<BumpVersion>,
-    module_url_path: Option<String>,
-}
-
-impl ModuleId {
-    pub fn new(name: &str) -> Self {
-        ModuleId {
-            name: name.to_string(),
-            version: None,
-            module_url_path: None,
-        }
-    }
-    pub fn new_with_url(name: &str, module_url_path: &str) -> Self {
-        ModuleId {
-            name: name.to_string(),
-            version: None,
-            module_url_path: Some(module_url_path.to_string()),
-        }
-    }
-    pub fn module_name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn build_url(&self) -> String {
-        let url = if let Some(url) = &self.module_url_path {
-            format!("{}/", url)
-        } else {
-            String::new()
-        };
-        let version = if let Some(version) = &self.version {
-            format!("-{}", version)
-        } else {
-            String::new()
-        };
-
-        let name = &self.name;
-        format!("{}/{}{}.wasm", url, name, version)
-    }
-}
 #[derive(Debug)]
 struct InstantiatedModule {
-    version: wamex_metadata::BumpVersion,
+    version: BumpVersion,
     instantiated: WebAssembly::Instance,
     alloc_guard: GuardedAllocEntry,
     needs_update: bool,
@@ -146,7 +104,7 @@ struct LinkageState {
     loaded_modules: BTreeMap<ModuleId, InstantiatedModule>,
 
     // If module was reloaded, we keep old modules until `unload` is called.
-    outdated_modules: BTreeMap<(ModuleId, wamex_metadata::BumpVersion), InstantiatedModule>,
+    outdated_modules: BTreeMap<(ModuleId, BumpVersion), InstantiatedModule>,
 
     // Computed global imports object, includes all loaded module exports.
     global_imports: Object,
@@ -390,10 +348,7 @@ pub fn mark_for_update(module_id: ModuleId) -> Result<(), Error> {
 ///
 /// Calling this function will free that memory, and can cause use-after-free if some code still holds references
 /// to that memory.
-pub async unsafe fn unload(
-    module: ModuleId,
-    version: wamex_metadata::BumpVersion,
-) -> Result<(), Error> {
+pub async unsafe fn unload(module: ModuleId, version: BumpVersion) -> Result<(), Error> {
     LinkageState::global(|state| {
         let mut done = false;
         if let Some(outdated) = state

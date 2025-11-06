@@ -10,7 +10,7 @@ web-sys = { version = "0.3", features = ["Request", "Response", "Window"] }
 js-sys = "0.3"
 
 thiserror = "2.0"
-wamex_metadata = { version = "0.1.0", path = "../wamex_metadata", features = [
+wamex_types = { version = "0.1.0", path = "../wamex_types", features = [
     "parser",
 ] }
 wasmparser = "0.238.0"
@@ -20,6 +20,5 @@ log = { version = "0.4", optional = true }
 
 
 [features]
-default = ["rkyv", "debug"]
+default = ["debug"]
 debug = ["dep:log"]
-rkyv = ["wamex_metadata/rkyv"]

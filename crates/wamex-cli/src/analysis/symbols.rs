@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 use crate::{
     InputModule, analysis,
-    helpers::{Hash, RangeComp, RangeExt},
+    helpers::{RangeComp, RangeExt},
     index::{DataSegmentId, Id, IdMap, IdVec, InputFuncId, InputGlobalId, SymbolId, TableId},
 };
 mod diff;
@@ -106,12 +106,6 @@ impl SymbolRecord<'_> {
             .filter(filter_non_types)
             .map(|reloc| Id::from_index(reloc.index))
             .chain(duplicate_iter)
-    }
-
-    pub fn content_hash(&self, input: &analysis::ModuleInfo) -> Hash {
-        self.stable_content(input)
-            .map(|content| Hash::hash_bytes(&content))
-            .unwrap_or_default()
     }
 }
 

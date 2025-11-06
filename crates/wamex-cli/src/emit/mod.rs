@@ -9,7 +9,7 @@ use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use index_safety::OutputFuncId;
 pub use memory_layout::{DataChunk, DataSegmentOutput, SegmentLayout, SymbolRelation};
 use modify::{ModifyContext, StoreType, init_each_store_var};
-use wamex_metadata::BumpVersion;
+use wamex_types::{BumpVersion, dylink0::Dylink0Section};
 use wasm_encoder::{GlobalType, reencode::Reencode};
 use wasmparser::{RelocationEntry, TypeRef};
 
@@ -1423,7 +1423,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         output_module: &mut wasm_encoder::Module,
     ) -> Result<()> {
         if !self.is_main() {
-            let data = wamex_metadata::dylink0::Dylink0Section {
+            let data = Dylink0Section {
                 memory_alignment: std::mem::size_of::<u32>() as u32, // as power of 2
                 memory_size: self
                     .data
