@@ -7,14 +7,14 @@
 
 use std::ops::Range;
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use wasm_encoder::{Encode, Instruction};
 use wasmparser::{Operator, RelocationType};
 
 use super::{ModifyContext, StoreType};
 use crate::emit::modify::{
-    relocation::{DataSymbolTag, FunctionIndexTag},
     CustomModify, RelocationContext, SymbolOffset, SymbolOp,
+    relocation::{DataSymbolTag, FunctionIndexTag},
 };
 
 // Represents a data relocation entry with additional information about global variable.

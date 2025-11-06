@@ -438,17 +438,21 @@ mod tests {
         let first_graph = testing::uniq_nodes("1 & 2 & 4 & 5 & 7 & 8").unwrap();
 
         assert_eq!(first_module.reachable, first_graph);
-        assert!(first_module
-            .reachable
-            .check_unreachable(&testing::uniq_nodes("11 & 12").unwrap()));
+        assert!(
+            first_module
+                .reachable
+                .check_unreachable(&testing::uniq_nodes("11 & 12").unwrap())
+        );
 
         let second_module = &modules[1];
         let second_graph = testing::uniq_nodes("11 & 12 & 4 & 5 & 7 & 8").unwrap();
         assert_eq!(second_module.reachable, second_graph);
 
-        assert!(second_module
-            .reachable
-            .check_unreachable(&testing::uniq_nodes("1 & 2 & 3").unwrap()));
+        assert!(
+            second_module
+                .reachable
+                .check_unreachable(&testing::uniq_nodes("1 & 2 & 3").unwrap())
+        );
     }
 
     #[test]

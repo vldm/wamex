@@ -6,9 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use tempdir::TempDir;
-use wamex_cli::{split, InputModule, Split};
+use wamex_cli::{InputModule, Split, split};
 
 fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
     let output_temp = TempDir::new("wasm_split_test")?;
@@ -57,21 +57,20 @@ mod static_str {
     pub const IMPORTS: &[&str] = &[LOADER_FN, IMPORT_FN];
     pub const EXPORT_BEFORE: &[&str] =
         &["__wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str"];
-    pub const EXPORT_AFTER: &[&str] = &[
-        "__wamex___wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str",
-    ];
+    pub const EXPORT_AFTER: &[&str] =
+        &["__wamex___wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str"];
 }
 mod string_from_static {
     pub const LOADER_FN: &str = "__wasm_split_load_string_from_static";
-    pub const IMPORT_FN: &str =
-        "__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static";
+    pub const IMPORT_FN: &str = "__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static";
 
     pub const IMPORTS: &[&str] = &[LOADER_FN, IMPORT_FN];
     pub const EXPORT_BEFORE: &[&str] = &[
         "__wasm_split_00string_from_static00_export_17997317cc392c52ed3bea15880aab65_string_from_static",
     ];
-    pub const EXPORT_AFTER: &[&str] =
-        &["__wamex___wasm_split_00string_from_static00_export_17997317cc392c52ed3bea15880aab65_string_from_static"];
+    pub const EXPORT_AFTER: &[&str] = &[
+        "__wamex___wasm_split_00string_from_static00_export_17997317cc392c52ed3bea15880aab65_string_from_static",
+    ];
 }
 
 const REQUIRED_MAIN_EXPORTS: &[&str] = &[

@@ -4,15 +4,14 @@ use std::{
     ops::Range,
 };
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 pub use diff::{DiffEntry, DiffResult, Differ};
 use smallvec::SmallVec;
 
 use crate::{
-    analysis,
+    InputModule, analysis,
     helpers::{Hash, RangeComp, RangeExt},
     index::{DataSegmentId, Id, IdMap, IdVec, InputFuncId, InputGlobalId, SymbolId, TableId},
-    InputModule,
 };
 mod diff;
 
@@ -418,7 +417,9 @@ impl<'src> SymbolMap<'src> {
             (Some(linking), Some(name_section)) => {
                 if linking != name_section {
                     // This is not an error - linking section contain internal name of symbol, while name_section may contain #[demangle] name.
-                    log::trace!("Conflicting names for symbol: linking section name '{linking}', name section name '{name_section}'");
+                    log::trace!(
+                        "Conflicting names for symbol: linking section name '{linking}', name section name '{name_section}'"
+                    );
                 }
                 name_section.into()
             }

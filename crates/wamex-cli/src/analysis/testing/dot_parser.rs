@@ -12,11 +12,11 @@
 
 use gxhash::{HashMap, HashMapExt, HashSet};
 use nom::{
+    IResult, Parser,
     branch::alt,
     bytes::{complete::take_while, tag},
     character::complete::multispace0,
     combinator::map_res,
-    IResult, Parser,
 };
 
 use crate::index::SymbolId;

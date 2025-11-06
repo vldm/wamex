@@ -11,9 +11,9 @@ use std::{
 };
 
 use crate::{
+    Diff,
     analysis::{self},
     index::{IdMap, SymbolId},
-    Diff,
 };
 
 struct SymbolMapping {
@@ -91,7 +91,9 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         let mut non_matched_right_symbols: Vec<SymbolId> = Vec::new();
         let mut dups: SVec<_, 16> = SVec::new();
         for (right_sym_id, right_symbol) in self.right.symbols.iter() {
-            if let Some(name) = &right_symbol.linking_name && !Self::is_anon_name(name){
+            if let Some(name) = &right_symbol.linking_name
+                && !Self::is_anon_name(name)
+            {
                 if let Some(&left_sym_id) = name_to_left_symbol.get(name) {
                     if let Some(dup) = mapping.insert(left_sym_id, right_sym_id) {
                         dups.push(left_sym_id);
@@ -196,6 +198,12 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
             }
         }
 
+        // TODO: because candidate key is only stable name, anonymous symbols are placed under same key (None).
+        // Algorithm can be improved:
+        // 1. functions can be handled separately so "candidate key" can be moved outside of this function.
+        // 2. Build depgraph of not-matched symbols (left or right??) and iterate only when some of parents are resolved.
+        // 3. What to do with recursive symbols?
+
         // 3. Build candidates
         let mut right_candidates = BTreeMap::<_, SVec<_>>::new();
         for right_sym in std::mem::take(&mut mapping.right_non_matched) {
@@ -204,6 +212,9 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
                 .get(&right_sym)
                 .cloned()
                 .unwrap_or_default();
+
+            // This will put all anonymous symbols under same key.
+            // TODO: Consider adding content hash to the key to reduce number of candidates.
 
             let key = SymbolKey {
                 stable_name: right_symbol.stable_name(),
@@ -219,9 +230,11 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
 
         let mut queue = std::mem::take(&mut mapping.left_non_matched);
 
-        let mut queue_len = queue.len();
+        // Currently this loop is process every not processed symbol each iteration.
+        // But we can optimize it, by building dependent graph, and process only when some of parents are resolved.
         loop {
-            queue_len = queue.len();
+            let queue_len = queue.len();
+            // Build left candidates
             let mut left_candidates = BTreeMap::<_, SVec<_>>::new();
             for left_sym in std::mem::take(&mut queue) {
                 // Try match candidate.
@@ -253,7 +266,6 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
                         context,
                     });
             }
-
             for (key, mut left_syms) in left_candidates {
                 let Some(mut right_syms) = right_candidates.remove(&key) else {
                     // No candidates on right side - push all left symbols back to removed list.

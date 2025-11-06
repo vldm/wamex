@@ -4,13 +4,13 @@ use std::{
     ops::Range,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use index_safety::OutputFuncId;
 pub use memory_layout::{DataChunk, DataSegmentOutput, SegmentLayout, SymbolRelation};
-use modify::{init_each_store_var, ModifyContext, StoreType};
+use modify::{ModifyContext, StoreType, init_each_store_var};
 use wamex_metadata::BumpVersion;
-use wasm_encoder::{reencode::Reencode, GlobalType};
+use wasm_encoder::{GlobalType, reencode::Reencode};
 use wasmparser::{RelocationEntry, TypeRef};
 
 use crate::{
@@ -948,7 +948,9 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     if existing_exports.contains(lib_base_name.as_str())
                         || existing_exports.contains(table_base_name.as_str())
                     {
-                        panic!("GOT base globals {lib_base_name} or {table_base_name} already exist in exports");
+                        panic!(
+                            "GOT base globals {lib_base_name} or {table_base_name} already exist in exports"
+                        );
                     }
                     // Export GOT base globals.
                     section.export(

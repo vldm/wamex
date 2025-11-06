@@ -12,7 +12,7 @@ mod start_fn_gen;
 
 use std::ops::Range;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use constant_extracton::ConstantExtractionEntry;
 use gxhash::HashMap;
 pub use relocation::RelocateState;
@@ -21,7 +21,7 @@ use wasm_encoder::reencode::Reencode;
 use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
-    emit::{index_safety::OutputGlobalId, ComputedModules, ModuleEmitState},
+    emit::{ComputedModules, ModuleEmitState, index_safety::OutputGlobalId},
     index::{DefinedFuncId, InputFuncId, InputGlobalId},
 };
 

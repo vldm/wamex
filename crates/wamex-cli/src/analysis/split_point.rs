@@ -12,7 +12,7 @@ use super::dep_graph::DepGraph;
 use crate::{
     analysis::{
         self,
-        dep_graph::{find_reachable_deps, DepMiniSet, DepSet, NamedGraph},
+        dep_graph::{DepMiniSet, DepSet, NamedGraph, find_reachable_deps},
     },
     index::{ExportId, ImportId, InputFuncId, SymbolId},
 };
@@ -115,7 +115,11 @@ pub fn find_split_points(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<Spli
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
 
     if let Some((key, _)) = export_map.iter().next() {
-        anyhow::bail!("No corresponding import for split export {key:?} hash {key_hash:?}. Maybe split module is defined but not used.", key_hash = key.1,key = key.0);
+        anyhow::bail!(
+            "No corresponding import for split export {key:?} hash {key_hash:?}. Maybe split module is defined but not used.",
+            key_hash = key.1,
+            key = key.0
+        );
     }
 
     Ok(split_points)

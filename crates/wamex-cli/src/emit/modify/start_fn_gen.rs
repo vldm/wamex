@@ -4,15 +4,15 @@
 
 use std::ops::Range;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use wasm_encoder::{InstructionSink, MemArg};
 use wasmparser::{RelocationEntry, RelocationType};
 
 use crate::{
     emit::modify::{
-        relocation::{encode, DataSymbolTag, FunctionIndexTag},
         CustomModify, DataModifyEntry, ModifyEntry, RelocateState, RelocationContext, SymbolOffset,
         SymbolOp, SymbolUOffset,
+        relocation::{DataSymbolTag, FunctionIndexTag, encode},
     },
     index::{DataSegmentId, SymbolId},
 };

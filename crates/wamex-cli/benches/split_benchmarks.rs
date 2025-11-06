@@ -3,9 +3,8 @@ use std::fs::read_to_string;
 use std::{fs, hint::black_box as hint_black_box, path::PathBuf};
 
 use criterion::{
-    black_box, criterion_group, criterion_main,
+    Criterion, Throughput, black_box, criterion_group, criterion_main,
     measurement::{Measurement, ValueFormatter},
-    Criterion, Throughput,
 };
 use wamex_cli::{
     analysis::{self, split_point::SplitProgramInfo},
@@ -210,11 +209,7 @@ impl Measurement for MemUsage {
     }
     fn to_f64(&self, val: &Self::Value) -> f64 {
         let res = *val as f64;
-        if res.is_nan() {
-            0.0
-        } else {
-            res
-        }
+        if res.is_nan() { 0.0 } else { res }
     }
     fn formatter(&self) -> &dyn ValueFormatter {
         &MemUsage

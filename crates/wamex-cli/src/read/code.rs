@@ -1,4 +1,4 @@
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 pub use wasmparser::FunctionBody;
 
 use super::Ind;

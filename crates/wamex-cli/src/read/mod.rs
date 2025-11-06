@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use vec_map::VecMap;
 use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};

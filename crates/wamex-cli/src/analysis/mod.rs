@@ -4,7 +4,7 @@
 
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Range};
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 pub use symbols::SymbolMap;
 use wasmparser::{ElementItems, ElementKind, TypeRef};
 

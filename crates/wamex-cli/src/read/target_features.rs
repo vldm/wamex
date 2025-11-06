@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use wasm_encoder::Encode;
 use wasmparser::{WasmFeatures, WasmFeaturesInflated};
 

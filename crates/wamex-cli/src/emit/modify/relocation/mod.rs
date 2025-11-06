@@ -2,13 +2,13 @@ pub mod encode;
 
 use std::fmt::Debug;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    analysis::{self, symbols::SymbolKind, ModuleInfo},
+    analysis::{self, ModuleInfo, symbols::SymbolKind},
     emit::{
-        index_safety::OutputGlobalId, modify::SymbolOp, ComputedModules, GotBase, ModuleEmitState,
+        ComputedModules, GotBase, ModuleEmitState, index_safety::OutputGlobalId, modify::SymbolOp,
     },
     index::{DataSegmentId, Id, InputFuncId, InputGlobalId, SymbolId},
 };
@@ -199,7 +199,9 @@ impl RelocateState<'_, '_> {
             bail!("Relocation {relocation:?} does not refer to a valid function")
         };
         let Some(output_func_id) = self.emit_module.functions.get_output_id(input_func_id) else {
-            bail!("Cannot find output function for input function {input_func_id} referenced by relocation {relocation:?}")
+            bail!(
+                "Cannot find output function for input function {input_func_id} referenced by relocation {relocation:?}"
+            )
         };
         Ok(output_func_id.as_raw_index())
     }
@@ -236,7 +238,9 @@ impl RelocateState<'_, '_> {
                 )
             })?;
         let SymbolKind::Global(original_global_id) = symbol.kind else {
-            bail!("Relocation {relocation:?} does not refer to a global symbol, instead got {symbol:?}");
+            bail!(
+                "Relocation {relocation:?} does not refer to a global symbol, instead got {symbol:?}"
+            );
         };
 
         let global_id = (self.global_id_mapper)(original_global_id)

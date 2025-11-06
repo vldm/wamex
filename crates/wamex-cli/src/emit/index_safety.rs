@@ -1,8 +1,8 @@
 use super::{DefinedFunction, Indexed};
 use crate::{
     emit::{
-        globals::{DefinedGlobal, GlobalImport},
         DefinedFunctionKind, ImportedFunction,
+        globals::{DefinedGlobal, GlobalImport},
     },
     index::OutputMapType,
     read::code::InputFunction,
