@@ -1,9 +1,7 @@
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt::Debug,
 };
-
-use gxhash::{HashMap, HashMapExt};
 
 use crate::{
     analysis::{self},
@@ -176,8 +174,8 @@ pub fn find_reachable_deps(deps: &DepGraph, roots: &DepSet) -> DepSet {
 impl<Id> NamedGraph<Id> {
     /// Collect list of modules that owns a given dep node
     /// Returns a map of dep node to set of module ids that owns it
-    fn collect_visited_by(modules: &[NamedGraph<Id>]) -> HashMap<SymbolId, DepSet<usize>> {
-        let mut visited_by: HashMap<SymbolId, DepSet<usize>> = HashMap::new();
+    fn collect_visited_by(modules: &[NamedGraph<Id>]) -> BTreeMap<SymbolId, DepSet<usize>> {
+        let mut visited_by: BTreeMap<SymbolId, DepSet<usize>> = BTreeMap::new();
         for (module_id, module) in modules.iter().enumerate() {
             for dep in module.reachable.iter() {
                 visited_by.entry(*dep).or_default().insert(module_id);
@@ -216,7 +214,7 @@ impl<Id> NamedGraph<Id> {
         Id: Clone + Ord + Debug,
     {
         //TODO: use bitset as key instead
-        let mut shared_entries: HashMap<Vec<usize>, DepSet> = HashMap::new();
+        let mut shared_entries: BTreeMap<Vec<usize>, DepSet> = BTreeMap::new();
 
         for m in modules.iter() {
             debug_assert!(m.imports.is_empty(), "Linked nodes is output parameter");

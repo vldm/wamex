@@ -5,13 +5,9 @@
 //!
 //! Note: .L symbols is not guarateed to persist between compilations. So to detect this symbols we may use "contexts" (parent symbols).
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    mem,
-};
+use std::{collections::BTreeMap, mem};
 
 use crate::{
-    Diff,
     analysis::{self},
     index::{IdMap, SymbolId},
 };

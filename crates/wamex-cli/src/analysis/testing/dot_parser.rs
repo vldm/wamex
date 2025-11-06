@@ -10,7 +10,8 @@
 //! First operator cannot be `&`.
 //!
 
-use gxhash::{HashMap, HashMapExt, HashSet};
+use std::collections::{HashMap, HashSet};
+
 use nom::{
     IResult, Parser,
     branch::alt,
@@ -159,7 +160,8 @@ pub fn parse_list(input: &str) -> IResult<&str, Vec<SymbolId>> {
 
 #[cfg(test)]
 pub mod tests {
-    use gxhash::{HashMap, HashMapExt};
+
+    use std::collections::HashMap;
 
     use crate::index::SymbolId;
 

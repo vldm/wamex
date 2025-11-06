@@ -1,11 +1,10 @@
 use std::{
     borrow::{self, Cow},
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ops::Range,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use gxhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use index_safety::OutputFuncId;
 pub use memory_layout::{DataChunk, DataSegmentOutput, SegmentLayout, SymbolRelation};
 use modify::{ModifyContext, StoreType, init_each_store_var};
@@ -196,7 +195,7 @@ pub struct ModuleEmitState<'any, 'src> {
     // - "store" globals for `modify::constant_extractions`
     // - globals for data segments (lib_base_id + offset)
     globals: WithOriginalIndex<'src, DefinedGlobal<'src>>,
-    pub global_tmp_store: HashMap<StoreType, OutputGlobalId>,
+    pub global_tmp_store: BTreeMap<StoreType, OutputGlobalId>,
     // extra imports that should be emitted for lib
     // Not available for main module.
     sub_module_extra: Option<SubModuleExtra>,
@@ -237,7 +236,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         // log::debug!("module_id: {module_id:#?}");
         log::debug!("shared_modules: {shared_modules:#?}");
         // We need to include definitions for all of the `defined_symbols`.
-        let mut funcs_to_define = HashSet::new();
+        let mut funcs_to_define = BTreeSet::new();
         let mut import_functions = Vec::new();
 
         let mut indirect_funcs_stubs = Vec::new();
@@ -245,7 +244,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let main_module = static_main.is_none();
 
-        let mut used_funcs = HashSet::new();
+        let mut used_funcs = BTreeSet::new();
         for (sym, func_id) in output_module_info.defined_symbols.iter().filter_map(|s| {
             module_info
                 .symbols
@@ -402,7 +401,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             };
             data_to_define
                 .entry(segment_id)
-                .or_insert_with(HashSet::new)
+                .or_insert_with(BTreeSet::new)
                 .insert(*symbol_id);
         }
 
@@ -411,7 +410,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .src_data_segments
             .iter()
             .map(|(data_segment_id, data)| {
-                let empty = HashSet::new();
+                let empty = BTreeSet::new();
                 let entries = data_to_define.get(&data_segment_id).unwrap_or(&empty);
                 let data_segment = data.clone();
                 data_segment.new_with_whitelist(entries)
@@ -639,7 +638,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             }
         });
 
-        let mut global_tmp_store = HashMap::new();
+        let mut global_tmp_store = BTreeMap::new();
         if !main_module {
             for (store_type, val_type) in init_each_store_var() {
                 let global_id = globals.imports.len() + globals.defined.len();

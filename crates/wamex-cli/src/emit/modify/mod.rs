@@ -10,11 +10,10 @@ mod constant_extracton;
 mod relocation;
 mod start_fn_gen;
 
-use std::ops::Range;
+use std::{collections::BTreeMap, ops::Range};
 
 use anyhow::{Result, bail};
 use constant_extracton::ConstantExtractionEntry;
-use gxhash::HashMap;
 pub use relocation::RelocateState;
 pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
 use wasm_encoder::reencode::Reencode;
@@ -59,7 +58,7 @@ pub struct ModifyContext<'any, 'src> {
     // Function name for debug purposes
     pub function_name: &'any str,
     // Temporary globals for constant extraction
-    pub global_tmps: &'any HashMap<StoreType, OutputGlobalId>,
+    pub global_tmps: &'any BTreeMap<StoreType, OutputGlobalId>,
     relocation_state: RelocateState<'any, 'src>,
     // Current instruction
     pub instruction: wasmparser::Operator<'any>,

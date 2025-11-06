@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use analysis::split_point::SplitProgramInfo;
 use anyhow::Result;
@@ -12,8 +12,6 @@ mod helpers;
 mod index;
 mod diff;
 mod list_set;
-// #[cfg(feature = "metadata")]
-// mod metadata_ext;
 pub mod read;
 
 pub use read::InputModule;
@@ -39,9 +37,6 @@ pub struct Split {
     /// Also if metadata is enabled, it will print it in pretty JSON format.
     #[arg(short, long)]
     pub verbose: bool,
-
-    #[arg(short, long)]
-    pub metadata: bool,
 
     #[arg(short, long)]
     pub precise_modification: bool,
@@ -132,10 +127,8 @@ pub fn split(args: Split) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
     split_inner(
         &input_wasm,
-        args.metadata,
         args.verbose,
         args.precise_modification,
-        args.dry_run.then_some(args.output.as_path()),
         |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             if !args.dry_run {
                 let output_filename = identifier.name() + ".wasm";
@@ -153,10 +146,8 @@ pub fn split(args: Split) -> Result<()> {
 // Full split routine, but without file I/O reading
 pub fn split_inner(
     input_wasm: &[u8],
-    emit_metadata: bool,
     verbose: bool,
     precise_modification: bool,
-    metadata_output: Option<&Path>,
     emit_module_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> Result<()>,
 ) -> Result<()> {
     let module = InputModule::parse(input_wasm)?;
@@ -191,21 +182,6 @@ pub fn split_inner(
         precise_modification,
         emit_module_fn,
     )?;
-
-    // #[cfg(feature = "metadata")]
-    // if emit_metadata {
-    //     if let Some(output_path) = metadata_output {
-    //         let metadata_path = output_path.join("metadata.json");
-    //         let metadata = metadata_ext::build_metadata_and_snapshot(&info, &split_program_info);
-    //         let metadata_json = if verbose {
-    //             serde_json::to_string_pretty(&metadata)?
-    //         } else {
-    //             serde_json::to_string(&metadata)?
-    //         };
-
-    //         std::fs::write(metadata_path, metadata_json)?;
-    //     }
-    // }
 
     Ok(())
 }

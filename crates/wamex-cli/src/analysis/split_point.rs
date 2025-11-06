@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
-use gxhash::{HashMap, HashMapExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 
@@ -49,7 +48,7 @@ pub struct SplitPoint {
 pub fn find_split_points(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
     macro_rules! process_imports_or_exports {
         ($pattern:expr, $map:ident, $member:ident, $id_ty:ty) => {
-            let mut $map = HashMap::<(String, String), $id_ty>::new();
+            let mut $map = BTreeMap::<(String, String), $id_ty>::new();
             {
                 lazy_static! {
                     static ref PATTERN: Regex = Regex::new($pattern).unwrap();
@@ -80,7 +79,7 @@ pub fn find_split_points(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<Spli
     );
 
     let split_points = import_map
-        .drain()
+        .into_iter()
         .map(|(key, import_id)| -> anyhow::Result<SplitPoint> {
             let export_id = export_map.remove(&key).ok_or_else(|| {
                 anyhow::anyhow!("No corresponding export for split import {key:?}")
@@ -220,7 +219,7 @@ impl SplitModuleIdentifier {
 #[derive(Debug, Default)]
 pub struct SplitProgramInfo {
     pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
-    pub symbol_output_module: HashMap<SymbolId, usize>,
+    pub symbol_output_module: BTreeMap<SymbolId, usize>,
 }
 
 impl SplitProgramInfo {

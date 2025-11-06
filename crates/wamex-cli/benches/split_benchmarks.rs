@@ -95,7 +95,8 @@ fn benchmark_emit_modules(c: &mut Criterion) {
     emit::merge_main_shared(&mut split_program_info);
     let wbg_fns = emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
 
-    c.bench_function("emit_modules_fast", |b| {
+    let mut group = c.benchmark_group("emit_module");
+    group.bench_function("in_place", |b| {
         b.iter(|| {
             let mut output_counter = 0;
             let result = emit::emit_modules(
@@ -115,7 +116,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
             hint_black_box(output_counter);
         })
     });
-    c.bench_function("emit_modules_precise", |b| {
+    group.bench_function("precise", |b| {
         b.iter(|| {
             let mut output_counter = 0;
             let result = emit::emit_modules(
@@ -142,14 +143,8 @@ fn benchmark_full_split_pipeline(c: &mut Criterion) {
     c.bench_function("full_split_lazy_routes", |b| {
         b.iter(|| {
             // Use the CLI API with dry_run to avoid file I/O
-            let result = wamex_cli::split_inner(
-                black_box(&lazy_routes_wasm),
-                false,
-                false,
-                true,
-                None,
-                |_, _| Ok(()),
-            );
+            let result =
+                wamex_cli::split_inner(black_box(&lazy_routes_wasm), false, true, |_, _| Ok(()));
             hint_black_box(result.unwrap());
         })
     });
@@ -164,13 +159,8 @@ fn benchmark_memory_usage_patterns(c: &mut Criterion<MemUsage>) {
             for _ in 0..iters {
                 let mut oneshot = false;
                 // Use CLI API and hook into emit_module_fn to measure peak memory during emission
-                let _ = wamex_cli::split_inner(
-                    black_box(&lazy_routes_wasm),
-                    false,
-                    false,
-                    true,
-                    None,
-                    |_, _| {
+                let _ =
+                    wamex_cli::split_inner(black_box(&lazy_routes_wasm), false, true, |_, _| {
                         if oneshot {
                             return Ok(());
                         }
@@ -180,8 +170,7 @@ fn benchmark_memory_usage_patterns(c: &mut Criterion<MemUsage>) {
                             accumulated_mem_usage += current_mem;
                         }
                         Ok(())
-                    },
-                );
+                    });
             }
 
             accumulated_mem_usage
@@ -228,7 +217,7 @@ impl ValueFormatter for MemUsage {
 
     fn scale_values(&self, ns: f64, values: &mut [f64]) -> &'static str {
         let (factor, unit) = if ns < 10f64.powi(0) {
-            (10f64.powi(3), "KB")
+            (10f64.powi(3), "Bytes")
         } else if ns < 10f64.powi(3) {
             (10f64.powi(0), "KB")
         } else if ns < 10f64.powi(6) {
@@ -238,7 +227,6 @@ impl ValueFormatter for MemUsage {
         } else {
             (10f64.powi(-9), "TB")
         };
-
         for val in values {
             *val *= factor;
         }

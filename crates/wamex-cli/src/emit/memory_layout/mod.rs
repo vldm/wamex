@@ -1,7 +1,11 @@
-use std::{borrow::Cow, collections::BTreeMap, fmt::Debug, io::IsTerminal};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    fmt::Debug,
+    io::IsTerminal,
+};
 
 use anyhow::Result;
-use gxhash::HashSet;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
@@ -269,7 +273,7 @@ impl<'src> SegmentLayout<'src> {
     }
 
     // Keeps only symbols with id is in `indexes`.
-    pub fn new_with_whitelist(mut self, indexes: &HashSet<SymbolId>) -> Self {
+    pub fn new_with_whitelist(mut self, indexes: &BTreeSet<SymbolId>) -> Self {
         let mut result = vec![];
 
         {

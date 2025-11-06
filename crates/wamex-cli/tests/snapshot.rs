@@ -17,7 +17,6 @@ fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
         input: src.into(),
         output: output_temp.path().into(),
         verbose: false,
-        metadata: false,
         dry_run: false,
         precise_modification: true,
     };
@@ -278,7 +277,6 @@ fn check_that_precise_modification_works(src: PathBuf) {
         input: src.into(),
         output: output_temp.path().into(),
         verbose: false,
-        metadata: false,
         dry_run: false,
         precise_modification: false,
     };

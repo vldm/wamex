@@ -1,7 +1,7 @@
 //! Find a difference between two wasm modules.
 //!
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use colored::Colorize;
 use similar::{ChangeTag, TextDiff};
@@ -13,7 +13,7 @@ use crate::{
         symbols::{DiffEntry, DiffResult},
     },
     index::{Id, IdVec, Indexed},
-    read::{self, code::FunctionWithBody},
+    read::code::FunctionWithBody,
 };
 pub struct Compare<'any, 'src> {
     left: &'any analysis::ModuleInfo<'src>,
