@@ -149,6 +149,7 @@ impl<'src> ModuleInfo<'src> {
             indirect_element = Some((id, function_list));
             break;
         }
+        dbg!(&indirect_element);
         let (indirect_element_id, indirect_function_list) = indirect_element
             .ok_or_else(|| anyhow!("No element segment with __indirect_function_table found"))?;
 

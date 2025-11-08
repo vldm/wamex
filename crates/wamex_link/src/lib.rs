@@ -19,6 +19,8 @@ mod js_helpers;
 mod logs;
 mod module_alloc;
 
+pub type Result<T, E = String> = std::result::Result<T, E>;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Module {} not found", .module_id.module_name())]
@@ -143,7 +145,15 @@ impl LinkageState {
         copy_imports(&self.global_imports, &defined_exports, true)
     }
 
-    // fn debug_object
+    fn debug_keys(obj: &Object) {
+        let keys = Object::keys(obj);
+        let mut key_list = vec![];
+        for i in 0..keys.length() {
+            let key = keys.get(i);
+            key_list.push(key.as_string().unwrap_or_default());
+        }
+        debug!("Object keys: {:?}", key_list);
+    }
 
     fn _get_main_exports(indirect_function_table: &JsValue) -> Object {
         let new_object = Object::new();
@@ -151,6 +161,7 @@ impl LinkageState {
 
         log::debug!("Main exports value: {:?}", obj);
         let obj = obj.try_into().unwrap();
+        Self::debug_keys(&obj);
         copy_imports(&new_object, &obj, false).unwrap();
         let set = Reflect::set(
             &new_object,
@@ -232,7 +243,7 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     // 1. fetch ModuleDecl
     // TODO: use custom section instead of separate fetch?
     // let array = WebAssembly::Module::custom_sections(&module, "__wamex_metadata");
-    let module_fut = fetch_buffer(module_id.build_url());
+    let module_fut = fetch_buffer(module_id.download_url());
     // let decl_buffer = fetch_buffer(module_id.module_decl_url()).await?;
     // let decl_buffer = deserialize::buffer_to_rust(decl_buffer);
 
@@ -260,7 +271,7 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     if !metadata.needed_libraries.is_empty() {
         debug!("Fetching module deps: {:?}", metadata.needed_libraries);
         for dep in &metadata.needed_libraries {
-            let dep_id = ModuleId::new(&dep);
+            let dep_id = ModuleId::dep_from_module(&module_id, &dep);
             Box::pin(load_inner(dep_id.clone(), false))
                 .await
                 .map_err(|e| Error::CannotResolveDependency {
@@ -299,6 +310,7 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     obj_set!(&new_exports, "__lib_base", entry.memory_start());
     obj_set!(&new_exports, "__table_base", entry.table_start());
 
+    LinkageState::debug_keys(&new_exports);
     let imports = Object::new();
     obj_set!(&imports, "__wamex", new_exports);
 

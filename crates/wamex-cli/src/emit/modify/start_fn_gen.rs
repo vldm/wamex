@@ -75,7 +75,7 @@ impl StartFnGen {
                 )?
                 .map(|offset| offset + data_entry.storage.storage_offset_in_data as i64);
 
-            log::warn!(
+            log::trace!(
                 "Data symbol storage: {:?}, entry: {:?}",
                 storage,
                 data_entry

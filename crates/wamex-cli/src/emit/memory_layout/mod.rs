@@ -266,7 +266,7 @@ impl<'src> SegmentLayout<'src> {
                 };
             }
         }
-        log::warn!("Data segments {print_data_format}");
+        println!("Data segments {print_data_format}");
     }
     pub fn memory_offset(&self) -> usize {
         self.mem_offset

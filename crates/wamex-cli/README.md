@@ -1,25 +1,24 @@
-# Module splitting and dynamic loading
+# WAsm module EXtractor (WAMEX)
+WAMEX is a tool for splitting large WebAssembly module into few smaller dynamically loadable modules.
+It is based on [wasm-split-prototype](https://github.com/jbms/wasm-split-prototype/tree/main) by jbms,
+unlike `wasm-split` splitted modules are partially implementing [dynamic linking convention](https://github.com/WebAssembly/tool-conventions/blob/main/DynamicLinking.md).
+
+This allows to load and reload them on demand, which can be used for hot module reloading (HMR) during development.
+
+
+## Motivation
 During development of large WebAssembly application, some pieces of app can be rarely used,
 but they still needed to be downloaded by browser.
 This can lead to large initial download size and slow loading time.
 
 Another common problem is that during development - feedback loop for such application is too slow.
 This is because the whole module needs to be recompiled and reloaded, also there is no way to resume application state after reload.
-Reducing recompilation time can significantly improve development experience, another solution is to implement some kind of hot reloading.
-Dioxus and Leptos are both implementing hot reloading, but it is limited only for html layout changes.
+Incremental compiliation reduces compile time significantly and improve development experience, but another solution might be to implement some kind of hot reloading.
+Front-end frameworks like Dioxus and Leptos are both implementing hot reloading, but it is limited only for html layout changes.
 And currently changing logic of the application requires full reload of the page.
 But this reload clear all "in-memory" state. Which makes "hot reloading" not so useful.
 
-Original author of https://github.com/jbms/wasm-split-prototype/tree/main was aimed on solving first problem.
-This project is based on that prototype but in mind with js [HMR](https://pinia.vuejs.org/cookbook/hot-module-replacement.html).
-
-This tool is designed to split one large WebAssembly module into multiple modules.
-All entrypoints of the application are kept in the main module. As in https://emscripten.org/docs/optimizing/Module-Splitting.html
-the main module is compatible by exports-imports with the source module (except imports of sub modules).
-
-Sub modules are extracted from the source module, they contain their own entrypoint functions and all unique dependencies (function or data symbols).
-Sub modules can be loaded lazily, or eagerly, depending on the use case.
-
+The idea of `wamex` is inspired by [HMR](https://pinia.vuejs.org/cookbook/hot-module-replacement.html).
 
 
 # Implementation details
@@ -68,8 +67,8 @@ Source module is a wasm module that contains all the code and data that is neede
 
 Sub modules are parts of source modules that need to be extracted, each sub module contain it's own entrypoint functions that along with all unique dependencies need to be extracted from the source module. In order to find sub module, this tool uses convention
 that was implemented in the original prototype. Sub module should contain two functions marked as `#[no_mangle]`:
-- `__wasm_split_00{SUB_MODULE_NAME}00_export_{RANDOM_ID}` - this function is sub module entry point, it is defined in the sub module and exported to the main module.
-- `__wasm_split_00{SUB_MODULE_NAME}00_import_{RANDOM_ID}` - this function is used in the main module to lazy load sub module and call it's entry point.
+- `__wamex_00{SUB_MODULE_NAME}00_export_{SALT}` - this function is sub module entry point, it is defined in the sub module and exported to the main module.
+- `__wamex_00{SUB_MODULE_NAME}00_import_{SALT}` - this function is used in the main module to lazy load sub module and call it's entry point.
 
 ## Module declaration:
 

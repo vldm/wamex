@@ -470,11 +470,11 @@ impl<'src> SymbolMap<'src> {
 
     pub fn print_debug(&self) {
         for (id, symbol) in self.symbols.iter() {
-            log::debug!("---{id} <{name}>", name = &symbol.name);
-            log::debug!("    record: {:?}", symbol);
+            println!("---{id} <{name}>", name = &symbol.name);
+            println!("    record: {:?}", symbol);
             for reloc in &symbol.relocs {
                 let id = Id::from_index(reloc.index);
-                log::debug!(
+                println!(
                     "-->{id} <{name}> reloc{:?}",
                     reloc,
                     name = self.symbols[id].name,

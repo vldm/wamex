@@ -129,7 +129,7 @@ impl ImportedEntity for ImportedFunction<'_> {
         match self.kind {
             ImportFunctionKind::Existing { module_name, .. } => module_name.into(),
             ImportFunctionKind::New { .. } => {
-                "__wamex_".into()
+                "__wamex".into()
                 // format!("__wamex_link_{}", link_module)
             }
         }
@@ -417,7 +417,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             })
             .collect::<IdVec<_>>();
         if verbose {
-            SegmentLayout::debug_layout(&module_info.symbols, module_id.name(), &data_segments);
+            SegmentLayout::debug_layout(
+                &module_info.symbols,
+                module_id.to_string(),
+                &data_segments,
+            );
         }
 
         let mut data_segment_outputs = IdMap::new();
@@ -1087,11 +1091,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let mut section = wasm_encoder::ElementSection::new();
 
         let element_start = if let Some(sub_module_extra) = &self.sub_module_extra {
-            log::error!(
-                "table_base id: {}",
-                sub_module_extra.self_base.table_base_id
-            );
-            log::error!("lib_base id: {}", sub_module_extra.self_base.lib_base_id);
             wasm_encoder::ConstExpr::global_get(
                 sub_module_extra.self_base.table_base_id.as_raw_index() as u32,
             )
@@ -1105,7 +1104,14 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         // generate empty entries for lazy entrypoints
         match &self.sub_module_extra {
             None => {
-                let abort_fn_id = 0u32; // TODO: Place real abort function
+                let (defined_id, _) = self
+                    .functions
+                    .defined()
+                    .next()
+                    .expect("we need any defined function in main module");
+                let id = defined_id.as_raw_index() + self.functions.imports().len();
+
+                let abort_fn_id = id as u32; // TODO: Place real abort function
                 let num_lazy_entries = self.indirect_functions.num_extra_stubs;
                 let start_of_lazy_fns = self.indirect_functions.table_entries.len() as i32 + 1;
 
@@ -1490,7 +1496,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     }
                 }
                 _ => {
-                    log::error!(
+                    log::warn!(
                         "Skipping unsuported custom section during emit: {}",
                         custom.name
                     );
@@ -1863,7 +1869,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
         mut emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         for (identifier, state) in self.iter_modules() {
-            log::debug!("Generating module {identifier:?}");
+            log::info!("Generating module {identifier}");
 
             let mut encoder = wasm_encoder::Module::new();
             state
@@ -1915,6 +1921,13 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
                 .any(|(_, mod_state)| mod_state.imports.contains(node))
     };
 
+    let debug_id = Id::from_index(27183);
+
+    log::debug!(
+        "Debugging ID: {debug_id:?} is_imported_by_other: {}",
+        is_imported_by_other(&debug_id)
+    );
+
     #[cfg(debug_assertions)]
     let mut check_imports = vec![];
 
@@ -1925,7 +1938,9 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
             // it was exported in shared module, so on main side it had been imported.
             // remove from main link symbols.
             if !main_module.imports.remove(node) {
-                log::warn!("Shared module symbol not found in main: {node:?}");
+                log::trace!(
+                    "Shared module symbol not found in main: {node:?}. It probably was removed in other shared entry."
+                );
             }
             // This was imported not only by main, so export is needed.
             if is_imported_by_other(node) {
@@ -1938,7 +1953,7 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
         for node in &shared_module.imports {
             check_imports.push(*node);
         }
-        log::warn!(
+        log::trace!(
             "extending main defined symbols with shared ({id:?}): {:?}",
             shared_module.defined_symbols
         );
@@ -2008,7 +2023,7 @@ pub fn hoist_wbg_deps_to_main<'a, 'src>(
                     "Moving function {:?} ({}) from module {} to main module",
                     fn_name,
                     moved_fn,
-                    id.name()
+                    id
                 );
 
                 output_module.exports.remove(moved_fn);

@@ -155,8 +155,6 @@ pub fn find_reachable_deps(deps: &DepGraph, roots: &DepSet) -> DepSet {
     let mut seen = DepSet::new();
 
     while let Some(node) = queue.pop_front() {
-        // println!("queue node: {node:?}");
-
         if !seen.insert(node) {
             continue;
         }
@@ -269,8 +267,23 @@ impl<Id> NamedGraph<Id> {
                 .filter(|child| !shared.shared_deps.contains(child))
                 .copied();
 
+            let mut new_exports = Vec::new();
+            for dep in &shared.shared_deps {
+                if let Some(parents) = graph.get_parents(*dep) {
+                    for parent in parents {
+                        if !shared.shared_deps.contains(parent) {
+                            new_exports.push(*dep);
+                        }
+                    }
+                }
+            }
+
             shared.imports.extend_and_resort(new_imports);
+            shared.exports.extend_and_resort(new_exports);
         }
+        // TODO For export imports we can just build a map (dep -> owner) then
+        // map((dep-> owner), dep -> (children, parents) ) -> (dep -> imports/exports)
+
         result.sort_by(|left, right| left.module_names.cmp(&right.module_names));
         result
     }

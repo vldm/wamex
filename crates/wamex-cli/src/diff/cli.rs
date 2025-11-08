@@ -173,7 +173,7 @@ impl<'any, 'src> Compare<'any, 'src> {
         }
 
         for (name, structure) in changed_modules.iter() {
-            log::warn!("Changed module: {}", name.name());
+            log::warn!("Changed module: {}", name);
             differ.debug_diff(&structure);
         }
         Ok(())

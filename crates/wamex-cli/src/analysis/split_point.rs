@@ -45,7 +45,6 @@ fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'
     if !name.starts_with(prefix) {
         return None;
     }
-    dbg!(name);
     let name = &name[prefix.len()..];
     let postfix_index = name.find(postfix)?;
     let module_name = &name[..postfix_index];
@@ -66,7 +65,7 @@ fn find_split_points_with_prefix(
                 .iter()
                 .filter_map(|(id, item)| {
                     if let Some((module_name, unique_id)) = parser(&item.name, prefix, $postfix) {
-                        Some(dbg!(((module_name.into(), unique_id.into()), id)))
+                        Some(((module_name.into(), unique_id.into()), id))
                     } else {
                         None
                     }
@@ -164,8 +163,8 @@ impl Display for SharedModuleIdentifier {
             return Ok(());
         };
 
-        write!(f, "{}", first.name())?;
-        components.try_for_each(|n| write!(f, "_{}", n.name()))?;
+        write!(f, "{}", first)?;
+        components.try_for_each(|n| write!(f, "_{}", n))?;
         Ok(())
     }
 }
@@ -197,21 +196,25 @@ pub enum SplitModuleIdentifier {
     Shared(SharedModuleIdentifier),
 }
 
-impl ModuleIdentifier {
-    pub fn name(&self) -> &str {
+impl Display for ModuleIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Main => "main",
-            Self::Split(name) => name,
+            Self::Main => write!(f, "main"),
+            Self::Split(name) => write!(f, "{}", name),
         }
     }
 }
-impl SplitModuleIdentifier {
-    pub fn name(&self) -> String {
+
+impl Display for SplitModuleIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Single(name) => name.name().to_string(),
-            Self::Shared(names) => names.to_string(),
+            Self::Single(name) => Display::fmt(name, f),
+            Self::Shared(name) => Display::fmt(name, f),
         }
     }
+}
+
+impl SplitModuleIdentifier {
     pub fn as_single(&self) -> Option<&ModuleIdentifier> {
         match self {
             Self::Single(name) => Some(name),
@@ -346,7 +349,7 @@ impl SplitProgramInfo {
             let imports = named_graph.imports().clone();
             // TODO: Rewrite this
             let split_points = split_points_by_module
-                .get(named_graph.module.name())
+                .get(&named_graph.module.to_string())
                 .iter()
                 .copied()
                 .flatten()

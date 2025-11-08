@@ -53,6 +53,13 @@ impl ModuleId {
             module_url_path: None,
         }
     }
+    pub fn dep_from_module(module: &ModuleId, dep_name: &str) -> Self {
+        ModuleId {
+            name: dep_name.to_string(),
+            version: None,
+            module_url_path: module.module_url_path.clone(),
+        }
+    }
     pub fn new_with_url(name: &str, module_url_path: &str) -> Self {
         ModuleId {
             name: name.to_string(),
@@ -60,11 +67,36 @@ impl ModuleId {
             module_url_path: Some(module_url_path.to_string()),
         }
     }
+    pub fn new_from_components(
+        name: String,
+        version: Option<BumpVersion>,
+        module_url_path: Option<String>,
+    ) -> Self {
+        ModuleId {
+            name,
+            version,
+            module_url_path,
+        }
+    }
+
+    pub fn set_url_path(&mut self, url_path: &str) {
+        self.module_url_path = Some(url_path.to_string());
+    }
     pub fn module_name(&self) -> &str {
         &self.name
     }
 
-    pub fn build_url(&self) -> String {
+    /// Return full module name including version if any.
+    pub fn module_full_name(&self) -> String {
+        let version = if let Some(version) = &self.version {
+            format!("-{}", version)
+        } else {
+            String::new()
+        };
+        format!("{}{}", self.name, version)
+    }
+
+    pub fn download_url(&self) -> String {
         let url = if let Some(url) = &self.module_url_path {
             format!("{}/", url)
         } else {

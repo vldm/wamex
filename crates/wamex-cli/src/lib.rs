@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use analysis::split_point::SplitProgramInfo;
-use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 // todo: Refactor analysis and emit modules.
@@ -14,9 +12,12 @@ mod diff;
 mod list_set;
 pub mod read;
 
+pub use analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
+pub use anyhow::Result;
 pub use read::InputModule;
+pub use wamex_types::{BumpVersion, ModuleId};
 
-use crate::{analysis::split_point::SplitModuleIdentifier, emit::CommonEmitInfo};
+use crate::emit::CommonEmitInfo;
 
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
@@ -47,7 +48,7 @@ pub struct Split {
     pub dry_run: bool,
 
     /// Specify the split point extraction strategy.
-    #[arg(value_enum)]
+    #[arg(value_enum, default_value_t = SplitPointExtractor::Wamex)]
     pub split_point_extractor: SplitPointExtractor,
 }
 
@@ -115,7 +116,6 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
     let module = InputModule::parse(&input_wasm)?;
     let info = analysis::ModuleInfo::from_raw_module(module)?;
-    //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
 
     let split_program_info = SplitProgramInfo::compute_split_modules(&info, &dep_graph, &[])?;
@@ -124,16 +124,17 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         split_program_info.output_modules.len() == 1,
         "Roundtrip should produce single module",
     );
-    // crate::emit::emit_modules(
-    //     &info,
-    //     &split_program_info,
-    //     &HashSet::new(),
-    //     false,
-    //     |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
-    //         std::fs::write(&args.output, data)?;
-    //         Ok(())
-    //     },
-    // )?;
+    crate::emit::emit_modules(
+        &info,
+        false,
+        &split_program_info,
+        &Default::default(),
+        false,
+        |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+            std::fs::write(&args.output, data)?;
+            Ok(())
+        },
+    )?;
 
     Ok(())
 }
@@ -144,13 +145,13 @@ pub fn split(args: Split) -> Result<()> {
         args.verbose,
         args.precise_modification,
         args.split_point_extractor,
-        |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+        |identifier: ModuleId, data: &[u8]| -> Result<()> {
+            let output_filename = format!("{}.wasm", identifier.module_full_name());
             if !args.dry_run {
-                let output_filename = identifier.name() + ".wasm";
                 std::fs::create_dir_all(&args.output)?;
                 std::fs::write(args.output.join(output_filename), data)?;
             } else {
-                log::info!("Skipping writing module {} (dry run)", identifier.name());
+                log::info!("Skipping writing module {output_filename} (dry run)");
             }
             Ok(())
         },
@@ -164,39 +165,50 @@ pub fn split_inner(
     verbose: bool,
     precise_modification: bool,
     split_point_extractor: SplitPointExtractor,
-    emit_module_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> Result<()>,
+    mut emit_module_fn: impl FnMut(ModuleId, &[u8]) -> Result<()>,
 ) -> Result<()> {
     let module = InputModule::parse(input_wasm)?;
     let info = analysis::ModuleInfo::from_raw_module(module)?;
-    //     // println!("names: {:#?}", module.names);
     let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
     let split_points = analysis::split_point::find_split_points(&info, split_point_extractor)?;
 
-    log::debug!("split_points={split_points:?}");
     let mut split_program_info =
         SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
 
-    log::debug!("split_program_info={split_program_info:?}");
-    if verbose {
-        println!("dep_graph={dep_graph:?}");
-        info.symbols.print_debug();
-        for (name, split_deps) in split_program_info.output_modules.iter() {
-            split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
-        }
-    }
     // one of the possible mode is to merge all shared with main chunks into main module.
     // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
     crate::emit::merge_main_shared(&mut split_program_info);
 
     // some wbg functions need to be moved to main before splitting.
     let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
+    if verbose {
+        println!("Split points: {split_points:?}");
+        println!("Split program info: {split_program_info:?}");
+        println!("Dependency graph: {dep_graph:?}");
+        println!("Module symbols:");
+        info.symbols.print_debug();
+
+        println!("Module split details:");
+        for (name, split_deps) in split_program_info.output_modules.iter() {
+            split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
+        }
+    }
+    let emit_fn = |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+        let module_id = ModuleId::new_from_components(
+            identifier.to_string(),
+            None, // add versioning later
+            None,
+        );
+        emit_module_fn(module_id, data)
+    };
+
     crate::emit::emit_modules(
         &info,
         verbose,
         &split_program_info,
         &wbg_fns,
         precise_modification,
-        emit_module_fn,
+        emit_fn,
     )?;
 
     Ok(())
@@ -224,7 +236,19 @@ pub fn debug(args: Debug) -> Result<()> {
     let program_info = analysis::split_point::SplitProgramInfo::default();
     // verbose flag will print debug info as side effect.
     // TODO: make it more functional.
-    let _info = CommonEmitInfo::new(&info, true, &program_info)?;
+    let _ci = CommonEmitInfo::new(&info, true, &program_info)?;
 
+    info.symbols.print_debug();
     Ok(())
 }
+
+// 1. check imports - exports
+// 1.1. no wamex_split.rs imports should be present in main module
+// 1.2. all exports should be used in some module
+// 1.3. "lazy" imports (indirect fns) should be reserved for specific modules only. This place should be inited in elem section of modules.
+// 2. Check that data segments are same from original module (no data loss, and no extra fields).
+// 3. same for functions - no loss, no extra functions (only trampolines).
+
+// pub fn validate() {
+
+// }
