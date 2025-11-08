@@ -62,7 +62,7 @@ impl ConstantExtractionEntry {
             src_ix = ctx.instruction
         );
         result_ix.encode(ctx.writer);
-        let offset = got_offset as i32 + self.entry.addend as i32;
+        let offset = got_offset as i32;
 
         Instruction::I32Const(offset).encode(ctx.writer);
         Instruction::I32Add.encode(ctx.writer);
@@ -103,7 +103,7 @@ impl ConstantExtractionEntry {
             );
         };
 
-        let offset = (got_offset + self.entry.addend) as u64;
+        let offset = got_offset as u64;
 
         let fix_offset = |memarg: wasmparser::MemArg| wasm_encoder::MemArg {
             align: memarg.align as u32,

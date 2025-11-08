@@ -150,7 +150,12 @@ impl RelocateState<'_, '_> {
     pub fn get_entry_symbol_op<T: EntryTypeTag>(
         &self,
         relocation: &RelocationEntry,
-    ) -> Result<SymbolOp<T::OutputValue>> {
+    ) -> Result<SymbolOp<T::OutputValue>>
+    where
+        T::OutputValue: TryFrom<i64>,
+        <T::OutputValue as TryFrom<i64>>::Error: Debug,
+        T::OutputValue: std::ops::Add<Output = T::OutputValue>,
+    {
         self._get_symbol_op::<T, _>(
             |module| {
                 T::get_mapped_value(self.input_module, module, Id::from_index(relocation.index))
@@ -166,7 +171,7 @@ impl RelocateState<'_, '_> {
                     src = relocation.index
                 )
             },
-        )
+        ).map(|res| res.map(|v| v + relocation.addend.try_into().unwrap()))
     }
 
     pub fn get_data_symbol_op(
@@ -191,7 +196,18 @@ impl RelocateState<'_, '_> {
         )
     }
 
+    fn ensure_empty_addend(relocation: &RelocationEntry) -> Result<()> {
+        if relocation.addend != 0 {
+            bail!(
+                "Relocation {relocation:?} has non-zero addend {}, which is not supported",
+                relocation.addend
+            );
+        }
+        Ok(())
+    }
+
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
+        Self::ensure_empty_addend(relocation)?;
         let Some(input_func_id) = FunctionIndexTag::get_input_function_id(
             self.input_module,
             Id::from_index(relocation.index),
@@ -207,6 +223,7 @@ impl RelocateState<'_, '_> {
     }
 
     fn get_relocated_function_table_index(&self, relocation: &RelocationEntry) -> Result<usize> {
+        Self::ensure_empty_addend(relocation)?;
         let result = self.get_entry_symbol_op::<FunctionIndexTag>(relocation)?;
         Ok(*result
             .as_static()
@@ -215,13 +232,9 @@ impl RelocateState<'_, '_> {
 
     fn get_relocated_memory_offset(&self, relocation: &RelocationEntry) -> Result<usize> {
         let result = self.get_entry_symbol_op::<DataSymbolTag>(relocation)?;
-        let mut offset = *result
+        let offset = *result
             .as_static()
             .unwrap_or_else(||panic!("Relocation should only process static symbols, got {result:?}, for entry {relocation:?}"));
-        if relocation.addend < 0 {
-            log::warn!("Relocation {relocation:?} has negative addend");
-        }
-        offset += relocation.addend;
 
         Ok(offset as usize)
     }

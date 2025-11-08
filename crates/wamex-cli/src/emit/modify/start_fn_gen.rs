@@ -171,10 +171,10 @@ impl CustomModify for DataEntry {
                 if context.dyn_relocate =>
             {
                 let storage = context.containing_symbol.as_ref().unwrap().clone(); // storage should always exist in dyn relocation mode
-
+                let relocation = entry.clone();
                 Some(Self {
                     storage,
-                    relocation: *entry,
+                    relocation,
                 })
             }
 

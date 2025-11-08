@@ -485,19 +485,19 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     .relocs
                     .iter()
                     .map(|reloc| {
-                        // relocs has offset relative to symbol - update to be relative to segment
-                        let mut reloc = reloc.clone();
-                        reloc.offset += sym.data_mem_offset as u32;
-
                         let relocation_context = modify::RelocationContext {
                             dyn_relocate: !main_module
                                 && !is_static_symbol(reloc.index as AnySymbolId),
                             containing_symbol: Some(modify::DataSymbolWithOffset {
                                 storage_segment_id: segment_id,
                                 storage_symbol_id: *symbol_index,
-                                storage_offset_in_data: sym.data_mem_offset as u32,
+                                storage_offset_in_data: reloc.offset, // sym.data_mem_offset as u32,
                             }),
                         };
+
+                        // relocs has offset relative to symbol - update to be relative to segment
+                        let mut reloc = reloc.clone();
+                        reloc.offset += sym.data_mem_offset as u32;
                         modify::DataModifyEntry::from_relocation_entry(&reloc, &relocation_context)
                     })
                     .collect::<Result<Vec<_>>>()
