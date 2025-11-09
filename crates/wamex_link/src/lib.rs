@@ -1,5 +1,4 @@
 extern crate alloc;
-use alloc::collections::BTreeMap;
 use core::error;
 use std::cell::RefCell;
 
@@ -7,7 +6,7 @@ use js_sys::{
     Object, Reflect,
     WebAssembly::{self},
 };
-use wamex_types::{BumpVersion, ModuleId};
+use wamex_types::{BumpVersion, ModuleId, map_vec::MiniMap};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, Response};
@@ -104,11 +103,11 @@ type WaiterHandle = futures::channel::oneshot::Receiver<()>;
 #[derive(Debug)]
 struct LinkageState {
     // Handle to all loaded modules
-    loaded_modules: BTreeMap<ModuleId, InstantiatedModule>,
-    pending_modules: BTreeMap<ModuleId, Vec<Waiter>>,
+    loaded_modules: MiniMap<ModuleId, InstantiatedModule>,
+    pending_modules: MiniMap<ModuleId, Vec<Waiter>>,
 
     // If module was reloaded, we keep old modules until `unload` is called.
-    outdated_modules: BTreeMap<(ModuleId, BumpVersion), InstantiatedModule>,
+    outdated_modules: MiniMap<(ModuleId, BumpVersion), InstantiatedModule>,
 
     // Computed global imports object, includes all loaded module exports.
     global_imports: Object,

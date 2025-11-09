@@ -9,7 +9,6 @@ mod helpers;
 #[macro_use]
 mod index;
 mod diff;
-mod list_set;
 pub mod read;
 
 pub use analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};

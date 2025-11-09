@@ -9,21 +9,7 @@ use crate::{
 };
 
 pub type DepSet<T = SymbolId> = BTreeSet<T>;
-pub type DepMiniSet<T = SymbolId> = crate::list_set::MiniSet<T>;
-
-impl PartialEq<DepSet> for DepMiniSet {
-    fn eq(&self, other: &DepSet) -> bool {
-        if self.len() != other.len() {
-            return false;
-        }
-        for item in self.iter() {
-            if !other.contains(item) {
-                return false;
-            }
-        }
-        true
-    }
-}
+pub type DepMiniSet<T = SymbolId> = wamex_types::map_vec::MiniSet<T>;
 
 #[derive(Clone, Default)]
 struct SymbolStructure {
