@@ -98,12 +98,14 @@ impl Drop for GuardedAllocEntry {
     }
 }
 
+type Waiter = futures::channel::oneshot::Sender<()>;
+type WaiterHandle = futures::channel::oneshot::Receiver<()>;
 //TODO: Remove unwraps allow to reduce build size.
-
 #[derive(Debug)]
 struct LinkageState {
     // Handle to all loaded modules
     loaded_modules: BTreeMap<ModuleId, InstantiatedModule>,
+    pending_modules: BTreeMap<ModuleId, Vec<Waiter>>,
 
     // If module was reloaded, we keep old modules until `unload` is called.
     outdated_modules: BTreeMap<(ModuleId, BumpVersion), InstantiatedModule>,
@@ -123,7 +125,18 @@ impl LinkageState {
             alloc_state: module_alloc::AllocState::new(table.into()),
 
             loaded_modules: Default::default(),
+            pending_modules: Default::default(),
             outdated_modules: Default::default(),
+        }
+    }
+    pub fn mark_pending(&mut self, module_id: &ModuleId) -> Option<WaiterHandle> {
+        if let Some(other_waiter) = self.pending_modules.get_mut(&module_id) {
+            let (sender, receiver) = futures::channel::oneshot::channel();
+            other_waiter.push(sender);
+            Some(receiver)
+        } else {
+            self.pending_modules.insert(module_id.clone(), vec![]);
+            None
         }
     }
 
@@ -132,17 +145,23 @@ impl LinkageState {
         &mut self,
         module_id: ModuleId,
         module: InstantiatedModule,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<Waiter>, Error> {
         debug!("Get exports from instantiated module");
         let defined_exports = module.instantiated.exports();
         debug!("Module exports: {:?}", defined_exports);
         debug!("Store exports and module info in linkage state");
 
-        self.loaded_modules.insert(module_id.clone(), module);
+        if let Some(v) = self.loaded_modules.insert(module_id.clone(), module) {
+            log::warn!(
+                "Module {module_id:?} was already loaded, replacing previous: {:?}",
+                v
+            );
+        }
 
         // Extend global imports with module exports.
         // On adding to global imports - filter out module specific fields.
-        copy_imports(&self.global_imports, &defined_exports, true)
+        copy_imports(&self.global_imports, &defined_exports, true)?;
+        Ok(self.pending_modules.remove(&module_id).unwrap_or_default())
     }
 
     fn debug_keys(obj: &Object) {
@@ -219,14 +238,17 @@ async fn fetch_buffer(url: String) -> Result<JsValue, Error> {
     Ok(buffer)
 }
 
+// Load webassembly module from URL and instantiate it, link with active imports.
+// Return true if module was updated during this load call.
 pub async fn load(module_id: ModuleId, reload: bool) -> Result<bool, String> {
-    load_inner(module_id, reload).await.map_err(|e| {
+    Box::pin(load_inner(module_id, reload)).await.map_err(|e| {
         log::error!("Error loading module: {}", e);
         e.to_string()
     })
 }
 
 // Load webassembly module from URL and instantiate it, link with active imports.
+// Return true if module was updated during this load call.
 async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     debug!("call load for module: {:?}", module_id);
     // 0. check if module already loaded, if reload - replace it.
@@ -237,6 +259,20 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     });
 
     if contains && !reload {
+        return Ok(false);
+    }
+
+    // is another load in progress?
+    let waiter = LinkageState::global(|state| state.mark_pending(&module_id));
+
+    if let Some(waiter) = waiter {
+        debug!(
+            "Another load in progress for module {:?}, waiting...",
+            module_id
+        );
+        // wait for other load to finish
+        waiter.await.unwrap();
+        debug!("Load finished for module {:?}, continuing...", module_id);
         return Ok(false);
     }
 
@@ -266,10 +302,18 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
 
     let array = deserialize::buffer_to_rust(results.get(0));
     let metadata = deserialize::deserialize_metadata(&array)?;
-    debug!("Fetched module metadata: {:?}", metadata);
+    debug!(
+        "Fetched module {} metadata: {:?}",
+        module_id.module_name(),
+        metadata
+    );
 
     if !metadata.needed_libraries.is_empty() {
-        debug!("Fetching module deps: {:?}", metadata.needed_libraries);
+        debug!(
+            "Fetching module {} deps: {:?}",
+            module_id.module_name(),
+            metadata.needed_libraries
+        );
         for dep in &metadata.needed_libraries {
             let dep_id = ModuleId::dep_from_module(&module_id, &dep);
             Box::pin(load_inner(dep_id.clone(), false))
@@ -285,7 +329,7 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
 
     let version = deserialize::parse_version(&module)?;
 
-    debug!("Module version: {:?}", version);
+    debug!("Module {} version: {:?}", module_id.module_name(), version);
     // 4. Create imports object (we can reuse global one?)
     // TODO: Limit only for needed imports?
 
@@ -314,7 +358,11 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     let imports = Object::new();
     obj_set!(&imports, "__wamex", new_exports);
 
-    debug!("Instantiate module, imports: {:?}", imports);
+    debug!(
+        "Instantiate module {}, imports: {:?}",
+        module_id.module_name(),
+        imports
+    );
     // 5. Instantiate module.
 
     let fut_res = JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
@@ -341,7 +389,19 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     debug!("Saving module: {:?}", instantiated);
 
     // 6. Store exports and module info in linkage state.
-    LinkageState::global(|state| state.save_loaded_module(module_id, instantiated))?;
+    let waiters =
+        LinkageState::global(|state| state.save_loaded_module(module_id.clone(), instantiated))?;
+    // notify waiters
+    if !waiters.is_empty() {
+        debug!(
+            "Notifying {} waiters for module {:?}",
+            waiters.len(),
+            module_id
+        );
+    }
+    for waiter in waiters {
+        let _ = waiter.send(());
+    }
     Ok(true)
 }
 

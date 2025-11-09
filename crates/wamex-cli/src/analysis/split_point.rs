@@ -396,3 +396,45 @@ impl SplitProgramInfo {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_part_of() {
+        let shared = SharedModuleIdentifier(vec![
+            ModuleIdentifier::Main,
+            ModuleIdentifier::Split("a".into()),
+            ModuleIdentifier::Split("c".into()),
+        ]);
+        let single_main = SplitModuleIdentifier::Single(ModuleIdentifier::Main);
+        let single_a = SplitModuleIdentifier::Single(ModuleIdentifier::Split("a".into()));
+        let single_b = SplitModuleIdentifier::Single(ModuleIdentifier::Split("b".into()));
+        let shared_ab = SplitModuleIdentifier::Shared(SharedModuleIdentifier(vec![
+            ModuleIdentifier::Split("a".into()),
+            ModuleIdentifier::Split("b".into()),
+        ]));
+        let single_c = SplitModuleIdentifier::Single(ModuleIdentifier::Split("c".into()));
+        let shared_ac = SplitModuleIdentifier::Shared(SharedModuleIdentifier(vec![
+            ModuleIdentifier::Split("a".into()),
+            ModuleIdentifier::Split("c".into()),
+        ]));
+
+        assert!(single_main.is_part_of(&shared));
+        assert!(single_a.is_part_of(&shared));
+        assert!(single_c.is_part_of(&shared));
+        assert!(shared_ac.is_part_of(&shared));
+        assert!(!single_b.is_part_of(&shared));
+        assert!(!shared_ab.is_part_of(&shared));
+    }
+
+    //     #[test]
+    //     fn from_example() {
+    //         "e_data_9382861128153349529"
+    //         "lazy_data_2021541099659736428"
+
+    //          "view_c_view_16564031152823166319_view_d_view_3929403835768869397_view_e_view_16839038780052115883"
+    // "e_data_9382861128153349529_lazy_data_2021541099659736428"
+    //     }
+}
