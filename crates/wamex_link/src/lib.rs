@@ -102,6 +102,7 @@ type WaiterHandle = futures::channel::oneshot::Receiver<()>;
 //TODO: Remove unwraps allow to reduce build size.
 #[derive(Debug)]
 struct LinkageState {
+    //TODO: Use Enum for module state: Loaded, Pending
     // Handle to all loaded modules
     loaded_modules: MiniMap<ModuleId, InstantiatedModule>,
     pending_modules: MiniMap<ModuleId, Vec<Waiter>>,
@@ -150,11 +151,21 @@ impl LinkageState {
         debug!("Module exports: {:?}", defined_exports);
         debug!("Store exports and module info in linkage state");
 
-        if let Some(v) = self.loaded_modules.insert(module_id.clone(), module) {
-            log::warn!(
+        let version = module.version.clone();
+        if let Some(old_v) = self.loaded_modules.insert(module_id.clone(), module) {
+            warn!(
                 "Module {module_id:?} was already loaded, replacing previous: {:?}",
-                v
+                old_v
             );
+
+            if old_v.version != version {
+                debug!(
+                    "Saving outdated module version: {:?}, {:?}",
+                    module_id, old_v.version
+                );
+                self.outdated_modules
+                    .insert((module_id.clone(), old_v.version.clone()), old_v);
+            }
         }
 
         // Extend global imports with module exports.
@@ -177,7 +188,7 @@ impl LinkageState {
         let new_object = Object::new();
         let obj = wasm_bindgen::exports();
 
-        log::debug!("Main exports value: {:?}", obj);
+        debug!("Main exports value: {:?}", obj);
         let obj = obj.try_into().unwrap();
         Self::debug_keys(&obj);
         copy_imports(&new_object, &obj, false).unwrap();
@@ -241,7 +252,7 @@ async fn fetch_buffer(url: String) -> Result<JsValue, Error> {
 // Return true if module was updated during this load call.
 pub async fn load(module_id: ModuleId, reload: bool) -> Result<bool, String> {
     Box::pin(load_inner(module_id, reload)).await.map_err(|e| {
-        log::error!("Error loading module: {}", e);
+        error!("Error loading module: {}", e);
         e.to_string()
     })
 }
@@ -252,6 +263,11 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     debug!("call load for module: {:?}", module_id);
     // 0. check if module already loaded, if reload - replace it.
 
+    // TODO: fix structure:
+    // 1. non-versioned modules (latest).
+    // 2. outdated modules (by version).
+    // 3. pending modules (loading in progress).
+    // Avoid loading multiple times same version.
     let contains = LinkageState::global(|state| match state.loaded_modules.get(&module_id) {
         Some(instantiated) => !instantiated.pending_updates(),
         None => false,
@@ -276,13 +292,9 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
     }
 
     // 1. fetch ModuleDecl
-    // TODO: use custom section instead of separate fetch?
-    // let array = WebAssembly::Module::custom_sections(&module, "__wamex_metadata");
     let module_fut = fetch_buffer(module_id.download_url());
-    // let decl_buffer = fetch_buffer(module_id.module_decl_url()).await?;
-    // let decl_buffer = deserialize::buffer_to_rust(decl_buffer);
-
     // 2. Assert module decl "deps" are satisfied.
+    //TODO: implement dependency checking, and export filtering.
 
     // 3. fetch module
     let buffer = module_fut.await?;
@@ -445,4 +457,19 @@ pub async unsafe fn unload(module: ModuleId, version: BumpVersion) -> Result<(),
         }
         Ok(())
     })
+}
+
+#[wasm_bindgen]
+pub fn __wamex_reload(url_base_path: &str, module_name: &str) -> js_sys::Promise {
+    let module_id = ModuleId::new_with_url(module_name, url_base_path);
+    let future = async move {
+        match load(module_id, true).await {
+            Ok(updated) => Ok(JsValue::from_bool(updated)),
+            Err(e) => Err(JsValue::from_str(&format!(
+                "Failed to reload module: {}",
+                e
+            ))),
+        }
+    };
+    wasm_bindgen_futures::future_to_promise(future)
 }
