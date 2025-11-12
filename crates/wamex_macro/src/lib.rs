@@ -70,7 +70,7 @@ struct SplitArgs {
 
     /// The path to the custom loader.
     /// In format of `custom_loader(some::path::to::loader::function)`, this function should be async and have signature:
-    /// `async fn loader(module_id: ModuleId, reload: bool) -> Result<_, _>`
+    /// `async fn loader(module_id: ModuleId) -> Result<bool, _>`
     custom_loader: Option<Path>,
 
     /// The url to load the module from.
@@ -314,7 +314,7 @@ fn split2(args: SplitArgs, item_fn: ItemFn) -> TokenStream {
                 #[no_mangle]
                 #import_sig;
             }
-            #loader(#module_id, false).await.unwrap();
+            #loader(#module_id).await.unwrap();
 
             #[allow(improper_ctypes_definitions)]
             #[no_mangle]

@@ -22,4 +22,4 @@ log = { version = "0.4", optional = true }
 [features]
 default = ["debug"]
 debug = ["dep:log"]
-bindgen_load = []   # generate wasm-bindgen load helper on js side
+bindgen_refetch = [] # generate wasm-bindgen mark_for_update helper

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -139,7 +139,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
 }
 pub fn split(args: Split) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
-    split_inner(
+    let _ = split_inner(
         &input_wasm,
         args.verbose,
         args.precise_modification,
@@ -154,18 +154,20 @@ pub fn split(args: Split) -> Result<()> {
             }
             Ok(())
         },
-    )
+    )?;
+    Ok(())
 }
 
 #[doc(hidden)]
 // Full split routine, but without file I/O reading
+// Returns a map of dependency for modules in format (ModuleId -> Vec<ModuleId>)
 pub fn split_inner(
     input_wasm: &[u8],
     verbose: bool,
     precise_modification: bool,
     split_point_extractor: SplitPointExtractor,
     mut emit_module_fn: impl FnMut(ModuleId, &[u8]) -> Result<()>,
-) -> Result<()> {
+) -> Result<BTreeMap<ModuleId, Vec<ModuleId>>> {
     let module = InputModule::parse(input_wasm)?;
     let info = analysis::ModuleInfo::from_raw_module(module)?;
     let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
@@ -192,12 +194,17 @@ pub fn split_inner(
             split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
         }
     }
+
+    let mut module_ids = BTreeMap::new();
+
     let emit_fn = |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
         let module_id = ModuleId::new_from_components(
             identifier.to_string(),
             None, // add versioning later
             None,
         );
+
+        module_ids.insert(identifier.clone(), module_id.clone());
         emit_module_fn(module_id, data)
     };
 
@@ -210,7 +217,23 @@ pub fn split_inner(
         emit_fn,
     )?;
 
-    Ok(())
+    let mut deps = BTreeMap::new();
+
+    for (shared, id) in module_ids.iter() {
+        let SplitModuleIdentifier::Shared(shared) = shared else {
+            continue;
+        };
+        // for each part add this shared module as dependency
+        for part in &shared.0 {
+            let part_id = module_ids
+                .get(&SplitModuleIdentifier::Single(part.clone()))
+                .expect("module id exists");
+            deps.entry(part_id.clone())
+                .or_insert_with(Vec::new)
+                .push(id.clone());
+        }
+    }
+    Ok(deps)
 }
 
 pub fn diff(args: Diff) -> Result<()> {

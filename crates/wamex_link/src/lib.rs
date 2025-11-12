@@ -2,10 +2,7 @@ extern crate alloc;
 use core::error;
 use std::cell::RefCell;
 
-use js_sys::{
-    Object, Reflect,
-    WebAssembly::{self},
-};
+use js_sys::{Object, Reflect, WebAssembly};
 use wamex_types::{BumpVersion, ModuleId, map_vec::MiniMap};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -50,20 +47,11 @@ pub enum Error {
 
 #[derive(Debug)]
 struct InstantiatedModule {
-    version: BumpVersion,
     instantiated: WebAssembly::Instance,
     alloc_guard: GuardedAllocEntry,
-    needs_update: bool,
 }
 
 impl InstantiatedModule {
-    pub fn pending_updates(&self) -> bool {
-        self.needs_update
-    }
-    pub fn mark_for_update(&mut self) {
-        self.needs_update = true;
-    }
-
     fn free(mut self, linkage_state: &mut LinkageState) {
         // Free allocated memory and table space.
         let entry = self.alloc_guard.take().unwrap();
@@ -97,6 +85,121 @@ impl Drop for GuardedAllocEntry {
     }
 }
 
+#[derive(Debug)]
+enum ModuleFetchState {
+    Loaded {
+        module_version: BumpVersion,
+        module: InstantiatedModule,
+    },
+    Pending(Vec<Waiter>),
+    Invalid,
+}
+impl Default for ModuleFetchState {
+    fn default() -> Self {
+        Self::Invalid
+    }
+}
+
+#[derive(Debug, Default)]
+struct ModuleInfo {
+    // Load updates from this URL base.
+    last_url_base: String,
+    latest_module: ModuleFetchState,
+    // Modules that was loaded before, but now outdated.
+    // This modules are still kept in memory, may have some live references, so freeing them is unsafe.
+    outdated_versions: MiniMap<BumpVersion, InstantiatedModule>,
+    try_refetch: bool,
+}
+
+impl ModuleInfo {
+    pub fn loaded_version(&self) -> Option<BumpVersion> {
+        match &self.latest_module {
+            ModuleFetchState::Loaded { module_version, .. } => Some(*module_version),
+            _ => None,
+        }
+    }
+
+    // Try refetch module on next load.
+    // If version is updated - reload it.
+    pub fn mark_for_refetch(&mut self) {
+        self.try_refetch = true;
+    }
+    // Return WaiterHandle if load in progress.
+    pub fn try_subscribe_for_active_fetch(&mut self) -> Option<WaiterHandle> {
+        match &mut self.latest_module {
+            ModuleFetchState::Pending(waiters) => {
+                let (tx, rx) = futures::channel::oneshot::channel();
+                waiters.push(tx);
+                Some(rx)
+            }
+            _ => None,
+        }
+    }
+    pub fn to_fetch_state(&mut self) {
+        match std::mem::replace(&mut self.latest_module, ModuleFetchState::Pending(vec![])) {
+            ModuleFetchState::Loaded {
+                module_version,
+                module,
+            } => {
+                // save old module to outdated versions
+                self.outdated_versions.insert(module_version, module);
+            }
+            ModuleFetchState::Invalid => {
+                // nothing to do
+            }
+            // If it was already pending - recover
+            state => {
+                self.latest_module = state;
+            }
+        }
+    }
+
+    fn take_waiters(&mut self, new_state: ModuleFetchState) -> Vec<Waiter> {
+        match std::mem::replace(&mut self.latest_module, new_state) {
+            ModuleFetchState::Pending(waiters) => waiters,
+            state => {
+                panic!("Invalid state transition: {:?}", state);
+            }
+        }
+    }
+    pub fn to_loaded_state(
+        &mut self,
+        module_version: BumpVersion,
+        module: InstantiatedModule,
+    ) -> Vec<Waiter> {
+        let new_state = ModuleFetchState::Loaded {
+            module_version,
+            module,
+        };
+
+        self.try_refetch = false;
+
+        self.take_waiters(new_state)
+    }
+
+    pub fn abort_fetch(&mut self) -> Vec<Waiter> {
+        assert!(
+            matches!(&self.latest_module, ModuleFetchState::Pending(_)),
+            "Can only abort pending fetch"
+        );
+
+        if let Some((old_version, old_module)) = self.outdated_versions.take_last() {
+            return self.to_loaded_state(old_version, old_module);
+        }
+
+        self.take_waiters(ModuleFetchState::Invalid)
+    }
+    pub fn is_pending(&self) -> bool {
+        matches!(&self.latest_module, ModuleFetchState::Pending(_))
+    }
+    pub fn is_invalid(&self) -> bool {
+        self.last_url_base.is_empty()
+            && matches!(&self.latest_module, ModuleFetchState::Invalid)
+            && self.outdated_versions.is_empty()
+    }
+}
+
+type ModuleName = String;
 type Waiter = futures::channel::oneshot::Sender<()>;
 type WaiterHandle = futures::channel::oneshot::Receiver<()>;
 //TODO: Remove unwraps allow to reduce build size.
@@ -104,11 +207,7 @@ type WaiterHandle = futures::channel::oneshot::Receiver<()>;
 struct LinkageState {
     //TODO: Use Enum for module state: Loaded, Pending
     // Handle to all loaded modules
-    loaded_modules: MiniMap<ModuleId, InstantiatedModule>,
-    pending_modules: MiniMap<ModuleId, Vec<Waiter>>,
-
-    // If module was reloaded, we keep old modules until `unload` is called.
-    outdated_modules: MiniMap<(ModuleId, BumpVersion), InstantiatedModule>,
+    modules: MiniMap<ModuleName, ModuleInfo>,
 
     // Computed global imports object, includes all loaded module exports.
     global_imports: Object,
@@ -124,71 +223,111 @@ impl LinkageState {
             global_imports: Self::_get_main_exports(&table),
             alloc_state: module_alloc::AllocState::new(table.into()),
 
-            loaded_modules: Default::default(),
-            pending_modules: Default::default(),
-            outdated_modules: Default::default(),
+            modules: Default::default(),
         }
     }
-    pub fn mark_pending(&mut self, module_id: &ModuleId) -> Option<WaiterHandle> {
-        if let Some(other_waiter) = self.pending_modules.get_mut(&module_id) {
-            let (sender, receiver) = futures::channel::oneshot::channel();
-            other_waiter.push(sender);
-            Some(receiver)
-        } else {
-            self.pending_modules.insert(module_id.clone(), vec![]);
-            None
+    pub fn subscribe_for_active_fetch(&mut self, module_name: &str) -> Option<WaiterHandle> {
+        let module = self.modules.get_mut(module_name)?;
+        module.try_subscribe_for_active_fetch()
+    }
+
+    /// Return true if module needs to be refetched.
+    pub fn need_fetch(&self, module_id: &ModuleId) -> bool {
+        let module = match self.modules.get(module_id.module_name()) {
+            Some(m) => m,
+            None => return true,
+        };
+
+        let loaded_version = module.loaded_version().expect("Module should be loaded");
+        loaded_version < module_id.version().unwrap_or_default()
+            || module.try_refetch && module_id.version().is_none()
+    }
+    // Set module state to fetching.
+    pub fn fetch_module(&mut self, module_id: &ModuleId) {
+        let module = self
+            .modules
+            .entry(module_id.module_name().to_string())
+            .or_insert_with(|| ModuleInfo::default());
+        module.to_fetch_state();
+    }
+
+    pub fn old_version(&self, module_id: &ModuleId) -> Option<BumpVersion> {
+        self.modules
+            .get(module_id.module_name())
+            .expect("Module should be present")
+            .outdated_versions
+            .last()
+            .map(|(v, _)| *v)
+    }
+
+    // Abort ongoing load, return waiters to notify.
+    pub fn abort_load_module(&mut self, module_id: &ModuleId) -> Vec<Waiter> {
+        let module = self
+            .modules
+            .get_mut(module_id.module_name())
+            .expect("Module should be present");
+        let res = module.abort_fetch();
+        if module.is_invalid() {
+            self.modules.remove(module_id.module_name());
         }
+        res
     }
 
     // TODO: We can split exports into separate fields for modularity.
     pub fn save_loaded_module(
         &mut self,
         module_id: ModuleId,
-        module: InstantiatedModule,
+        version: BumpVersion,
+        im: InstantiatedModule,
     ) -> Result<Vec<Waiter>, Error> {
-        debug!("Get exports from instantiated module");
-        let defined_exports = module.instantiated.exports();
+        let defined_exports = im.instantiated.exports();
         debug!("Module exports: {:?}", defined_exports);
-        debug!("Store exports and module info in linkage state");
 
-        let version = module.version.clone();
-        if let Some(old_v) = self.loaded_modules.insert(module_id.clone(), module) {
-            warn!(
-                "Module {module_id:?} was already loaded, replacing previous: {:?}",
-                old_v
-            );
+        let module = self
+            .modules
+            .get_mut(module_id.module_name())
+            .expect("Module should be present");
 
-            if old_v.version != version {
-                debug!(
-                    "Saving outdated module version: {:?}, {:?}",
-                    module_id, old_v.version
+        // If version > replace state to loaded
+        // if version <= keep old module
+        if let Some((old_v, _)) = module.outdated_versions.last() {
+            if version <= *old_v {
+                warn!(
+                    "Loaded module {} version not updated (old:{:?}, new:{:?}), skipping reload",
+                    module_id.module_name(),
+                    old_v,
+                    version
                 );
-                self.outdated_modules
-                    .insert((module_id.clone(), old_v.version.clone()), old_v);
+                module.abort_fetch();
             }
         }
+
+        let waiters = module.to_loaded_state(version, im);
 
         // Extend global imports with module exports.
         // On adding to global imports - filter out module specific fields.
         copy_imports(&self.global_imports, &defined_exports, true)?;
-        Ok(self.pending_modules.remove(&module_id).unwrap_or_default())
+        Ok(waiters)
     }
 
     fn debug_keys(obj: &Object) {
-        let keys = Object::keys(obj);
-        let mut key_list = vec![];
-        for i in 0..keys.length() {
-            let key = keys.get(i);
-            key_list.push(key.as_string().unwrap_or_default());
-        }
-        debug!("Object keys: {:?}", key_list);
+        trace!("Object keys: {:?}", {
+            let keys = Object::keys(obj);
+            (0..keys.length())
+                .into_iter()
+                .map(|i| {
+                    let key = keys.get(i);
+                    key.as_string().unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        });
     }
 
     fn _get_main_exports(indirect_function_table: &JsValue) -> Object {
         let new_object = Object::new();
         let obj = wasm_bindgen::exports();
 
-        debug!("Main exports value: {:?}", obj);
+        trace!("Main exports value: {:?}", obj);
         let obj = obj.try_into().unwrap();
         Self::debug_keys(&obj);
         copy_imports(&new_object, &obj, false).unwrap();
@@ -219,6 +358,7 @@ impl LinkageState {
         })
     }
 }
+
 async fn fetch_buffer(url: String) -> Result<JsValue, Error> {
     let request = Request::new_with_str(&url).map_err(|error| Error::JsError {
         context: "Failed to create request",
@@ -250,8 +390,8 @@ async fn fetch_buffer(url: String) -> Result<JsValue, Error> {
 
 // Load webassembly module from URL and instantiate it, link with active imports.
 // Return true if module was updated during this load call.
-pub async fn load(module_id: ModuleId, reload: bool) -> Result<bool, String> {
-    Box::pin(load_inner(module_id, reload)).await.map_err(|e| {
+pub async fn load(module_id: ModuleId) -> Result<bool, String> {
+    Box::pin(load_inner(module_id)).await.map_err(|e| {
         error!("Error loading module: {}", e);
         e.to_string()
     })
@@ -259,26 +399,11 @@ pub async fn load(module_id: ModuleId, reload: bool) -> Result<bool, String> {
 
 // Load webassembly module from URL and instantiate it, link with active imports.
 // Return true if module was updated during this load call.
-async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
+async fn load_inner(module_id: ModuleId) -> Result<bool, Error> {
     debug!("call load for module: {:?}", module_id);
-    // 0. check if module already loaded, if reload - replace it.
-
-    // TODO: fix structure:
-    // 1. non-versioned modules (latest).
-    // 2. outdated modules (by version).
-    // 3. pending modules (loading in progress).
-    // Avoid loading multiple times same version.
-    let contains = LinkageState::global(|state| match state.loaded_modules.get(&module_id) {
-        Some(instantiated) => !instantiated.pending_updates(),
-        None => false,
-    });
-
-    if contains && !reload {
-        return Ok(false);
-    }
-
     // is another load in progress?
-    let waiter = LinkageState::global(|state| state.mark_pending(&module_id));
+    let waiter =
+        LinkageState::global(|state| state.subscribe_for_active_fetch(module_id.module_name()));
 
     if let Some(waiter) = waiter {
         debug!(
@@ -291,139 +416,167 @@ async fn load_inner(module_id: ModuleId, reload: bool) -> Result<bool, Error> {
         return Ok(false);
     }
 
-    // 1. fetch ModuleDecl
-    let module_fut = fetch_buffer(module_id.download_url());
+    // If no version specified - but marked for update - we need to refetch it.
+    let need_update = LinkageState::global(|state| state.need_fetch(&module_id));
+    if !need_update {
+        return Ok(false);
+    }
+
+    LinkageState::global(|state| state.fetch_module(&module_id));
+
+    // 1. fetch module buffer
+    let buffer = fetch_buffer(module_id.download_url()).await?;
     // 2. Assert module decl "deps" are satisfied.
     //TODO: implement dependency checking, and export filtering.
 
-    // 3. fetch module
-    let buffer = module_fut.await?;
     let module = WebAssembly::Module::new(&buffer).map_err(|error| Error::JsError {
         context: "Failed to create module",
         error,
     })?;
 
-    // TODO: move this logic into subroutine
-    let results = WebAssembly::Module::custom_sections(&module, "dylink.0");
-    if results.length() != 1 {
-        return Err(Error::DeserializationError(
-            "No dylink.0 section found".into(),
-        ));
-    }
-
-    let array = deserialize::buffer_to_rust(results.get(0));
-    let metadata = deserialize::deserialize_metadata(&array)?;
-    debug!(
-        "Fetched module {} metadata: {:?}",
-        module_id.module_name(),
-        metadata
-    );
-
-    if !metadata.needed_libraries.is_empty() {
-        debug!(
-            "Fetching module {} deps: {:?}",
-            module_id.module_name(),
-            metadata.needed_libraries
-        );
-        for dep in &metadata.needed_libraries {
-            let dep_id = ModuleId::dep_from_module(&module_id, &dep);
-            Box::pin(load_inner(dep_id.clone(), false))
-                .await
-                .map_err(|e| Error::CannotResolveDependency {
-                    module_id: module_id.clone(),
-                    dependency: dep_id,
-                    entry: None,
-                    sub_error: Some(Box::new(e)),
-                })?;
-        }
-    }
-
     let version = deserialize::parse_version(&module)?;
 
     debug!("Module {} version: {:?}", module_id.module_name(), version);
-    // 4. Create imports object (we can reuse global one?)
-    // TODO: Limit only for needed imports?
 
-    let global_imports = LinkageState::global(|state| state.global_imports.clone());
+    if let Some(old_version) = LinkageState::global(|state| state.old_version(&module_id)) {
+        if version <= old_version {
+            warn!(
+                "Module {} version not updated (old:{:?}, new:{:?}), skipping reload",
+                module_id.module_name(),
+                old_version,
+                version
+            );
+            LinkageState::global(|state| state.abort_load_module(&module_id));
+            return Ok(false);
+        }
+    }
 
-    let new_exports = Object::new();
-    copy_imports(&new_exports, &global_imports, false)?;
-    debug!("New exports: {:?}", new_exports);
+    let module_id_clone = module_id.clone();
 
-    debug!(
-        "Allocating memory:{} and fn_table:{} for module",
-        metadata.memory_size, metadata.table_size
-    );
-    let entry = LinkageState::global(|state| {
-        state.alloc_state.alloc(
-            metadata.memory_size,
-            metadata.memory_alignment,
-            metadata.table_size,
-        )
-    })?;
+    // Wrap all load routine in async block to be able to abort on error.
+    let res = async move {
+        // TODO: move this logic into subroutine
+        let results = WebAssembly::Module::custom_sections(&module, "dylink.0");
+        if results.length() != 1 {
+            return Err(Error::DeserializationError(
+                "No dylink.0 section found".into(),
+            ));
+        }
 
-    obj_set!(&new_exports, "__lib_base", entry.memory_start());
-    obj_set!(&new_exports, "__table_base", entry.table_start());
+        let array = deserialize::buffer_to_rust(results.get(0));
+        let metadata = deserialize::deserialize_metadata(&array)?;
+        debug!(
+            "Fetched module {} metadata: {:?}",
+            module_id.module_name(),
+            metadata
+        );
 
-    LinkageState::debug_keys(&new_exports);
-    let imports = Object::new();
-    obj_set!(&imports, "__wamex", new_exports);
+        if !metadata.needed_libraries.is_empty() {
+            debug!(
+                "Fetching module {} deps: {:?}",
+                module_id.module_name(),
+                metadata.needed_libraries
+            );
+            for dep in &metadata.needed_libraries {
+                let dep_id = ModuleId::dep_from_module(&module_id, &dep);
+                Box::pin(load_inner(dep_id.clone())).await.map_err(|e| {
+                    Error::CannotResolveDependency {
+                        module_id: module_id.clone(),
+                        dependency: dep_id,
+                        entry: None,
+                        sub_error: Some(Box::new(e)),
+                    }
+                })?;
+            }
+        }
 
-    debug!(
-        "Instantiate module {}, imports: {:?}",
-        module_id.module_name(),
-        imports
-    );
-    // 5. Instantiate module.
+        // 4. Create imports object (we can reuse global one?)
+        // TODO: Limit only for needed imports?
 
-    let fut_res = JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
-        .await
-        .map_err(|error| Error::JsError {
-            context: "Failed to instantiate module",
-            error,
+        let global_imports = LinkageState::global(|state| state.global_imports.clone());
+
+        let new_exports = Object::new();
+        copy_imports(&new_exports, &global_imports, false)?;
+        trace!("New exports: {:?}", new_exports);
+
+        debug!(
+            "Allocating memory:{} and fn_table:{} for module",
+            metadata.memory_size, metadata.table_size
+        );
+        let entry = LinkageState::global(|state| {
+            state.alloc_state.alloc(
+                metadata.memory_size,
+                metadata.memory_alignment,
+                metadata.table_size,
+            )
         })?;
 
-    // can be instance or TypeError|LinkError|CompileError|RuntimeError
-    let sub_module_instance: WebAssembly::Instance =
-        fut_res.dyn_into().map_err(|error| Error::JsError {
-            context: "Failed to cast module instance",
-            error,
-        })?;
+        obj_set!(&new_exports, "__lib_base", entry.memory_start());
+        obj_set!(&new_exports, "__table_base", entry.table_start());
 
-    let instantiated = InstantiatedModule {
-        instantiated: sub_module_instance.clone(),
-        version,
-        alloc_guard: GuardedAllocEntry::new(entry),
-        needs_update: false,
+        LinkageState::debug_keys(&new_exports);
+        let imports = Object::new();
+        obj_set!(&imports, "__wamex", new_exports);
+
+        debug!(
+            "Instantiate module {}, imports: {:?}",
+            module_id.module_name(),
+            imports
+        );
+        // 5. Instantiate module.
+
+        let fut_res = JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
+            .await
+            .map_err(|error| Error::JsError {
+                context: "Failed to instantiate module",
+                error,
+            })?;
+
+        // can be instance or TypeError|LinkError|CompileError|RuntimeError
+        let sub_module_instance: WebAssembly::Instance =
+            fut_res.dyn_into().map_err(|error| Error::JsError {
+                context: "Failed to cast module instance",
+                error,
+            })?;
+
+        let instantiated = InstantiatedModule {
+            instantiated: sub_module_instance.clone(),
+            alloc_guard: GuardedAllocEntry::new(entry),
+        };
+        Ok((version, instantiated))
+    }
+    .await;
+
+    let (result, waiters) = match res {
+        Ok((version, instantiated)) => {
+            debug!("Saving module: {:?}", instantiated);
+            // 6. Store exports and module info in linkage state.
+            let waiters = LinkageState::global(|state| {
+                state.save_loaded_module(module_id_clone.clone(), version, instantiated)
+            })?;
+
+            (Ok(true), waiters)
+        }
+        Err(e) => {
+            log::error!("Error loading module {:?}", module_id_clone);
+            let waiters = LinkageState::global(|state| state.abort_load_module(&module_id_clone));
+            (Err(e), waiters)
+        }
     };
 
-    debug!("Saving module: {:?}", instantiated);
-
-    // 6. Store exports and module info in linkage state.
-    let waiters =
-        LinkageState::global(|state| state.save_loaded_module(module_id.clone(), instantiated))?;
     // notify waiters
     if !waiters.is_empty() {
         debug!(
             "Notifying {} waiters for module {:?}",
             waiters.len(),
-            module_id
+            module_id_clone
         );
     }
     for waiter in waiters {
         let _ = waiter.send(());
     }
-    Ok(true)
-}
 
-pub fn mark_for_update(module_id: ModuleId) -> Result<(), Error> {
-    LinkageState::global(|state| {
-        let Some(instantiated) = state.loaded_modules.get_mut(&module_id) else {
-            return Err(Error::ModuleNotFound { module_id });
-        };
-        instantiated.mark_for_update();
-        Ok(())
-    })
+    result
 }
 
 /// Forcibly unload module.
@@ -431,45 +584,70 @@ pub fn mark_for_update(module_id: ModuleId) -> Result<(), Error> {
 ///
 /// Calling this function will free that memory, and can cause use-after-free if some code still holds references
 /// to that memory.
-pub async unsafe fn unload(module: ModuleId, version: BumpVersion) -> Result<(), Error> {
-    LinkageState::global(|state| {
-        let mut done = false;
-        if let Some(outdated) = state
-            .outdated_modules
-            .remove(&(module.clone(), version.clone()))
-        {
-            debug!("Found outdated module: {:?}, unloading...", outdated);
-            outdated.free(state);
-            done = true;
-        }
+///
+/// If no version is provided in module_id - all versions will be unloaded.
+/// If version is provided only remove from outdated versions if it matches.
+pub async unsafe fn unload(module_id: ModuleId) -> Result<(), Error> {
+    let done = LinkageState::global(|state| {
+        if module_id.version().is_none() {
+            let to_remove = state.modules.remove(module_id.module_name());
+            if let Some(mut to_remove) = to_remove {
+                // Keep pending loads.
+                if to_remove.is_pending() {
+                    let outdated_versions = std::mem::take(&mut to_remove.outdated_versions);
+                    state
+                        .modules
+                        .insert(module_id.module_name().to_string(), to_remove);
 
-        if let Some(instantiated) = state.loaded_modules.get(&module) {
-            if instantiated.version == version {
-                let instantiated = state.loaded_modules.remove(&module).unwrap();
-                debug!("Unloading current version of module: {:?}", instantiated);
-                instantiated.free(state);
-                done = true;
+                    debug!(
+                        "Module {:?} is pending, unloading only outdated versions: {:?}",
+                        module_id,
+                        outdated_versions.len(),
+                    );
+                    return true;
+                };
+
+                debug!(
+                    "Unloaded all versions of module: {:?}, total: {total_num}",
+                    module_id,
+                    total_num = 1 + to_remove.outdated_versions.len()
+                );
+                return true;
             }
         };
 
-        if !done {
-            return Err(Error::ModuleNotFound { module_id: module });
+        // Unload specific outdated version.
+        let Some(module) = state.modules.get_mut(module_id.module_name()) else {
+            return false;
+        };
+
+        if let Some(version) = module_id.version() {
+            if let Some(instantiated) = module.outdated_versions.remove(&version) {
+                debug!("Unloaded module: {:?} version: {:?}", module_id, version);
+                instantiated.free(state);
+                return true;
+            }
         }
-        Ok(())
-    })
+
+        false
+    });
+
+    if !done {
+        return Err(Error::ModuleNotFound { module_id });
+    }
+    Ok(())
 }
 
-#[wasm_bindgen]
-pub fn __wamex_reload(url_base_path: &str, module_name: &str) -> js_sys::Promise {
-    let module_id = ModuleId::new_with_url(module_name, url_base_path);
-    let future = async move {
-        match load(module_id, true).await {
-            Ok(updated) => Ok(JsValue::from_bool(updated)),
-            Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to reload module: {}",
-                e
-            ))),
-        }
-    };
-    wasm_bindgen_futures::future_to_promise(future)
+#[cfg_attr(feature = "bindgen_refetch", wasm_bindgen)]
+pub fn __wamex_mark_for_update(module_name: &str) -> bool {
+    LinkageState::global(|state| {
+        let Some(instantiated) = state.modules.get_mut(module_name) else {
+            return Err(Error::ModuleNotFound {
+                module_id: ModuleId::new(module_name),
+            });
+        };
+        instantiated.mark_for_refetch();
+        Ok(())
+    })
+    .is_ok()
 }

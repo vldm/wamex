@@ -14,13 +14,21 @@ impl<K: Ord, V> MiniMap<K, V> {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         self.entries
             .binary_search_by(Self::compare_with(key))
             .ok()
             .map(|pos| &self.entries[pos].1)
     }
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         self.entries
             .binary_search_by(Self::compare_with(key))
             .ok()
@@ -38,13 +46,33 @@ impl<K: Ord, V> MiniMap<K, V> {
             }
         }
     }
+    pub fn last(&self) -> Option<&(K, V)> {
+        self.entries.last()
+    }
+    pub fn take_last(&mut self) -> Option<(K, V)> {
+        self.entries.pop()
+    }
 
-    pub fn remove(&mut self, key: &K) -> Option<V> {
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
         if let Ok(pos) = self.entries.binary_search_by(Self::compare_with(&key)) {
             let (_, value) = self.entries.remove(pos);
             Some(value)
         } else {
             None
+        }
+    }
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
+        match self.entries.binary_search_by(Self::compare_with(&key)) {
+            Ok(pos) => Entry::Occupied(&mut self.entries[pos].1),
+            Err(pos) => Entry::Vacant(VacantEntry {
+                map: self,
+                index: pos,
+                key,
+            }),
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -57,8 +85,12 @@ impl<K: Ord, V> MiniMap<K, V> {
         self.entries.iter()
     }
 
-    fn compare_with(key: &K) -> impl FnMut(&(K, V)) -> std::cmp::Ordering {
-        move |entry: &(K, V)| entry.0.cmp(key)
+    fn compare_with<Q>(key: &Q) -> impl FnMut(&(K, V)) -> std::cmp::Ordering
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        move |entry: &(K, V)| entry.0.borrow().cmp(key)
     }
 
     fn compare(a: &(K, V), b: &(K, V)) -> std::cmp::Ordering {
@@ -242,6 +274,42 @@ where
     }
 }
 
+pub struct VacantEntry<'a, K, V> {
+    map: &'a mut MiniMap<K, V>,
+    index: usize,
+    key: K,
+}
+
+pub enum Entry<'a, K, V> {
+    Vacant(VacantEntry<'a, K, V>),
+    Occupied(&'a mut V),
+}
+
+impl<'a, K, V> Entry<'a, K, V>
+where
+    K: Ord,
+{
+    pub fn or_insert(self, value: V) -> &'a mut V {
+        match self {
+            Entry::Occupied(v) => v,
+            Entry::Vacant(vacant) => {
+                vacant.map.entries.insert(vacant.index, (vacant.key, value));
+                &mut vacant.map.entries[vacant.index].1
+            }
+        }
+    }
+    pub fn or_insert_with<F: FnOnce() -> V>(self, func: F) -> &'a mut V {
+        match self {
+            Entry::Occupied(v) => v,
+            Entry::Vacant(vacant) => {
+                let value = func();
+                vacant.map.entries.insert(vacant.index, (vacant.key, value));
+                &mut vacant.map.entries[vacant.index].1
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::MiniMap;
@@ -271,5 +339,16 @@ mod tests {
 
         assert_eq!(map.remove(&3), None);
         assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn test_entry_api() {
+        let mut map = MiniMap::new();
+
+        map.insert(1, "one");
+        map.insert(3, "three");
+
+        assert_eq!(map.entry(2).or_insert("two"), &"two");
+        assert_eq!(map.entry(1).or_insert("uno"), &"one");
     }
 }
