@@ -5,7 +5,7 @@
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Range};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-pub use symbols::SymbolMap;
+pub use symbols::{StaticModuleInfo, SymbolMap};
 use wasmparser::{ElementItems, ElementKind, TypeRef};
 
 use crate::{

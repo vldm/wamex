@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, ensure};
-pub use diff::{DiffEntry, DiffResult, Differ};
+pub use diff::{DiffEntry, DiffResult, Differ, StaticModuleInfo};
 use smallvec::SmallVec;
 
 use crate::{
@@ -35,7 +35,7 @@ pub struct SymbolRecord<'a> {
     /// From Name + linking section, fail in case of conflicts.
     /// undefined and non-named
     pub name: Cow<'a, str>,
-    pub linking_name: Option<&'a str>,
+    pub linking_name: Option<Cow<'a, str>>,
     pub flags: wasmparser::SymbolFlags,
     /// Relocation entries inside this symbol
     /// Every index in relocation entry is corresponding to one symbol in symbol table.
@@ -109,14 +109,14 @@ impl SymbolRecord<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct DataSymbolKey {
     data_segment: DataSegmentId,
     offset: usize,
     symbol_id: SymbolId,
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct SymbolMap<'src> {
     symbols: IdVec<SymbolRecord<'src>>,
     funcs_ids: IdMap<InputFuncId, SymbolId>,
@@ -289,7 +289,7 @@ impl<'src> SymbolMap<'src> {
 
             let id = symbols.push(SymbolRecord {
                 name: sym.name,
-                linking_name: sym.linking_name,
+                linking_name: sym.linking_name.map(From::from),
                 flags: sym.flags,
                 kind: sym.symbol_kind,
                 relocs: Vec::new(),
@@ -360,6 +360,25 @@ impl<'src> SymbolMap<'src> {
             funcs_ids: func_ids.into_iter().map(|(k, (v, _))| (k, v.id)).collect(),
             datas_ids: data_ids.into_iter().map(|(k, _)| k).collect(),
         })
+    }
+
+    pub fn clone_owned(&self) -> SymbolMap<'static> {
+        let symbols = self
+            .symbols
+            .iter()
+            .map(|(_id, sym)| SymbolRecord {
+                name: sym.name.clone().into_owned().into(),
+                linking_name: sym.linking_name.clone().map(|n| Cow::Owned(n.into_owned())),
+                flags: sym.flags,
+                relocs: sym.relocs.clone(),
+                kind: sym.kind,
+            })
+            .collect();
+        SymbolMap {
+            symbols,
+            funcs_ids: self.funcs_ids.clone(),
+            datas_ids: self.datas_ids.clone(),
+        }
     }
 
     // TODO: Build remap index instead of handling duplicates here.

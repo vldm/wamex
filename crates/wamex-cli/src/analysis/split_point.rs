@@ -12,12 +12,12 @@ use crate::{
         self,
         dep_graph::{DepMiniSet, DepSet, NamedGraph, find_reachable_deps},
     },
-    index::{ExportId, ImportId, InputFuncId, SymbolId},
+    index::{ExportId, IdMap, ImportId, InputFuncId, SymbolId},
 };
 
 // TODO: impl merge and use it in emit_modules as one of strategies to emit modules.
 // The other possible is to emit it as separate chunk and allow linkage.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct OutputModuleInfo {
     pub defined_symbols: DepSet,
     // Shared imports that should be imported from other modules.
@@ -179,6 +179,23 @@ impl SharedModuleIdentifier {
         self.0.retain(|m| m != module);
         original_len != self.0.len()
     }
+    pub fn includes(&self, other: &SplitModuleIdentifier) -> bool {
+        match other {
+            SplitModuleIdentifier::Single(name) => self.contains(name),
+            SplitModuleIdentifier::Shared(shared) => {
+                shared.0.iter().all(|name| self.contains(name))
+            }
+        }
+    }
+}
+
+impl PartialEq<SplitModuleIdentifier> for SharedModuleIdentifier {
+    fn eq(&self, other: &SplitModuleIdentifier) -> bool {
+        match other {
+            SplitModuleIdentifier::Single(_) => false,
+            SplitModuleIdentifier::Shared(shared) => shared == self,
+        }
+    }
 }
 
 impl<'a> IntoIterator for &'a SharedModuleIdentifier {
@@ -246,7 +263,7 @@ impl SplitModuleIdentifier {
 #[derive(Debug, Default)]
 pub struct SplitProgramInfo {
     pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
-    pub symbol_output_module: BTreeMap<SymbolId, usize>,
+    pub symbol_output_module: IdMap<SymbolId, usize>,
 }
 
 impl SplitProgramInfo {

@@ -9,6 +9,7 @@ mod helpers;
 #[macro_use]
 mod index;
 mod diff;
+mod incremental;
 pub mod read;
 
 pub use analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
@@ -16,7 +17,10 @@ pub use anyhow::Result;
 pub use read::InputModule;
 pub use wamex_types::{BumpVersion, ModuleId};
 
-use crate::emit::CommonEmitInfo;
+use crate::{
+    emit::CommonEmitInfo,
+    incremental::{IncrementalSplitResult, IncrementalSplitState},
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
@@ -84,6 +88,10 @@ pub enum Command {
     /// Split wasm module into multiple parts.
     Split(Split),
 
+    /// Incremental split wasm module into multiple parts.
+    /// loop and repeat split on keypresses.
+    IncrementalSplit(Split),
+
     /// Compare two wasm modules.
     Diff(Diff),
 
@@ -105,6 +113,7 @@ pub enum Command {
 pub fn main(args: Cli) -> Result<()> {
     match args.command {
         Command::Split(args) => split(args)?,
+        Command::IncrementalSplit(args) => incremental_split(args)?,
         Command::Diff(args) => diff(args)?,
         Command::Roundtrip(args) => roundtrip(args)?,
         Command::Debug(args) => debug(args)?,
@@ -129,6 +138,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         &split_program_info,
         &Default::default(),
         false,
+        None,
         |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             std::fs::write(&args.output, data)?;
             Ok(())
@@ -214,6 +224,7 @@ pub fn split_inner(
         &split_program_info,
         &wbg_fns,
         precise_modification,
+        None,
         emit_fn,
     )?;
 
@@ -234,6 +245,65 @@ pub fn split_inner(
         }
     }
     Ok(deps)
+}
+
+fn incremental_split(args: Split) -> Result<()> {
+    println!("Starting incremental split loop...");
+    let mut state = IncrementalSplitState::new();
+
+    loop {
+        let input_wasm = std::fs::read(&args.input)?;
+        let split_result = state.split_incremental(
+            &input_wasm,
+            args.verbose,
+            args.precise_modification,
+            args.split_point_extractor,
+            |identifier: ModuleId, data: &[u8]| -> Result<()> {
+                let output_filename = format!("{}.wasm", identifier.module_full_name());
+                if !args.dry_run {
+                    std::fs::create_dir_all(&args.output)?;
+                    std::fs::write(args.output.join(output_filename), data)?;
+                } else {
+                    log::info!("Skipping writing module {output_filename} (dry run)");
+                }
+                Ok(())
+            },
+        )?;
+
+        match split_result.incremental_result {
+            IncrementalSplitResult::Unchanged => {
+                println!("No changes detected, all modules are up to date.");
+            }
+            IncrementalSplitResult::UpdatedModules(modules) => {
+                println!(
+                    "Updated modules: {}",
+                    modules
+                        .iter()
+                        .map(|m| m.module_id.module_full_name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            IncrementalSplitResult::FullResplit => {
+                println!("Full resplit performed, all modules were regenerated.");
+            }
+        }
+        println!("Current module dependencies:");
+        for (module, deps) in split_result.deps.iter() {
+            println!(
+                "  {} -> [{}]",
+                module.module_full_name(),
+                deps.iter()
+                    .map(|d| d.module_full_name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+
+        println!("Press Enter to re-split, or Ctrl+C to exit.");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+    }
 }
 
 pub fn diff(args: Diff) -> Result<()> {

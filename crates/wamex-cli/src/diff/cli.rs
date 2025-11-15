@@ -99,8 +99,9 @@ impl<'any, 'src> Compare<'any, 'src> {
         print_compare_section!(memories);
 
         if self.structural {
-            let differ = crate::analysis::symbols::Differ::new(&self.left, &self.right);
-            let diff_result = differ.diff();
+            let differ = crate::analysis::symbols::Differ::new(self.left, self.right);
+            let map = differ.symbol_map();
+            let diff_result = differ.build_diff(&map);
             differ.debug_diff(&diff_result);
             // TODO: rebuild structure using graph
 
@@ -129,7 +130,10 @@ impl<'any, 'src> Compare<'any, 'src> {
     // Mark changed modules and print what caused the change.
     fn print_changed_modules(
         &self,
-        differ: &crate::analysis::symbols::Differ<'_, '_, '_>,
+        differ: &crate::analysis::symbols::Differ<
+            &'any analysis::ModuleInfo<'src>,
+            &'any analysis::ModuleInfo<'src>,
+        >,
         diff_result: &crate::analysis::symbols::DiffResult,
     ) -> Result<(), anyhow::Error> {
         let split_points = crate::analysis::split_point::find_split_points(

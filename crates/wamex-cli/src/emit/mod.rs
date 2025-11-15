@@ -1866,9 +1866,16 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
     fn emit_modules(
         &self,
         precise_modification: bool,
+        whitelist: Option<&BTreeSet<SplitModuleIdentifier>>,
         mut emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         for (identifier, state) in self.iter_modules() {
+            if let Some(whitelist) = whitelist {
+                if !whitelist.contains(&identifier) {
+                    log::info!("Skipping module {identifier} as not in whitelist");
+                    continue;
+                }
+            }
             log::info!("Generating module {identifier}");
 
             let mut encoder = wasm_encoder::Module::new();
@@ -2056,6 +2063,8 @@ pub fn emit_modules<'a, 'src>(
     program_info: &SplitProgramInfo,
     wbg_fns: &HashSet<SymbolId>,
     precise_modification: bool,
+
+    whitelist: Option<&BTreeSet<SplitModuleIdentifier>>,
     emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let emit_info = CommonEmitInfo::new(module, verbose, program_info)?;
@@ -2064,6 +2073,6 @@ pub fn emit_modules<'a, 'src>(
             wbg_fns.contains(&func_id)
         })
         .context("Error calculating modules")?;
-    calculated.emit_modules(precise_modification, emit_fn)?;
+    calculated.emit_modules(precise_modification, whitelist, emit_fn)?;
     Ok(())
 }

@@ -5,14 +5,14 @@
 //!
 //! Note: .L symbols is not guarateed to persist between compilations. So to detect this symbols we may use "contexts" (parent symbols).
 
-use std::{collections::BTreeMap, mem};
+use std::{collections::BTreeMap, mem, ops::Deref};
 
 use crate::{
-    analysis::{self},
+    analysis::{self, SymbolMap},
     index::{IdMap, SymbolId},
 };
 
-struct SymbolMapping {
+pub struct SymbolMapping {
     // Most of symbols are mapped.
     left_to_right: IdMap<SymbolId, SymbolId>,
     left_non_matched: Vec<SymbolId>,
@@ -20,10 +20,14 @@ struct SymbolMapping {
 }
 
 impl SymbolMapping {
-    pub fn mapped(&self) -> impl Iterator<Item = (SymbolId, SymbolId)> + use<'_> {
+    pub fn mapped_list(&self) -> impl Iterator<Item = (SymbolId, SymbolId)> + use<'_> {
         self.left_to_right
             .iter()
             .map(|(right, left)| (right, *left))
+    }
+
+    pub fn map(&self, left: SymbolId) -> Option<SymbolId> {
+        self.left_to_right.get(left).copied()
     }
     pub fn left_only(&self) -> impl Iterator<Item = SymbolId> + use<'_> {
         self.left_non_matched.iter().copied()
@@ -35,24 +39,25 @@ impl SymbolMapping {
 
 type SVec<T, const SIZE: usize = 4> = smallvec::SmallVec<[T; SIZE]>;
 
-pub struct Differ<'any, 'one, 'another> {
-    left: &'any analysis::ModuleInfo<'one>,
-    right: &'any analysis::ModuleInfo<'another>,
+pub struct Differ<L, R> {
+    left: L,
+    right: R,
 }
 
-impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
-    pub fn new(
-        left: &'any analysis::ModuleInfo<'one>,
-        right: &'any analysis::ModuleInfo<'another>,
-    ) -> Self {
+impl<'left, 'right, L, R> Differ<L, R>
+where
+    L: SymbolMapWithContent<'left>,
+    R: SymbolMapWithContent<'right>,
+{
+    pub fn new(left: L, right: R) -> Self {
         Self { left, right }
     }
-
-    pub fn diff(&self) -> DiffResult {
+    pub fn symbol_map(&self) -> SymbolMapping {
         let mut mapping = self.build_name_mapping();
         self.refine_mapping(&mut mapping);
-        self.build_diff(&mapping)
+        mapping
     }
+
     fn is_anon_name(name: &str) -> bool {
         name.starts_with(".L") || name.starts_with("$L")
     }
@@ -62,7 +67,7 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         // If more than one symbol with same name found - we treat them as duplicates and compare by context later.
         let mut name_to_left_symbol: BTreeMap<&str, SymbolId> = BTreeMap::new();
         let mut duplicate_left: BTreeMap<&str, SVec<SymbolId>> = BTreeMap::new();
-        for (sym_id, symbol) in self.left.symbols.iter() {
+        for (sym_id, symbol) in self.left.symbols().iter() {
             if let Some(name) = &symbol.linking_name {
                 if Self::is_anon_name(name) {
                     continue;
@@ -86,11 +91,11 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
 
         let mut non_matched_right_symbols: Vec<SymbolId> = Vec::new();
         let mut dups: SVec<_, 16> = SVec::new();
-        for (right_sym_id, right_symbol) in self.right.symbols.iter() {
+        for (right_sym_id, right_symbol) in self.right.symbols().iter() {
             if let Some(name) = &right_symbol.linking_name
                 && !Self::is_anon_name(name)
             {
-                if let Some(&left_sym_id) = name_to_left_symbol.get(name) {
+                if let Some(&left_sym_id) = name_to_left_symbol.get(name.deref()) {
                     if let Some(dup) = mapping.insert(left_sym_id, right_sym_id) {
                         dups.push(left_sym_id);
                         non_matched_right_symbols.push(dup);
@@ -110,7 +115,7 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         // TODO: optimize by itering over mapping keys.
         let non_matched_left_symbols: Vec<SymbolId> = self
             .left
-            .symbols
+            .symbols()
             .iter()
             .filter_map(|(left_sym_id, _)| {
                 if mapping.get(left_sym_id).is_none() {
@@ -135,11 +140,11 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         left_sym_id: SymbolId,
         right_sym_id: SymbolId,
     ) -> Result<(), ReplaceDetail> {
-        let left_symbol = &self.left.symbols.get(left_sym_id).unwrap();
-        let right_symbol = &self.right.symbols.get(right_sym_id).unwrap();
+        let left_symbol = &self.left.symbols().get(left_sym_id).unwrap();
+        let right_symbol = &self.right.symbols().get(right_sym_id).unwrap();
 
-        let left_content = left_symbol.stable_content(&self.left);
-        let right_content = right_symbol.stable_content(&self.right);
+        let left_content = self.left.stable_content(left_sym_id);
+        let right_content = self.right.stable_content(right_sym_id);
         if left_content != right_content {
             return Err(ReplaceDetail::BodyChanged);
         }
@@ -172,7 +177,7 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
     fn refine_mapping(&self, mapping: &mut SymbolMapping) {
         // 1. Build parent map for left symbols
         let mut left_parent_map: BTreeMap<SymbolId, SymbolContext> = BTreeMap::new();
-        for (sym_id, symbol) in self.left.symbols.iter() {
+        for (sym_id, symbol) in self.left.symbols().iter() {
             for child in symbol.childs() {
                 left_parent_map
                     .entry(child)
@@ -184,7 +189,7 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
 
         // 2. Build parent map for right symbols
         let mut right_parent_map: BTreeMap<SymbolId, SymbolContext> = BTreeMap::new();
-        for (sym_id, symbol) in self.right.symbols.iter() {
+        for (sym_id, symbol) in self.right.symbols().iter() {
             for child in symbol.childs() {
                 right_parent_map
                     .entry(child)
@@ -203,7 +208,7 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         // 3. Build candidates
         let mut right_candidates = BTreeMap::<_, SVec<_>>::new();
         for right_sym in std::mem::take(&mut mapping.right_non_matched) {
-            let right_symbol = &self.right.symbols.get(right_sym).unwrap();
+            let right_symbol = &self.right.symbols().get(right_sym).unwrap();
             let context = right_parent_map
                 .get(&right_sym)
                 .cloned()
@@ -235,7 +240,7 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
             for left_sym in std::mem::take(&mut queue) {
                 // Try match candidate.
                 let left_mapped_candidate_key = {
-                    let left_symbol = &self.left.symbols.get(left_sym).unwrap();
+                    let left_symbol = &self.left.symbols().get(left_sym).unwrap();
 
                     SymbolKey {
                         stable_name: left_symbol.stable_name(),
@@ -299,11 +304,11 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         }
     }
 
-    fn build_diff(&self, mapping: &SymbolMapping) -> DiffResult {
+    pub fn build_diff(&self, mapping: &SymbolMapping) -> DiffResult {
         let mut diff_result = DiffResult::new();
 
         // Process mapped symbols
-        for (left_sym_id, right_sym_id) in mapping.mapped() {
+        for (left_sym_id, right_sym_id) in mapping.mapped_list() {
             match self.is_same_content(mapping, left_sym_id, right_sym_id) {
                 Ok(()) => diff_result.push_same(left_sym_id, right_sym_id),
                 Err(detail) => diff_result.push_replaced(left_sym_id, right_sym_id, detail),
@@ -323,11 +328,17 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
         diff_result
     }
 
-    fn left_sym_name(&self, sym_id: SymbolId) -> Option<&str> {
-        self.left.symbols.get(sym_id).map(|s| &*s.name)
+    fn left_sym_name<'a>(&'a self, sym_id: SymbolId) -> Option<&'a str>
+    where
+        'left: 'a,
+    {
+        self.left.symbols().get(sym_id).map(|s| &*s.name)
     }
-    fn right_sym_name(&self, sym_id: SymbolId) -> Option<&str> {
-        self.right.symbols.get(sym_id).map(|s| &*s.name)
+    fn right_sym_name<'a>(&'a self, sym_id: SymbolId) -> Option<&'a str>
+    where
+        'right: 'a,
+    {
+        self.right.symbols().get(sym_id).map(|s| &*s.name)
     }
     pub fn debug_diff(&self, diff: &DiffResult) {
         let replaced_iter = diff.replaced();
@@ -370,20 +381,8 @@ impl<'any, 'one, 'another> Differ<'any, 'one, 'another> {
 
             let detail = match detail {
                 ReplaceDetail::BodyChanged => {
-                    let left_content = self
-                        .left
-                        .symbols
-                        .get(*left)
-                        .unwrap()
-                        .stable_content(&self.left)
-                        .unwrap_or_default();
-                    let right_content = self
-                        .right
-                        .symbols
-                        .get(*right)
-                        .unwrap()
-                        .stable_content(&self.right)
-                        .unwrap_or_default();
+                    let left_content = self.left.stable_content(*left).unwrap_or_default();
+                    let right_content = self.right.stable_content(*right).unwrap_or_default();
                     format_args!(
                         "Body changed from {left_content} to {right_content}",
                         left_content = hex::encode(left_content),
@@ -619,28 +618,30 @@ impl SymbolMapping {
             .collect::<Vec<_>>();
 
         for old_ctx in old_iter {
-            if new_vec.is_empty() {
-                old_contexts.push(old_ctx);
-                continue;
-            }
-
             new_vec.sort_by_key(|(_, b)| b.context.num_same_parents(&old_ctx.context));
 
             // If more than one candidate context is found, then we cannot uniquely match
-            if new_vec.len() > 1
-                && new_vec[new_vec.len() - 2]
-                    .1
-                    .context
-                    .num_same_parents(&old_ctx.context)
-                    > 0
-            {
-                old_contexts.push(old_ctx);
-                continue;
-            }
+            let new_ctx = match new_vec.as_slice() {
+                // More than one candidate with same similarity
+                // or no similarity at all.
+                &[.., (_, ref prev), _] if prev.context.num_same_parents(&old_ctx.context) > 0 => {
+                    old_contexts.push(old_ctx);
+                    continue;
+                }
+                // No candidates
+                &[] => {
+                    old_contexts.push(old_ctx);
+                    continue;
+                }
+                // no similarity
+                &[(_, ref new_ctx)] if new_ctx.context.num_same_parents(&old_ctx.context) == 0 => {
+                    old_contexts.push(old_ctx);
+                    continue;
+                }
+                &[..] => new_vec.pop().unwrap().1,
+            };
 
-            let (_, new_ctx) = new_vec.pop().unwrap();
-
-            // Symbol is same by content and partially by context.
+            // Symbol is same by key and partially by context.
             log::warn!(
                 "Matched symbol by changed context: old {:?}, new {:?}",
                 old_ctx,
@@ -651,5 +652,62 @@ impl SymbolMapping {
         }
         new_vec.sort_by_key(|(original_order, _)| *original_order);
         *new_contexts = new_vec.into_iter().map(|(_, ctx)| ctx).collect();
+    }
+}
+
+pub trait SymbolMapWithContent<'src> {
+    fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>>;
+    fn symbols(&self) -> &SymbolMap<'src>;
+}
+
+impl<'src> SymbolMapWithContent<'src> for analysis::ModuleInfo<'src> {
+    fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>> {
+        self.symbols
+            .get(sym_id)
+            .and_then(|s| s.stable_content(self))
+    }
+    fn symbols(&self) -> &SymbolMap<'src> {
+        &self.symbols
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct StaticModuleInfo {
+    symbols: SymbolMap<'static>,
+    contents: IdMap<SymbolId, Vec<u8>>,
+}
+
+impl StaticModuleInfo {
+    pub fn new(info: &analysis::ModuleInfo<'_>) -> Self {
+        let symbols = info.symbols.clone_owned();
+        let mut contents = IdMap::new();
+        for (sym_id, symbol) in info.symbols.iter() {
+            if let Some(content) = symbol.stable_content(info) {
+                contents.insert(sym_id, content);
+            }
+        }
+        Self { symbols, contents }
+    }
+}
+
+impl SymbolMapWithContent<'static> for StaticModuleInfo {
+    //TODO: avoid clone
+    fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>> {
+        self.contents.get(sym_id).cloned()
+    }
+    fn symbols(&self) -> &SymbolMap<'static> {
+        &self.symbols
+    }
+}
+
+impl<'a, 'src, M> SymbolMapWithContent<'src> for &'a M
+where
+    M: SymbolMapWithContent<'src>,
+{
+    fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>> {
+        <M as SymbolMapWithContent<'src>>::stable_content(*self, sym_id)
+    }
+    fn symbols(&self) -> &SymbolMap<'src> {
+        <M as SymbolMapWithContent<'src>>::symbols(*self)
     }
 }
