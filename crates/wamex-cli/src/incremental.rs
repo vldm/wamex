@@ -13,7 +13,6 @@ use crate::{
         split_point::{OutputModuleInfo, SharedModuleIdentifier},
         symbols::DiffEntry,
     },
-    diff,
     index::{IdMap, SymbolId},
 };
 
@@ -116,11 +115,7 @@ impl IncrementalSplitState {
             self.modules_versions
                 .insert(identifier.clone(), self.bump_version.clone());
 
-            let module_id = ModuleId::new_from_components(
-                identifier.to_string(),
-                Some(self.bump_version.clone()),
-                None,
-            );
+            let module_id = self.last_module_id(identifier);
             emit_module_fn(module_id, data)
         };
 
@@ -161,47 +156,48 @@ impl IncrementalSplitState {
         changed_list
             .into_iter()
             .map(|id| ModuleUpdate {
-                module_id: ModuleId::new_from_components(
-                    id.to_string(),
-                    Some(
-                        self.modules_versions
-                            .get(&id)
-                            .expect("Module version must be present for changed module")
-                            .clone(),
-                    ),
-                    None,
-                ),
+                module_id: self.last_module_id(&id),
                 force_restart: !structure_diff.only_struct_dep_change(&id),
             })
             .collect()
     }
 
-    fn build_deps_map(&self) -> ModuleDeps {
-        let mut deps = BTreeMap::new();
+    fn last_module_id(&self, module: &SplitModuleIdentifier) -> ModuleId {
+        ModuleId::new_from_components(
+            module.to_string(),
+            Some(
+                self.modules_versions
+                    .get(module)
+                    .expect("Module version must be present for last emitted module")
+                    .clone(),
+            ),
+            None,
+        )
+    }
 
-        for (module, id) in self.modules_versions.iter() {
-            let module_id =
-                ModuleId::new_from_components(module.to_string(), Some(id.clone()), None);
-            let shared = match module {
-                SplitModuleIdentifier::Single(single) => {
-                    deps.entry(module_id.clone()).or_insert_with(Vec::new);
-                    continue;
-                }
-                SplitModuleIdentifier::Shared(shared) => shared,
-            };
-            // for each part add this shared module as dependency
-            for part in &shared.0 {
-                let part_id = ModuleId::new_from_components(
-                    part.to_string(),
-                    self.modules_versions
-                        .get(&SplitModuleIdentifier::Single(part.clone()))
-                        .cloned(),
-                    None,
-                );
-                deps.entry(part_id)
-                    .or_insert_with(Vec::new)
-                    .push(module_id.clone());
+    fn build_deps_map(&self) -> ModuleDeps {
+        let shared_modules = self
+            .last_module_structure
+            .iter()
+            .filter_map(|(id, _)| id.as_shared().cloned())
+            .collect::<Vec<_>>();
+
+        let mut deps = BTreeMap::new();
+        for (id, _) in &self.last_module_structure {
+            if id.is_shared() {
+                continue;
             }
+
+            let module_id = self.last_module_id(id);
+            let module_deps = id.collect_deps(&shared_modules);
+            let prev = deps.insert(
+                module_id,
+                module_deps
+                    .into_iter()
+                    .map(|m| self.last_module_id(&SplitModuleIdentifier::Shared(m)))
+                    .collect(),
+            );
+            debug_assert!(prev.is_none());
         }
         deps
     }
@@ -457,29 +453,38 @@ impl StructureDiffResult {
 
 impl Display for StructureDiffResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.not_changed() {
+            return write!(f, "No changes detected");
+        }
         // print in format [module1, module2, ...]
-        let with_changed_symbols = self
-            .with_changed_symbols
-            .iter()
-            .map(|m| m.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let with_changed_exports = self
-            .with_changed_exports
-            .iter()
-            .map(|m| m.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let changed_deps = self
-            .changed_deps
-            .iter()
-            .map(|(m, v)| format!("{m}, soft_reload: {v}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        write!(
-            f,
-            "Changed symbols in modules: {}, Changed exports in shared modules: {}, Changed dependent modules: {}",
-            with_changed_symbols, with_changed_exports, changed_deps,
-        )
+        if !self.with_changed_symbols.is_empty() {
+            let with_changed_symbols = self
+                .with_changed_symbols
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, " Modules with changed symbols: {}", with_changed_symbols)?;
+        }
+        if !self.with_changed_exports.is_empty() {
+            let with_changed_exports = self
+                .with_changed_exports
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, " Modules with changed exports: {}", with_changed_exports)?;
+        }
+
+        if !self.changed_deps.is_empty() {
+            let changed_deps = self
+                .changed_deps
+                .iter()
+                .map(|(m, v)| format!("{m}, soft_reload: {v}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, " Changed dependent modules: {}", changed_deps)?;
+        }
+        Ok(())
     }
 }

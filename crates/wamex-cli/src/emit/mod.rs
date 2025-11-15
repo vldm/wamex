@@ -1743,7 +1743,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                 }
             })
             .map(|(output_module_index, id)| {
-                log::debug!("Calculating module {id:?}");
+                log::info!("Calculating module: {id}");
                 let linkage_type = if dyn_linkage {
                     // Main module has no entrypoints.
                     LinkageType::DynamicLinking {
@@ -1774,7 +1774,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
             .into_iter()
             .filter(|(_output_module_index, id)| *id != MAIN_ID)
             .map(|(output_module_index, id)| {
-                log::debug!("Calculating module {id:?}");
+                log::info!("Calculating module: {id}");
                 let stubs_start = main_module.0.indirect_functions.table_entries.len() + 1;
 
                 let table_range = if let SplitModuleIdentifier::Single(id) = &id {
@@ -1794,7 +1794,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                     LinkageType::OriginalLayout
                 };
 
-                let module_deps = Self::find_module_deps(id.clone(), &all_shared_deps);
+                let module_deps = id.collect_deps(&all_shared_deps);
                 (
                     ModuleEmitState::produce_state(
                         module,
@@ -1828,24 +1828,6 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
             shared_modules,
             sub_modules,
         })
-    }
-
-    fn find_module_deps(
-        interested_module: SplitModuleIdentifier,
-        shared_modules: &[SharedModuleIdentifier],
-    ) -> Vec<SharedModuleIdentifier> {
-        let mut result = Vec::new();
-        for shared_module in shared_modules {
-            if matches!(&interested_module, SplitModuleIdentifier::Shared(our_module) if shared_module == our_module)
-            {
-                continue; // skip self
-            }
-            if interested_module.is_part_of(shared_module) {
-                result.push(shared_module.clone());
-            }
-        }
-
-        result
     }
 
     fn iter_modules(

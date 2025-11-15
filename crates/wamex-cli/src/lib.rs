@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -14,12 +14,13 @@ pub mod read;
 
 pub use analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use anyhow::Result;
+pub use incremental::{IncrementalSplitResult, ModuleUpdate, SplitResult};
 pub use read::InputModule;
 pub use wamex_types::{BumpVersion, ModuleId};
 
 use crate::{
     emit::CommonEmitInfo,
-    incremental::{IncrementalSplitResult, IncrementalSplitState},
+    incremental::{IncrementalSplitState, ModuleDeps},
 };
 
 #[derive(Debug, Parser)]
@@ -177,74 +178,16 @@ pub fn split_inner(
     precise_modification: bool,
     split_point_extractor: SplitPointExtractor,
     mut emit_module_fn: impl FnMut(ModuleId, &[u8]) -> Result<()>,
-) -> Result<BTreeMap<ModuleId, Vec<ModuleId>>> {
-    let module = InputModule::parse(input_wasm)?;
-    let info = analysis::ModuleInfo::from_raw_module(module)?;
-    let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
-    let split_points = analysis::split_point::find_split_points(&info, split_point_extractor)?;
-
-    let mut split_program_info =
-        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
-
-    // one of the possible mode is to merge all shared with main chunks into main module.
-    // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
-    crate::emit::merge_main_shared(&mut split_program_info);
-
-    // some wbg functions need to be moved to main before splitting.
-    let wbg_fns = crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
-    if verbose {
-        println!("Split points: {split_points:?}");
-        println!("Split program info: {split_program_info:?}");
-        println!("Dependency graph: {dep_graph:?}");
-        println!("Module symbols:");
-        info.symbols.print_debug();
-
-        println!("Module split details:");
-        for (name, split_deps) in split_program_info.output_modules.iter() {
-            split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
-        }
-    }
-
-    let mut module_ids = BTreeMap::new();
-
-    let emit_fn = |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
-        let module_id = ModuleId::new_from_components(
-            identifier.to_string(),
-            None, // add versioning later
-            None,
-        );
-
-        module_ids.insert(identifier.clone(), module_id.clone());
-        emit_module_fn(module_id, data)
-    };
-
-    crate::emit::emit_modules(
-        &info,
+) -> Result<ModuleDeps> {
+    let mut state = IncrementalSplitState::new();
+    let split_result = state.split_incremental(
+        input_wasm,
         verbose,
-        &split_program_info,
-        &wbg_fns,
         precise_modification,
-        None,
-        emit_fn,
+        split_point_extractor,
+        |identifier: ModuleId, data: &[u8]| -> Result<()> { emit_module_fn(identifier, data) },
     )?;
-
-    let mut deps = BTreeMap::new();
-
-    for (shared, id) in module_ids.iter() {
-        let SplitModuleIdentifier::Shared(shared) = shared else {
-            continue;
-        };
-        // for each part add this shared module as dependency
-        for part in &shared.0 {
-            let part_id = module_ids
-                .get(&SplitModuleIdentifier::Single(part.clone()))
-                .expect("module id exists");
-            deps.entry(part_id.clone())
-                .or_insert_with(Vec::new)
-                .push(id.clone());
-        }
-    }
-    Ok(deps)
+    Ok(split_result.deps)
 }
 
 fn incremental_split(args: Split) -> Result<()> {

@@ -106,6 +106,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
                 black_box(&split_program_info),
                 black_box(&wbg_fns),
                 false,
+                None,
                 |_identifier, data| {
                     // Just count outputs instead of writing to disk
                     output_counter += 1;
@@ -126,6 +127,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
                 black_box(&split_program_info),
                 black_box(&wbg_fns),
                 true,
+                None,
                 |_identifier, data| {
                     // Just count outputs instead of writing to disk
                     output_counter += 1;

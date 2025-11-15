@@ -258,6 +258,37 @@ impl SplitModuleIdentifier {
             Self::Shared(shared) => shared.0.iter().all(|name| other.contains(name)),
         }
     }
+
+    // List all shared modules which name include this split module.
+    // This modules are (directly or indirectly) called by the current module.
+    // NOTE: This method can return modules that are not directly connected to this module.
+    //
+    // Example, consider next tree deps:
+    // Single(A) -> Shared(A,B)
+    // Single(B) -> Shared(A,B)
+    // Single(C) -> Shared(B,C)
+    // Shared(A,B) -> Shared(A,B,C);
+    //
+    // This method will return:
+    // For Single(A) -> [Shared(A,B), Shared(A,B,C)]
+    // For Shared(A,B) -> [Shared(A,B,C)]
+    // ...
+    pub fn collect_deps(
+        &self,
+        shared_modules: &[SharedModuleIdentifier],
+    ) -> Vec<SharedModuleIdentifier> {
+        let mut result = Vec::new();
+        for shared_module in shared_modules {
+            if matches!(&self, SplitModuleIdentifier::Shared(our_module) if shared_module == our_module)
+            {
+                continue; // skip self
+            }
+            if self.is_part_of(shared_module) {
+                result.push(shared_module.clone());
+            }
+        }
+        result
+    }
 }
 
 #[derive(Debug, Default)]
