@@ -7,8 +7,9 @@ use syn::{
     parenthesized,
     parse::{Parse, ParseStream},
     parse_macro_input, parse_quote,
+    punctuated::Punctuated,
     spanned::Spanned,
-    token, Ident, ItemFn, Path, ReturnType, Signature,
+    token, FnArg, Ident, ItemFn, Path, ReturnType, Signature, Token,
 };
 
 enum SplitArgPart {
@@ -56,7 +57,7 @@ impl Parse for SplitArgPart {
 /// Example:
 /// #[split(my_module, wrap_return_with(SomeWrapper), seed(1234))]
 struct SplitArgs {
-    /// The name
+    /// The name of the module to split.
     module_name: Ident,
     /// Wrap exported fn return expression with constructor from this path
     wrap_return_with: Option<Path>,
@@ -76,6 +77,9 @@ struct SplitArgs {
     /// The url to load the module from.
     /// Can be relative or absolute.
     with_url: Option<syn::LitStr>,
+
+    /// Where to find the crate root for wamex.
+    crate_path: Option<Path>,
 }
 
 impl Parse for SplitArgs {
@@ -95,7 +99,8 @@ impl Parse for SplitArgs {
         let mut async_wrap_return_with: Option<Path> = None;
         let mut uniq_id_prefix: Option<Ident> = None;
         let mut custom_loader: Option<Path> = None;
-        let mut module_url: Option<syn::LitStr> = None;
+        let mut with_url: Option<syn::LitStr> = None;
+        let mut crate_path: Option<Path> = None;
 
         while !input.is_empty() {
             let part: SplitArgPart = input.parse()?;
@@ -127,9 +132,13 @@ impl Parse for SplitArgs {
                             let path: Path = syn::parse2(tts)?;
                             custom_loader = Some(path);
                         }
-                        "module_url" => {
-                            ensure_is_empty!(module_url);
-                            module_url = Some(syn::parse2(tts)?);
+                        "with_url" => {
+                            ensure_is_empty!(with_url);
+                            with_url = Some(syn::parse2(tts)?);
+                        }
+                        "crate_path" => {
+                            ensure_is_empty!(crate_path);
+                            crate_path = Some(syn::parse2(tts)?);
                         }
                         _ => {
                             return Err(syn::Error::new(
@@ -154,7 +163,8 @@ impl Parse for SplitArgs {
             async_wrap_return_with,
             uniq_id_prefix,
             custom_loader,
-            with_url: module_url,
+            with_url,
+            crate_path,
         })
     }
 }
@@ -186,11 +196,17 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
         custom_loader,
         async_wrap_return_with,
         with_url,
+        crate_path,
     } = args;
 
     let vis = item_fn.vis;
     let name = &item_fn.sig.ident;
 
+    let root = if let Some(crate_path) = crate_path {
+        crate_path
+    } else {
+        parse_quote! { ::wamex }
+    };
     let uniq_id_prefix = if let Some(uniq_id_prefix) = uniq_id_prefix {
         uniq_id_prefix
     } else {
@@ -209,14 +225,32 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
         "__wamex_00{module_name}00_export_{name}_{uniq_id_prefix}{unique_identifier}"
     );
 
+    let mut args = Vec::new();
+    let mut args_types = Vec::new();
+    for param in item_fn.sig.inputs.iter() {
+        match param {
+            syn::FnArg::Typed(pat_type) => {
+                args.push(pat_type.pat.clone());
+                args_types.push(pat_type.ty.clone());
+            }
+            syn::FnArg::Receiver(_) => {
+                panic!("Methods with self parameter are not supported in #[split] macro");
+            }
+        }
+    }
+    let wamex_arg = format_ident!("__wamex_args");
+    let pass_arg: Punctuated<FnArg, Token![,]> = parse_quote!( #wamex_arg: (#(#args_types),*) );
+
     let mut import_sig = Signature {
         ident: impl_import_ident.clone(),
         asyncness: None,
+        inputs: pass_arg.clone(),
         ..item_fn.sig.clone()
     };
     let mut export_sig = Signature {
         ident: impl_export_ident.clone(),
         asyncness: None,
+        inputs: pass_arg,
         ..item_fn.sig.clone()
     };
 
@@ -261,55 +295,34 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
             }
         }
     }
-
+    let ty = match &item_fn.sig.output {
+        ReturnType::Default => quote! { () },
+        ReturnType::Type(_, ty) => quote! { #ty },
+    };
+    let wrapper_output: ReturnType = parse_quote! {
+            -> impl ::core::future::Future<Output = #ty>
+    };
     let mut wrapper_sig = item_fn.sig;
-    wrapper_sig.asyncness = Some(Default::default());
-    let mut args = Vec::new();
-    for (i, param) in wrapper_sig.inputs.iter_mut().enumerate() {
-        match param {
-            syn::FnArg::Typed(pat_type) => {
-                let param_ident = format_ident!("__wamex_arg_{i}");
-                args.push(param_ident.clone());
-                pat_type.pat = Box::new(syn::Pat::Ident(syn::PatIdent {
-                    attrs: vec![],
-                    by_ref: None,
-                    mutability: None,
-                    ident: param_ident,
-                    subpat: None,
-                }));
-            }
-            syn::FnArg::Receiver(_) => {
-                args.push(format_ident!("self"));
-            }
-        }
-    }
+    wrapper_sig.output = wrapper_output;
+    wrapper_sig.asyncness = None; // Some(Default::default());
 
     let attrs = item_fn.attrs;
-    let import_call_expr = if is_async {
-        quote! {
-            #impl_import_ident( #(#args),* ).await
-        }
-    } else {
-        quote! {
-            #impl_import_ident( #(#args),* )
-        }
-    };
 
     let loader = if let Some(custom_loader) = custom_loader {
         quote! { #custom_loader }
     } else {
-        quote! { ::wamex::load }
+        quote! { #root::load }
     };
 
     let module_name_str = module_name.to_string();
 
     let module_id = if let Some(url) = with_url {
         quote! {
-            ::wamex::ModuleId::with_url(#module_name_str, #url)
+            #root::ModuleId::with_url(#module_name_str, #url)
         }
     } else {
         quote! {
-            ::wamex::ModuleId::new(#module_name_str)
+            #root::ModuleId::new(#module_name_str)
         }
     };
 
@@ -325,15 +338,20 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
                 #[no_mangle]
                 #import_sig;
             }
-            #loader(#module_id).await;
 
             #[allow(improper_ctypes_definitions)]
             #[no_mangle]
             pub extern "C" #export_sig {
+                let (#(#args)*) : ( #(#args_types),* ) = #wamex_arg;
                 #body
             }
 
-            unsafe { #import_call_expr }
+            #root::WamexLoadRunner::new(
+                #loader(#module_id),
+                #root::unsafe_fn::<#is_async, _, _>(#impl_import_ident),
+                ( #(#args),* ))
+            // #loader(#module_id).await;
+
         }
     }
     .into()

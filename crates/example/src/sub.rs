@@ -1,5 +1,5 @@
 use std::pin::Pin;
-use super::*;
+// use super::*;
 
 pub const SOME_STATIC_SHARED: &str = "SUPER STATIC SHARED STRING";
 #[cfg_attr(feature = "split", wamex::split(static_str))]
