@@ -17,7 +17,7 @@ pub struct BumpVersion {
     pub version: u32,
 }
 impl BumpVersion {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         BumpVersion { version: 0 }
     }
     pub fn from_bytes(arr: &[u8; 4]) -> Self {

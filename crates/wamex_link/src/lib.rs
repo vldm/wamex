@@ -390,16 +390,19 @@ async fn fetch_buffer(url: String) -> Result<JsValue, Error> {
 
 // Load webassembly module from URL and instantiate it, link with active imports.
 // Return true if module was updated during this load call.
-pub async fn load(module_id: ModuleId) -> Result<bool, String> {
-    Box::pin(load_inner(module_id)).await.map_err(|e| {
-        error!("Error loading module: {}", e);
-        e.to_string()
-    })
+pub async fn load(module_id: ModuleId) -> bool {
+    Box::pin(try_load(module_id))
+        .await
+        .map_err(|e| {
+            error!("Error loading module: {}", e);
+            e
+        })
+        .unwrap()
 }
 
 // Load webassembly module from URL and instantiate it, link with active imports.
 // Return true if module was updated during this load call.
-async fn load_inner(module_id: ModuleId) -> Result<bool, Error> {
+pub async fn try_load(module_id: ModuleId) -> Result<bool, Error> {
     debug!("call load for module: {:?}", module_id);
     // is another load in progress?
     let waiter =
@@ -479,7 +482,7 @@ async fn load_inner(module_id: ModuleId) -> Result<bool, Error> {
             );
             for dep in &metadata.needed_libraries {
                 let dep_id = ModuleId::dep_from_module(&module_id, &dep);
-                Box::pin(load_inner(dep_id.clone())).await.map_err(|e| {
+                Box::pin(try_load(dep_id.clone())).await.map_err(|e| {
                     Error::CannotResolveDependency {
                         module_id: module_id.clone(),
                         dependency: dep_id,

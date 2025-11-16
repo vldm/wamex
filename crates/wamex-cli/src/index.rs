@@ -155,7 +155,7 @@ impl<Type, Res> FromIterator<(Id<Type>, Res)> for IdMap<Id<Type>, Res> {
 }
 
 impl<T: Indexed> IdVec<T> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         IdVec {
             types: Vec::new(),
             _idx: PhantomData,

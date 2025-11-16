@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use super::*;
 
 pub const SOME_STATIC_SHARED: &str = "SUPER STATIC SHARED STRING";
 #[cfg_attr(feature = "split", wamex::split(static_str))]
@@ -19,6 +20,7 @@ pub fn string_build_with_shared_const() -> Pin<Box<String>> {
     let mut new = String::from(SOME_STATIC_SHARED);
     new.push_str("hi");
 
+    // core::panicking
     Box::pin(new)
 }
 
@@ -47,5 +49,7 @@ pub async fn dep_dyn() -> String {
 
 #[inline(never)]
 pub fn dyn_fns_inner(func: &dyn Fn() -> String) -> String {
-    func()
+    let mut res = func();
+    res.push_str(" FROM INNER");
+    res
 }

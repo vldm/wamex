@@ -14,14 +14,13 @@ pub mod read;
 
 pub use analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use anyhow::Result;
-pub use incremental::{IncrementalSplitResult, ModuleUpdate, SplitResult};
+pub use incremental::{
+    IncrementalSplitResult, IncrementalSplitState, ModuleDeps, ModuleUpdate, SplitResult,
+};
 pub use read::InputModule;
 pub use wamex_types::{BumpVersion, ModuleId};
 
-use crate::{
-    emit::CommonEmitInfo,
-    incremental::{IncrementalSplitState, ModuleDeps},
-};
+use crate::emit::CommonEmitInfo;
 
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]

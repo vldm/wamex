@@ -64,13 +64,13 @@ struct SplitArgs {
     /// If used with `wrap_return_with` - inner body is wrapped with `wrap_return_with` and then
     /// the resulting future is wrapped with `async_wrap_return_with`.
     async_wrap_return_with: Option<Path>,
-    /// Add tokens as a seed for unique id generation.
-    /// Usefull to differentiate multiple split functions with conflict fn_name/module_name.
-    seed: Option<TokenStream>,
+    /// Add tokens as a prefix for unique id.
+    /// Usefull to differentiate multiple split functions with conflict module_name/fn_name.
+    uniq_id_prefix: Option<Ident>,
 
     /// The path to the custom loader.
     /// In format of `custom_loader(some::path::to::loader::function)`, this function should be async and have signature:
-    /// `async fn loader(module_id: ModuleId) -> Result<bool, _>`
+    /// `async fn loader(module_id: ModuleId) -> bool`
     custom_loader: Option<Path>,
 
     /// The url to load the module from.
@@ -80,7 +80,7 @@ struct SplitArgs {
 
 impl Parse for SplitArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        macro_rules! ensure_is_non_empty {
+        macro_rules! ensure_is_empty {
             ($arg_name:expr) => {
                 if $arg_name.is_some() {
                     return Err(syn::Error::new(
@@ -93,7 +93,7 @@ impl Parse for SplitArgs {
         let mut module_name = None;
         let mut wrap_return_with: Option<Path> = None;
         let mut async_wrap_return_with: Option<Path> = None;
-        let mut seed: Option<TokenStream> = None;
+        let mut uniq_id_prefix: Option<Ident> = None;
         let mut custom_loader: Option<Path> = None;
         let mut module_url: Option<syn::LitStr> = None;
 
@@ -106,29 +106,29 @@ impl Parse for SplitArgs {
                 SplitArgPart::Argument { arg_name, tts, .. } => {
                     match arg_name.to_string().as_str() {
                         "module_name" => {
-                            ensure_is_non_empty!(module_name);
+                            ensure_is_empty!(module_name);
                             module_name = Some(syn::parse2(tts)?);
                         }
                         "wrap_return_with" => {
-                            ensure_is_non_empty!(wrap_return_with);
+                            ensure_is_empty!(wrap_return_with);
                             let path: Path = syn::parse2(tts)?;
                             wrap_return_with = Some(path);
                         }
                         "async_wrap_return_with" => {
-                            ensure_is_non_empty!(async_wrap_return_with);
+                            ensure_is_empty!(async_wrap_return_with);
                             async_wrap_return_with = Some(syn::parse2(tts)?);
                         }
-                        "seed" => {
-                            ensure_is_non_empty!(seed);
-                            seed = Some(tts);
+                        "uniq_id_prefix" => {
+                            ensure_is_empty!(uniq_id_prefix);
+                            uniq_id_prefix = Some(syn::parse2(tts)?);
                         }
                         "custom_loader" => {
-                            ensure_is_non_empty!(custom_loader);
+                            ensure_is_empty!(custom_loader);
                             let path: Path = syn::parse2(tts)?;
                             custom_loader = Some(path);
                         }
                         "module_url" => {
-                            ensure_is_non_empty!(module_url);
+                            ensure_is_empty!(module_url);
                             module_url = Some(syn::parse2(tts)?);
                         }
                         _ => {
@@ -152,7 +152,7 @@ impl Parse for SplitArgs {
                 .ok_or_else(|| syn::Error::new(input.span(), "Expected module name"))?,
             wrap_return_with,
             async_wrap_return_with,
-            seed,
+            uniq_id_prefix,
             custom_loader,
             with_url: module_url,
         })
@@ -164,16 +164,25 @@ pub fn split(
     args: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
+    let file = file_name(input.clone());
     let args = parse_macro_input!(args as SplitArgs);
     let item_fn = parse_macro_input!(input as ItemFn);
-    split2(args, item_fn).into()
+    split_inner(args, item_fn, &file).into()
 }
 
-fn split2(args: SplitArgs, item_fn: ItemFn) -> TokenStream {
+fn file_name(input: proc_macro::TokenStream) -> String {
+    input
+        .into_iter()
+        .next()
+        .map(|tt| tt.span().file())
+        .unwrap_or_default()
+}
+
+fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream {
     let SplitArgs {
         module_name,
         wrap_return_with,
-        seed,
+        uniq_id_prefix,
         custom_loader,
         async_wrap_return_with,
         with_url,
@@ -182,21 +191,23 @@ fn split2(args: SplitArgs, item_fn: ItemFn) -> TokenStream {
     let vis = item_fn.vis;
     let name = &item_fn.sig.ident;
 
-    let seed = if let Some(seed) = seed {
-        quote! { #seed }
+    let uniq_id_prefix = if let Some(uniq_id_prefix) = uniq_id_prefix {
+        uniq_id_prefix
     } else {
-        quote! { () }
+        Ident::new("u", proc_macro2::Span::call_site())
     };
     // Unique identifier can help avoid name clashes when the same function is defined in multiple modules.
     // But using span for this make incremental extraction impossible - since a lot of symbols changes each time.
-    // TODO: Instead of span we can use file path. But currently we don't have access to it here, so just force user to provide unique function names.
+    // Instead of span we use file path. But currently this not fix a case where multiple functions have the same name in the same file.
     let unique_identifier =
-        base16::encode_lower(&sha2::Sha256::digest(format!("{name} {seed}",))[..16]);
+        base16::encode_lower(&sha2::Sha256::digest(format!("{name} {file_name}",))[..16]);
 
-    let impl_import_ident =
-        format_ident!("__wamex_00{module_name}00_import_{unique_identifier}_{name}");
-    let impl_export_ident =
-        format_ident!("__wamex_00{module_name}00_export_{unique_identifier}_{name}");
+    let impl_import_ident = format_ident!(
+        "__wamex_00{module_name}00_import_{name}_{uniq_id_prefix}{unique_identifier}"
+    );
+    let impl_export_ident = format_ident!(
+        "__wamex_00{module_name}00_export_{name}_{uniq_id_prefix}{unique_identifier}"
+    );
 
     let mut import_sig = Signature {
         ident: impl_import_ident.clone(),
@@ -314,7 +325,7 @@ fn split2(args: SplitArgs, item_fn: ItemFn) -> TokenStream {
                 #[no_mangle]
                 #import_sig;
             }
-            #loader(#module_id).await.unwrap();
+            #loader(#module_id).await;
 
             #[allow(improper_ctypes_definitions)]
             #[no_mangle]

@@ -31,6 +31,8 @@ pub struct OutputModuleInfo {
 pub struct SplitPoint {
     // Name of split function that will be moved to the submodule.
     pub module_name: String,
+    // Unique id to identify split point functions.
+    pub unique_id: String,
     // Index in imports[] of the module import function.
     pub import: ImportId,
     // Index in functions[] of the corespoinding import
@@ -41,7 +43,7 @@ pub struct SplitPoint {
     pub export_func: InputFuncId,
 }
 
-fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {
+pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {
     if !name.starts_with(prefix) {
         return None;
     }
@@ -53,6 +55,8 @@ fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'
     Some((module_name, fn_name))
 }
 
+pub(crate) const SPLIT_IMPORT_POSTFIX: &str = "00_import_";
+pub(crate) const SPLIT_EXPORT_POSTFIX: &str = "00_export_";
 fn find_split_points_with_prefix(
     info: &analysis::ModuleInfo,
     prefix: &str,
@@ -74,8 +78,8 @@ fn find_split_points_with_prefix(
         };
     }
 
-    process_imports_or_exports!("00_import_", import_map, imports, ImportId);
-    process_imports_or_exports!("00_export_", export_map, exports, ExportId);
+    process_imports_or_exports!(SPLIT_IMPORT_POSTFIX, import_map, imports, ImportId);
+    process_imports_or_exports!(SPLIT_EXPORT_POSTFIX, export_map, exports, ExportId);
     let mut export_map = export_map;
 
     let split_points = import_map
@@ -105,6 +109,7 @@ fn find_split_points_with_prefix(
                 })?;
             Ok(SplitPoint {
                 module_name: key.0,
+                unique_id: key.1,
                 import: import_id,
                 import_func,
                 export: export_id,
@@ -130,11 +135,12 @@ fn find_split_points_with_prefix(
 pub fn find_split_points_legacy(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
     find_split_points_with_prefix(info, "__wasm_split_00")
 }
+pub(crate) const WAMEX_ENTRY_PREFIX: &str = "__wamex_00";
 /// Search for __wamex_00<module_name>00_import_<import_id> and
 /// __wamex_00<module_name>00_export_<export_id> functions
 /// and extract them as SplitPoints.
 fn find_split_points_wamex(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
-    find_split_points_with_prefix(info, "__wamex_00")
+    find_split_points_with_prefix(info, WAMEX_ENTRY_PREFIX)
 }
 
 pub fn find_split_points(
@@ -349,6 +355,9 @@ impl SplitProgramInfo {
                 .entry(split_point.module_name.clone())
                 .or_default()
                 .push(split_point);
+        }
+        for results in result.values_mut() {
+            results.sort_by_key(|sp| sp.unique_id.clone());
         }
         result
     }

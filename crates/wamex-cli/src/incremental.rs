@@ -44,10 +44,10 @@ pub struct IncrementalSplitState {
 impl IncrementalSplitState {
     pub fn new() -> Self {
         Self {
-            last_module_info: StaticModuleInfo::default(),
+            last_module_info: StaticModuleInfo::empty(),
             last_module_structure: Vec::new(),
             modules_versions: BTreeMap::new(),
-            bump_version: BumpVersion::default(),
+            bump_version: BumpVersion::new(),
         }
     }
 
@@ -405,7 +405,8 @@ impl StructureDiffResult {
                 .into_iter()
                 .map(|m| (m, false)); // child is just restructured
 
-        let mut changed_deps = std::iter::chain(changed_symbols_users, changed_exports_users)
+        let mut changed_deps = changed_symbols_users
+            .chain(changed_exports_users)
             .collect::<BTreeMap<_, _>>();
 
         // Remove duplicates

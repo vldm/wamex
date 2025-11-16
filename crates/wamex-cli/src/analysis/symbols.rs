@@ -124,6 +124,13 @@ pub struct SymbolMap<'src> {
 }
 
 impl<'src> SymbolMap<'src> {
+    pub fn empty() -> Self {
+        Self {
+            symbols: IdVec::new(),
+            funcs_ids: IdMap::new(),
+            datas_ids: BTreeSet::new(),
+        }
+    }
     pub fn new(wasm: &'_ crate::read::InputModule<'src>, num_imports_fn: usize) -> Result<Self> {
         use wasmparser::SymbolInfo;
 
