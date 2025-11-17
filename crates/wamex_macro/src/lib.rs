@@ -325,6 +325,11 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
             #root::ModuleId::new(#module_name_str)
         }
     };
+    let load_and_execute = if is_async {
+        quote! { #root::load_and_execute }
+    } else {
+        quote! { #root::load_and_execute_sync }
+    };
 
     quote! {
         #(#attrs)*
@@ -346,11 +351,10 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
                 #body
             }
 
-            #root::WamexLoadRunner::new(
+            #load_and_execute(
                 #loader(#module_id),
-                #root::unsafe_fn::<#is_async, _, _>(#impl_import_ident),
+                #impl_import_ident,
                 ( #(#args),* ))
-            // #loader(#module_id).await;
 
         }
     }

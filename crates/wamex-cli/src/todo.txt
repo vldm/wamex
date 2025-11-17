@@ -24,3 +24,4 @@
 
 
 1. Cleanup tests (recreate test-data with rebuild.sh, mb without lazy-router)
+2. Remove wamex_import fn from modules, since they only can be called by indirect calls. (check if it is possible and inline)

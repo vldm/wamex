@@ -155,7 +155,7 @@ pub fn split(args: Split) -> Result<()> {
         args.precise_modification,
         args.split_point_extractor,
         |identifier: ModuleId, data: &[u8]| -> Result<()> {
-            let output_filename = format!("{}.wasm", identifier.module_full_name());
+            let output_filename = format!("{}.wasm", identifier.module_name());
             if !args.dry_run {
                 std::fs::create_dir_all(&args.output)?;
                 std::fs::write(args.output.join(output_filename), data)?;

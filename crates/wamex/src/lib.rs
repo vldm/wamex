@@ -3,4 +3,4 @@ pub use wamex_macro::split;
 pub use wamex_types::{BumpVersion, ModuleId};
 
 mod loader_combinator;
-pub use loader_combinator::{unsafe_fn, WamexLoadRunner};
+pub use loader_combinator::{load_and_execute, load_and_execute_sync};
