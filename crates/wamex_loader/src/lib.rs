@@ -644,12 +644,12 @@ pub async unsafe fn unload(module_id: ModuleId) -> Result<(), Error> {
 #[cfg_attr(feature = "bindgen_refetch", wasm_bindgen)]
 pub fn __wamex_mark_for_update(module_name: &str) -> bool {
     LinkageState::global(|state| {
-        let Some(instantiated) = state.modules.get_mut(module_name) else {
+        let Some(module_info) = state.modules.get_mut(module_name) else {
             return Err(Error::ModuleNotFound {
                 module_id: ModuleId::new(module_name),
             });
         };
-        instantiated.mark_for_refetch();
+        module_info.mark_for_refetch();
         Ok(())
     })
     .is_ok()

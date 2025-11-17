@@ -4,7 +4,7 @@ It is based on [wasm-split-prototype](https://github.com/jbms/wasm-split-prototy
 unlike `wasm-split` splitted modules are partially implementing [dynamic linking convention](https://github.com/WebAssembly/tool-conventions/blob/main/DynamicLinking.md).
 
 This allows to load and reload them on demand, which can be used for hot module reloading (HMR) during development.
-
+Also making modules dynamically loadable allows compatibility checking of provided and required symbols during runtime loading.
 
 ## Motivation
 During development of large WebAssembly application, some pieces of app can be rarely used,
@@ -20,6 +20,57 @@ But this reload clear all "in-memory" state. Which makes "hot reloading" not so 
 
 The idea of `wamex` is inspired by [HMR](https://pinia.vuejs.org/cookbook/hot-module-replacement.html).
 
+# Usage
+There three main parts of the tool - macro that marks functions as splitable, CLI tool that performs the actual splitting, and loader that loads splitted modules during runtime.
+
+## Macro usage
+
+Include `wamex` crate in your `Cargo.toml`:
+
+```toml
+[dependencies]
+wamex = "0.1"
+```
+
+Then mark functions that should be extracted into separate module with `#[wamex::split]` attribute:
+
+```rust
+#[wamex::split(module_name)]
+fn heavy_computation() -> u32 {
+    // some heavy computation here
+}
+#[wamex::split(module_name)]
+async fn fetch_data() {
+    // some async data fetching here
+}
+```
+
+Functions marked with this attribute will be extracted during wamex CLI tool execution.
+Wamex suport both sync and async functions, but for end usage async function will be generated. This is because loading sub-module is async operation.
+
+Marking function with `#[wamex::split]` will generate code like this:
+```rust
+pub fn heavy_computation() -> impl ::core::future::Future<Output = u32> {
+        #[link(wasm_import_module = "./__wamex_loader.rs")]
+        extern "C" {
+            fn IMPORT_FN() -> u32;
+        }
+        #[no_mangle]
+        pub extern "C" fn EXPORT_FN() -> u32 {
+            // some heavy computation here
+        }
+        async {
+            let _ = ::wamex::load(::wamex::ModuleId::new("module_name")).await;
+            unsafe{IMPORT_FN()}
+        }
+    }
+```
+The details about name of import/export functions are described in [Sub-module convention](#sub-module-convention) section.
+This structure can be recreated in other languages, so `wamex-cli` can be used to split modules written in other languages too.
+
+# Runtime linking
+Currently `wamex` comes with `wamex-loader` crate that provides fully functional runtime loader based on `wasm-bindgen` and `web-sys`.
+By the report of `twiggy` its footprint on MVP is around 100Kb, mostly because of `DynamicLinking` parsing, this size is big for web, but there are lot of opportunities for optimizations in future.
 
 # Implementation details
 
@@ -69,79 +120,3 @@ Sub modules are parts of source modules that need to be extracted, each sub modu
 that was implemented in the original prototype. Sub module should contain two functions marked as `#[no_mangle]`:
 - `__wamex_00{SUB_MODULE_NAME}00_export_{SALT}` - this function is sub module entry point, it is defined in the sub module and exported to the main module.
 - `__wamex_00{SUB_MODULE_NAME}00_import_{SALT}` - this function is used in the main module to lazy load sub module and call it's entry point.
-
-## Module declaration:
-
-```json
-{
-    "main": {
-        // list of all exported functions
-        "provides": [
-            {
-                "name": "main_exported_function",
-                "content_hash": "hash_of_function",
-                "signature": "signature_of_function"
-            },
-            {
-                "name": "main_data_field",
-                "content_hash": "hash_of_data",
-                "signature": "signature_of_data"
-            }
-        ],
-        // list of all dependencies
-        "deps": {
-            "sub_module": {
-
-                "symbols": [
-                    {
-                        "name": "sub_module_exported_function",
-                        // ?
-                        "content_hash": "hash_of_function",
-                        "signature": "signature_of_function"
-                    }
-                ]
-            }
-        },
-    },
-    "sub_module": {
-        "version": "hash",
-        // list of all exported functions
-        "provides": [
-            {
-                "name": "sub_module_exported_function",
-                "content_hash": "hash_of_function",
-                "signature": "signature_of_function"
-            }
-        ],
-        // list of all dependencies
-        "deps": {
-            "main_module": {
-
-                "symbols": [
-                    {
-                        "name": "main_module_data",
-                        // ?
-                        "content_hash": "hash_of_data",
-                        "signature": "signature_of_data"
-                    }
-                ]
-            }
-        },
-    },
-    // Save symbols
-    "snapshot": {
-        // Vec<(name, hash)> of the symbol
-        "symbols": [
-            // Symbol stored as tuple to make it ordered and compact (avoid repeating field names)
-            // signature contain name and type of the symbol
-            ["signature", "hash"],
-            ["other_signature", "hash"],
-            // ...
-        ],
-        // Map<ID, Vec<ID>> of dependencies, where ID is index in the `symbols` array
-        "deps":{
-            0:[1, 2],
-        }
-    }
-}
-```

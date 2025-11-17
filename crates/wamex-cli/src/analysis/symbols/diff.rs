@@ -54,7 +54,6 @@ where
     }
     pub fn symbol_map(&self) -> SymbolMapping {
         let mut mapping = self.build_name_mapping();
-        
         self.try_match_wamex_split_point(&mut mapping);
         self.refine_mapping(&mut mapping);
         mapping

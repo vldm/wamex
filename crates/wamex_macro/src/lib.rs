@@ -331,7 +331,7 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
         #vis #wrapper_sig {
 
             // This import will be replaced so we can place any module name here
-            #[link(wasm_import_module = "./__wamex_link.rs")]
+            #[link(wasm_import_module = "./__wamex_loader.rs")]
             extern "C" {
 
                 #[allow(improper_ctypes)]

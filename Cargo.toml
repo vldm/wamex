@@ -3,6 +3,6 @@ members = ["crates/*", "test-data/simple-graph"]
 resolver = "2"
 
 [profile.release]
-# debug = true
+debug = true
 opt-level = "s"
 lto = true
