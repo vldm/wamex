@@ -268,15 +268,19 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
         quote! { #(#original_body_stmts)* }
     };
 
+    let ty = match &item_fn.sig.output {
+        ReturnType::Default => quote! { () },
+        ReturnType::Type(_, ty) => quote! { #ty },
+    };
+
+    let pin_box_ty: syn::Type =
+        parse_quote! { ::core::pin::Pin<Box<dyn ::core::future::Future<Output = #ty>>> };
+
     let is_async = item_fn.sig.asyncness.is_some();
     // Convert async fn to fn returning Pin<Box<dyn Future>>
     if is_async {
-        let ty = match &item_fn.sig.output {
-            ReturnType::Default => quote! { () },
-            ReturnType::Type(_, ty) => quote! { #ty },
-        };
         let async_output: ReturnType = parse_quote! {
-            -> ::core::pin::Pin<Box<dyn ::core::future::Future<Output = #ty>>>
+            -> #pin_box_ty
         };
         export_sig.output = async_output.clone();
         import_sig.output = async_output;
@@ -295,12 +299,27 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
             }
         }
     }
-    let ty = match &item_fn.sig.output {
-        ReturnType::Default => quote! { () },
-        ReturnType::Type(_, ty) => quote! { #ty },
+
+    let args_tuple = quote!((#(#args_types),*));
+    let out_type = if is_async {
+        quote!( -> ::wamex:: WamexLoadRunner<
+                    #args_tuple, //args
+                    impl ::core::future::Future<Output = bool>, //loader
+                    ::wamex::UnsafeFn<#args_tuple,
+                    #pin_box_ty
+                    >,  #pin_box_ty>)
+    } else {
+        quote!( -> ::wamex:: WamexLoadRunner<
+            #args_tuple, //args
+            impl ::core::future::Future<Output = bool>, //loader
+            ::wamex::UnsafeFn<#args_tuple,
+            #ty
+            >,  ::wamex::NonAsync>)
     };
+
+    println!("{}", &out_type);
     let wrapper_output: ReturnType = parse_quote! {
-            -> impl ::core::future::Future<Output = #ty>
+           #out_type// impl ::core::future::Future<Output = #ty>
     };
     let mut wrapper_sig = item_fn.sig;
     wrapper_sig.output = wrapper_output;
@@ -340,12 +359,11 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
             extern "C" {
 
                 #[allow(improper_ctypes)]
-                #[no_mangle]
                 #import_sig;
             }
 
             #[allow(improper_ctypes_definitions)]
-            #[no_mangle]
+            #[unsafe(no_mangle)]
             pub extern "C" #export_sig {
                 let (#(#args)*) : ( #(#args_types),* ) = #wamex_arg;
                 #body

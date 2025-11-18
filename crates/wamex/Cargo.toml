@@ -7,6 +7,7 @@ edition = "2021"
 wamex_macro = { version = "0.1.0", path = "../wamex_macro" }
 wamex_loader = { version = "0.1.0", path = "../wamex_loader" }
 wamex_types = { version = "0.1.0", path = "../wamex_types" }
+pin-project-lite = "0.2.16"
 
 [features]
 default = []

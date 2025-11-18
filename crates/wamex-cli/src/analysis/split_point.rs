@@ -119,7 +119,7 @@ fn find_split_points_with_prefix(
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
 
     if let Some((key, _)) = export_map.iter().next() {
-        anyhow::bail!(
+        log::error!(
             "No corresponding import for split export {key:?} hash {key_hash:?}. Maybe split module is defined but not used.",
             key_hash = key.1,
             key = key.0
