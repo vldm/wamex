@@ -301,15 +301,15 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
     }
 
     let args_tuple = quote!((#(#args_types),*));
-    let out_type = if is_async {
-        quote!( -> ::wamex:: WamexLoadRunner<
+    let wrapper_output: ReturnType = if is_async {
+        parse_quote!( -> ::wamex:: WamexLoadRunner<
                     #args_tuple, //args
                     impl ::core::future::Future<Output = bool>, //loader
                     ::wamex::UnsafeFn<#args_tuple,
                     #pin_box_ty
                     >,  #pin_box_ty>)
     } else {
-        quote!( -> ::wamex:: WamexLoadRunner<
+        parse_quote!( -> ::wamex:: WamexLoadRunner<
             #args_tuple, //args
             impl ::core::future::Future<Output = bool>, //loader
             ::wamex::UnsafeFn<#args_tuple,
@@ -317,13 +317,9 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
             >,  ::wamex::NonAsync>)
     };
 
-    println!("{}", &out_type);
-    let wrapper_output: ReturnType = parse_quote! {
-           #out_type// impl ::core::future::Future<Output = #ty>
-    };
     let mut wrapper_sig = item_fn.sig;
     wrapper_sig.output = wrapper_output;
-    wrapper_sig.asyncness = None; // Some(Default::default());
+    wrapper_sig.asyncness = None;
 
     let attrs = item_fn.attrs;
 
