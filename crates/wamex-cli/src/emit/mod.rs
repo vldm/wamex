@@ -263,11 +263,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let lazy_export = output_module_info
                     .split_points
                     .iter()
-                    .any(|split_point| split_point.export_func == func_id);
+                    .any(|split_point| split_point.export_func() == func_id);
                 static_export || lazy_export
             };
 
-            if emit_info.is_entrypoint_import_func(&func_id) {
+            if emit_info.is_external_entrypoint(&func_id) {
                 indirect_funcs_stubs.push((func_id, need_export));
             } else if let Some(import_id) = module_info.get_function_import_id(func_id) {
                 let import_fn = module_info.wasm.imports[import_id];
@@ -551,7 +551,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 export: *need_export,
                 input_func_id: *input_func_id,
                 kind: DefinedFunctionKind::IndirectTrampoline {
-                    table_index_offset: emit_info.entrypoint_index(input_func_id).unwrap(),
+                    table_index_offset: emit_info.external_entrypoint_index(input_func_id).unwrap(),
                 },
             },
         ));
@@ -600,7 +600,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             let entrypoints = output_module_info
                 .split_points
                 .iter()
-                .map(|sp| sp.export_func)
+                .map(|sp| sp.export_func())
                 .collect::<Vec<_>>();
 
             let extern_modules = shared_modules
@@ -1582,17 +1582,18 @@ impl<'src> CommonEmitInfo<'src> {
             start..end
         })
     }
-    fn entrypoint_index(&self, entrypoint_func: &InputFuncId) -> Option<u32> {
+    fn external_entrypoint_index(&self, entrypoint_func: &InputFuncId) -> Option<u32> {
         self.modules_decl.values().find_map(|module| {
             module
                 .split_points
                 .iter()
-                .position(|sp| &sp.import_func == entrypoint_func)
+                .position(|sp| sp.import_func() == *entrypoint_func)
                 .map(|pos| module.split_points_offset + pos as u32)
         })
     }
 
-    fn is_entrypoint_import_func(&self, import_fn: &InputFuncId) -> bool {
+    // Checks if given import function is an entrypoint for any module.
+    fn is_external_entrypoint(&self, import_fn: &InputFuncId) -> bool {
         self.split_point_imports.contains(import_fn)
     }
 
@@ -1624,7 +1625,7 @@ impl<'src> CommonEmitInfo<'src> {
             );
 
             for split_point in output_module.split_points.iter() {
-                split_point_imports.insert(split_point.import_func);
+                split_point_imports.insert(split_point.import_func());
             }
         }
 

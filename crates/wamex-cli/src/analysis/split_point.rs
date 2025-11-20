@@ -30,17 +30,26 @@ pub struct OutputModuleInfo {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SplitPoint {
     // Name of split function that will be moved to the submodule.
-    pub module_name: String,
+    module_name: String,
     // Unique id to identify split point functions.
-    pub unique_id: String,
+    unique_id: String,
     // Index in imports[] of the module import function.
-    pub import: ImportId,
+    import: ImportId,
     // Index in functions[] of the corespoinding import
-    pub import_func: InputFuncId,
+    import_func: InputFuncId,
     // Index in exports[] of the module export function.
-    pub export: ExportId,
+    export: ExportId,
     // Index in functions[] of corespoiding export
-    pub export_func: InputFuncId,
+    export_func: InputFuncId,
+}
+
+impl SplitPoint {
+    pub fn import_func(&self) -> InputFuncId {
+        self.import_func
+    }
+    pub fn export_func(&self) -> InputFuncId {
+        self.export_func
+    }
 }
 
 pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {
