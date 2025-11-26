@@ -231,6 +231,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         shared_modules: &[SharedModuleIdentifier],
         linkage_type: LinkageType,
         is_nonexportable: impl Fn(SymbolId) -> bool,
+        version: BumpVersion,
     ) -> ModuleEmitState<'any, 'src> {
         log::debug!("output_module_info: {output_module_info:#?}");
         // log::debug!("module_id: {module_id:#?}");
@@ -670,7 +671,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             functions: funcs,
             linkage_type,
             linked_modules: shared_modules.to_vec(),
-            incremental_version: Default::default(),
+            incremental_version: version,
         }
     }
 
@@ -1704,6 +1705,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
         verbose: bool,
         module: &'a analysis::ModuleInfo<'src>,
         program_info: &SplitProgramInfo,
+        version: BumpVersion,
         is_nonexported_fn: impl Fn(SymbolId) -> bool + Copy,
     ) -> Result<Self> {
         let modules_ids_iter = program_info
@@ -1765,6 +1767,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                         &NO_DEPS,
                         linkage_type,
                         is_nonexported_fn,
+                        version,
                     ),
                     id,
                 )
@@ -1806,6 +1809,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                         &module_deps,
                         linkage_type,
                         is_nonexported_fn,
+                        version,
                     ),
                     id,
                 )
@@ -1910,13 +1914,6 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
                 .iter()
                 .any(|(_, mod_state)| mod_state.imports.contains(node))
     };
-
-    let debug_id = Id::from_index(27183);
-
-    log::debug!(
-        "Debugging ID: {debug_id:?} is_imported_by_other: {}",
-        is_imported_by_other(&debug_id)
-    );
 
     #[cfg(debug_assertions)]
     let mut check_imports = vec![];
@@ -2046,16 +2043,20 @@ pub fn emit_modules<'a, 'src>(
     program_info: &SplitProgramInfo,
     wbg_fns: &HashSet<SymbolId>,
     precise_modification: bool,
-
     whitelist: Option<&BTreeSet<SplitModuleIdentifier>>,
+    version: BumpVersion,
     emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let emit_info = CommonEmitInfo::new(module, verbose, program_info)?;
-    let calculated =
-        ComputedModules::produce_state(&emit_info, verbose, module, program_info, |func_id| {
-            wbg_fns.contains(&func_id)
-        })
-        .context("Error calculating modules")?;
+    let calculated = ComputedModules::produce_state(
+        &emit_info,
+        verbose,
+        module,
+        program_info,
+        version,
+        |func_id| wbg_fns.contains(&func_id),
+    )
+    .context("Error calculating modules")?;
     calculated.emit_modules(precise_modification, whitelist, emit_fn)?;
     Ok(())
 }

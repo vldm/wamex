@@ -1,4 +1,4 @@
-pub use wamex_loader::{load, Result};
+pub use wamex_loader::{__wamex_mark_for_update as mark_for_update, load, Result};
 pub use wamex_macro::split;
 pub use wamex_types::{BumpVersion, ModuleId};
 

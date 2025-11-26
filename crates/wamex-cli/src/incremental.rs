@@ -33,6 +33,7 @@ pub struct SplitResult {
     _non_exhaustive: (),
 }
 
+#[derive(Clone)]
 pub struct IncrementalSplitState {
     // Symbols map for the latest source module.
     last_module_info: StaticModuleInfo,
@@ -49,6 +50,9 @@ impl IncrementalSplitState {
             modules_versions: BTreeMap::new(),
             bump_version: BumpVersion::new(),
         }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.last_module_structure.is_empty()
     }
 
     pub fn split_incremental(
@@ -110,10 +114,11 @@ impl IncrementalSplitState {
         self.bump_version.bump();
         let whitelist = structure_diff.whitelist();
 
+        let latest_version = self.bump_version.clone();
         // 5.  Re-split only changed modules.
         let emit_fn = |identifier: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             self.modules_versions
-                .insert(identifier.clone(), self.bump_version.clone());
+                .insert(identifier.clone(), latest_version);
 
             let module_id = self.last_module_id(identifier);
             emit_module_fn(module_id, data)
@@ -126,6 +131,7 @@ impl IncrementalSplitState {
             &wbg_fns,
             precise_modification,
             whitelist.as_ref(),
+            latest_version,
             emit_fn,
         )?;
 
@@ -387,7 +393,7 @@ impl StructureDiffResult {
 
         let mut with_changed_exports =
             Self::find_changed_sig(old_module_structure, new_module_structure, |sym| {
-                differ.symbol_map().map(*sym)
+                sym_map.map(*sym)
             });
 
         let changed_symbols_users = Self::collect_changed_users(

@@ -742,7 +742,7 @@ impl<'src> SymbolMapWithContent<'src> for analysis::ModuleInfo<'src> {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct StaticModuleInfo {
     symbols: SymbolMap<'static>,
     contents: IdMap<SymbolId, Vec<u8>>,

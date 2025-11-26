@@ -20,6 +20,18 @@ fn load_lazy_routes_wasm() -> Vec<u8> {
     fs::read(src).expect("Failed to load test-data/lazy_routes.wasm")
 }
 
+fn load_lazy_routes_diff_wasm(changed: bool) -> Vec<u8> {
+    let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
+    src.push("test-data");
+    src.push("lazy-small-change");
+    if !changed {
+        src.push("lazy_routes.wasm");
+    } else {
+        src.push("lazy_routes_changed.wasm");
+    }
+    fs::read(src).expect("Failed to load load_lazy_routes_diff_wasm")
+}
+
 /// Get current memory usage in KB (Linux only)
 #[cfg(target_os = "linux")]
 fn get_memory_usage() -> Option<u64> {
@@ -107,6 +119,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
                 black_box(&wbg_fns),
                 false,
                 None,
+                Default::default(),
                 |_identifier, data| {
                     // Just count outputs instead of writing to disk
                     output_counter += 1;
@@ -128,6 +141,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
                 black_box(&wbg_fns),
                 true,
                 None,
+                Default::default(),
                 |_identifier, data| {
                     // Just count outputs instead of writing to disk
                     output_counter += 1;
@@ -154,6 +168,47 @@ fn benchmark_full_split_pipeline(c: &mut Criterion) {
                 |_, _| Ok(()),
             );
             hint_black_box(result.unwrap());
+        })
+    });
+}
+
+fn benchmark_incremental_split_pipeline(c: &mut Criterion) {
+    let src_wasm = load_lazy_routes_diff_wasm(false);
+    let mut state = wamex_cli::IncrementalSplitState::new();
+    let _result = state
+        .split_incremental(
+            black_box(&src_wasm),
+            false,
+            true,
+            SplitPointExtractor::Wamex,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+    let src_state = state.clone();
+
+    let changed_wasm = load_lazy_routes_diff_wasm(true);
+    c.bench_function("incremental_split_lazy_routes_second_run", |b| {
+        b.iter_custom(|iters| {
+            let mut total_duration = std::time::Duration::ZERO;
+            assert!(!src_state.is_empty());
+            for _ in 0..iters {
+                let mut state = src_state.clone();
+                let start = std::time::Instant::now();
+                let result = state
+                    .split_incremental(
+                        black_box(&changed_wasm),
+                        false,
+                        true,
+                        SplitPointExtractor::Wamex,
+                        |_, _| Ok(()),
+                    )
+                    .unwrap();
+
+                hint_black_box(state);
+                hint_black_box(result);
+                total_duration += start.elapsed();
+            }
+            total_duration
         })
     });
 }
@@ -259,6 +314,7 @@ criterion_group!(
     benchmark_compute_split_modules,
     benchmark_emit_modules,
     benchmark_full_split_pipeline,
+    benchmark_incremental_split_pipeline,
 );
 
 // custom group with memory usage benchmark.

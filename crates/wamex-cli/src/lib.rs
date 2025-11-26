@@ -139,6 +139,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         &Default::default(),
         false,
         None,
+        Default::default(),
         |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             std::fs::write(&args.output, data)?;
             Ok(())

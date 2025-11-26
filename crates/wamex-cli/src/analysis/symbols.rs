@@ -116,7 +116,7 @@ struct DataSymbolKey {
     symbol_id: SymbolId,
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct SymbolMap<'src> {
     symbols: IdVec<SymbolRecord<'src>>,
     funcs_ids: IdMap<InputFuncId, SymbolId>,

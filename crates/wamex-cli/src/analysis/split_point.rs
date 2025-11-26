@@ -313,7 +313,6 @@ pub struct SplitProgramInfo {
 }
 
 impl SplitProgramInfo {
-    // TODO: Not sure why imports are used here.
     // Add start_func, exports and imports
     // Filter-out all split points related functions.
     fn get_main_module_roots(info: &analysis::ModuleInfo, split_points: &[SplitPoint]) -> DepSet {
@@ -333,6 +332,23 @@ impl SplitProgramInfo {
             roots.insert(
                 info.symbols
                     .get_function_symbol(InputFuncId::from_index(*index))
+                    .unwrap(),
+            );
+        }
+
+        // TODO: Only wasm_bindgen imports are important - rest COULD be imported by loader.
+        for (index, (_, import)) in info.wasm.imports.iter().enumerate() {
+            let wasmparser::Import {
+                ty: wasmparser::TypeRef::Func(_),
+                ..
+            } = import
+            else {
+                continue;
+            };
+
+            roots.insert(
+                info.symbols
+                    .get_function_symbol(InputFuncId::from_index(index))
                     .unwrap(),
             );
         }
