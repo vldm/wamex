@@ -68,16 +68,18 @@ impl IncrementalSplitState {
         let info = analysis::ModuleInfo::from_raw_module(module)?;
         let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
         let split_points = analysis::split_point::find_split_points(&info, split_point_extractor)?;
-        let mut split_program_info =
-            crate::SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points)?;
+        let wbg_closures = analysis::split_point::SplitProgramInfo::wbg_closures(&info, &dep_graph);
+        let mut split_program_info = crate::SplitProgramInfo::compute_split_modules(
+            &info,
+            &dep_graph,
+            &split_points,
+            &wbg_closures,
+        )?;
 
         // one of the possible mode is to merge all shared with main chunks into main module.
         // The other way can be used in incremental build, when main is not changed but we emit "mini-main".
         crate::emit::merge_main_shared(&mut split_program_info);
 
-        // some wbg functions need to be moved to main before splitting.
-        let wbg_fns =
-            crate::emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
         if verbose {
             println!("Split points: {split_points:?}");
             println!("Split program info: {split_program_info:?}");
@@ -128,7 +130,7 @@ impl IncrementalSplitState {
             &info,
             verbose,
             &split_program_info,
-            &wbg_fns,
+            &wbg_closures,
             precise_modification,
             whitelist.as_ref(),
             latest_version,

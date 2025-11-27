@@ -5,7 +5,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     parenthesized,
-    parse::{Parse, ParseStream},
+    parse::{Parse, ParseStream, Parser},
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
     spanned::Spanned,
@@ -58,28 +58,39 @@ impl Parse for SplitArgPart {
 /// #[split(my_module, wrap_return_with(SomeWrapper), seed(1234))]
 struct SplitArgs {
     /// The name of the module to split.
-    module_name: Ident,
-    /// Wrap exported fn return expression with constructor from this path
-    wrap_return_with: Option<Path>,
+    pub module_name: Ident,
+    /// Wrap exported fn return expression with constructor from this path.
+    pub wrap_return_with: Option<Path>,
     /// As wrap_return_with but only wraps `async block` inside async fns.
     /// If used with `wrap_return_with` - inner body is wrapped with `wrap_return_with` and then
     /// the resulting future is wrapped with `async_wrap_return_with`.
-    async_wrap_return_with: Option<Path>,
+    pub async_wrap_return_with: Option<Path>,
+    ///
+    /// `async fn` is converted to regular with `Box<Pin<dyn Future<Output=...>>>` return type.
+    ///  this argument allow adding extra auto traits bounds to the returned future.
+    ///  Example: `async_extra_bounds(Send + 'static)`
+    pub async_extra_bounds: Option<Punctuated<syn::TypeParamBound, Token![+]>>,
     /// Add tokens as a prefix for unique id.
     /// Usefull to differentiate multiple split functions with conflict module_name/fn_name.
-    uniq_id_prefix: Option<Ident>,
+    pub uniq_id_prefix: Option<Ident>,
 
     /// The path to the custom loader.
     /// In format of `custom_loader(some::path::to::loader::function)`, this function should be async and have signature:
     /// `async fn loader(module_id: ModuleId) -> bool`
-    custom_loader: Option<Path>,
+    pub custom_loader: Option<Path>,
 
     /// The url to load the module from.
     /// Can be relative or absolute.
-    with_url: Option<syn::LitStr>,
+    pub with_url: Option<syn::LitStr>,
 
-    /// Where to find the crate root for wamex.
-    crate_path: Option<Path>,
+    /// Where to find the crate root for `wamex`.
+    /// Usefull for reexporting `wamex` under different path.
+    pub crate_path: Option<Path>,
+
+    /// Add a side effect statement to be executed before loading the module.
+    /// Usefull for logging or interacting with reactive systems.
+    /// Example: `side_effect(log::info!("Loading module..."))`
+    pub side_effect: Option<syn::Stmt>,
 }
 
 impl Parse for SplitArgs {
@@ -101,6 +112,8 @@ impl Parse for SplitArgs {
         let mut custom_loader: Option<Path> = None;
         let mut with_url: Option<syn::LitStr> = None;
         let mut crate_path: Option<Path> = None;
+        let mut side_effect: Option<syn::Stmt> = None;
+        let mut async_extra_bounds: Option<Punctuated<syn::TypeParamBound, Token![+]>> = None;
 
         while !input.is_empty() {
             let part: SplitArgPart = input.parse()?;
@@ -140,6 +153,16 @@ impl Parse for SplitArgs {
                             ensure_is_empty!(crate_path);
                             crate_path = Some(syn::parse2(tts)?);
                         }
+                        "side_effect" => {
+                            ensure_is_empty!(side_effect);
+                            side_effect = Some(syn::parse2(tts)?);
+                        }
+                        "async_extra_bounds" => {
+                            ensure_is_empty!(async_extra_bounds);
+                            let bounds: Punctuated<syn::TypeParamBound, Token![+]> =
+                                Punctuated::parse_terminated.parse2(tts)?;
+                            async_extra_bounds = Some(bounds);
+                        }
                         _ => {
                             return Err(syn::Error::new(
                                 arg_name.span(),
@@ -165,10 +188,26 @@ impl Parse for SplitArgs {
             custom_loader,
             with_url,
             crate_path,
+            side_effect,
+            async_extra_bounds,
         })
     }
 }
 
+/// Mark a function to be split into a separate WebAssembly module.
+///
+/// For more details on arguments usage see [`SplitArgs`] - it can be not shown in default docs building, so use `cargo doc --document-private-items`.
+///
+/// # Examples
+/// ```ignore
+/// use wamex::split;
+/// #[split(my_module, wrap_return_with(SomeWrapper))]
+/// async fn my_function(arg1: i32, arg2: String) -> ResultType {
+///     // function body
+/// }
+/// ```
+/// Using it in tandem with `wamex-cli` split command will extract this function into a separate WebAssembly module named `my_module_<VERSION>.wasm`,
+/// and the function will be loaded and executed at runtime using the specified loader.
 #[proc_macro_attribute]
 pub fn split(
     args: proc_macro::TokenStream,
@@ -197,6 +236,8 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
         async_wrap_return_with,
         with_url,
         crate_path,
+        side_effect,
+        async_extra_bounds,
     } = args;
 
     let vis = item_fn.vis;
@@ -258,9 +299,9 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
     let mut body: TokenStream = if let Some(wrapper) = wrap_return_with {
         quote! {
             {
-                let __wamex_result = (|| async move {
+                let __wamex_result =  {
                     #(#original_body_stmts)*
-                })().await;
+                };
                 #wrapper ( __wamex_result )
             }
         }
@@ -273,8 +314,13 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
         ReturnType::Type(_, ty) => quote! { #ty },
     };
 
-    let pin_box_ty: syn::Type =
-        parse_quote! { ::core::pin::Pin<Box<dyn ::core::future::Future<Output = #ty>>> };
+    let async_extra_bounds = if let Some(bounds) = async_extra_bounds {
+        quote! { + #bounds }
+    } else {
+        quote! {}
+    };
+
+    let pin_box_ty: syn::Type = parse_quote! { ::core::pin::Pin<Box<dyn ::core::future::Future<Output = #ty> #async_extra_bounds>> };
 
     let is_async = item_fn.sig.asyncness.is_some();
     // Convert async fn to fn returning Pin<Box<dyn Future>>
@@ -340,6 +386,15 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
             #root::ModuleId::new(#module_name_str)
         }
     };
+
+    let side_effect = if let Some(side_effect) = side_effect {
+        quote! {
+            #side_effect
+        }
+    } else {
+        quote! {}
+    };
+
     let load_and_execute = if is_async {
         quote! { #root::load_and_execute }
     } else {
@@ -365,6 +420,7 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
                 #body
             }
 
+            #side_effect
             #load_and_execute(
                 #loader(#module_id),
                 #impl_import_ident,

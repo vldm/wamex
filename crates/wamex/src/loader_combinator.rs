@@ -2,8 +2,8 @@
 //! A combinator for calling a async loader for module before running it's entrypoint.
 //! It is extracted from macro generated code to reduce size and reduce emiting of `Location::caller` in loader fn.
 //!
-//! Initially it was `async fn` but rustc emit `async fn` with panic after resume, that contain `Location::caller`.
-//! Trying to replace it with `fn (..) -> impl Future` doesn't work, since `impl Future` need explicit `use<'lifetime>` if any lifetime is present in arguments.
+//! Initially it was `async fn` but rustc emit `async fn` with code that handle panic after resume, that contain `Location::caller`.
+//! Trying to replace it with `fn (..) -> impl Future` doesn't work well, since `impl Future` need explicit `use<'lifetime>` if any lifetime is present in arguments.
 //!
 
 use core::future::Future;

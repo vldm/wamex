@@ -12,3 +12,7 @@ syn = "2.0.59"
 proc-macro2 = { version = "1.0.103", features = ["span-locations"] }
 [lib]
 proc-macro = true
+
+
+[package.metadata.docs.rs]
+rustdocflags = ["--document-private-items"]

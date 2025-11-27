@@ -126,7 +126,8 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
     let info = analysis::ModuleInfo::from_raw_module(module)?;
     let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
 
-    let split_program_info = SplitProgramInfo::compute_split_modules(&info, &dep_graph, &[])?;
+    let split_program_info =
+        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &[], &Default::default())?;
 
     assert!(
         split_program_info.output_modules.len() == 1,

@@ -80,6 +80,7 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
     let module = InputModule::parse(&lazy_routes_wasm).unwrap();
     let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
     let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
+    let wbg_fns = SplitProgramInfo::wbg_closures(&info, &dep_graph);
     let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
 
     c.bench_function("compute_split_modules", |b| {
@@ -88,6 +89,7 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
                 black_box(&info),
                 black_box(&dep_graph),
                 black_box(&split_points),
+                black_box(&wbg_fns),
             )
             .unwrap();
             hint_black_box(split_program_info);
@@ -101,12 +103,13 @@ fn benchmark_emit_modules(c: &mut Criterion) {
     let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
     let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
     let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
+    let wbg_fns = SplitProgramInfo::wbg_closures(&info, &dep_graph);
     let mut split_program_info =
-        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points).unwrap();
+        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points, &wbg_fns)
+            .unwrap();
 
     // Apply the same optimizations as the main split function
     emit::merge_main_shared(&mut split_program_info);
-    let wbg_fns = emit::hoist_wbg_deps_to_main(&info, &dep_graph, &mut split_program_info);
 
     let mut group = c.benchmark_group("emit_module");
     group.bench_function("in_place", |b| {

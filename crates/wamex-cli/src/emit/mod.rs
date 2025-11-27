@@ -8,14 +8,13 @@ use anyhow::{Context, Result, anyhow, bail};
 use index_safety::OutputFuncId;
 pub use memory_layout::{DataChunk, DataSegmentOutput, SegmentLayout, SymbolRelation};
 use modify::{ModifyContext, StoreType, init_each_store_var};
-use wamex_types::{BumpVersion, dylink0::Dylink0Section};
+use wamex_types::{BumpVersion, dylink0::Dylink0Section, map_vec::MiniSet};
 use wasm_encoder::{GlobalType, reencode::Reencode};
 use wasmparser::{RelocationEntry, TypeRef};
 
 use crate::{
     analysis::{
         self,
-        dep_graph::DepGraph,
         split_point::{
             ModuleIdentifier, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint,
             SplitProgramInfo,
@@ -1306,7 +1305,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         &'any self,
         computed_modules: &'any ComputedModules<'any, 'src>,
         output_module: &mut wasm_encoder::Module,
-
         precise_modification: bool,
     ) -> Result<Vec<RelocationEntry>> {
         let defined_functions_count = self.functions.defined().len() as u32
@@ -1323,17 +1321,12 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 DefinedFunctionKind::Trampoline {} => {
                     self._generate_import_call_stub(&mut section, output_func.input_func_id)
                 }
-                DefinedFunctionKind::IndirectTrampoline { table_index_offset } => {
-                    // +1 for empty first entry
-                    let num_entrypoints =
-                        self.indirect_functions.function_table_index.len() as u32 + 1;
-                    // TODO: generate stubs for imported functions.
-                    self._generate_indirect_stub_function(
+                DefinedFunctionKind::IndirectTrampoline { table_index_offset } => self
+                    ._generate_indirect_stub_function(
                         &mut section,
                         output_func.input_func_id,
-                        num_entrypoints + *table_index_offset,
-                    )
-                }
+                        computed_modules.indirect_entrypoints_offset() + *table_index_offset,
+                    ),
                 DefinedFunctionKind::Copied { modification_list } => {
                     let function_start_offset =
                         encoding_size(defined_functions_count) + section.byte_len();
@@ -1834,6 +1827,10 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
             sub_modules,
         })
     }
+    fn indirect_entrypoints_offset(&self) -> u32 {
+        // +1 for empty first entry
+        self.main_module.indirect_functions.table_entries.len() as u32 + 1
+    }
 
     fn iter_modules(
         &self,
@@ -1962,86 +1959,11 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
     program_info.output_modules = std::mem::take(&mut other);
 }
 
-fn is_wasm_bindgen_descriptor(name: &str) -> bool {
-    name == "__wbindgen_describe_closure" || name == "__wbindgen_describe"
-}
-
-// Process all functions that have dependencies on wasm-bindgen describe.
-// Move their definition to main module.
-// Returns set of moved functions. So main module can generate stubs for them.
-pub fn hoist_wbg_deps_to_main<'a, 'src>(
-    module: &'a analysis::ModuleInfo<'src>,
-    graph: &DepGraph,
-    program_info: &mut SplitProgramInfo,
-) -> HashSet<SymbolId> {
-    let wbg_fns: HashSet<_> = module
-        .symbols
-        .iter()
-        .filter(|(_id, sym)| is_wasm_bindgen_descriptor(&sym.name))
-        .map(|(id, _name)| id)
-        .collect();
-
-    let mut to_move = HashSet::new();
-    for id in wbg_fns {
-        if !to_move.insert(id) {
-            continue;
-        }
-        if let Some(parents) = graph.get_parents(id) {
-            for parent in parents {
-                debug_assert!(matches!(
-                    module.symbols.get(*parent).unwrap().kind,
-                    SymbolKind::Func { .. }
-                ));
-                to_move.insert(*parent);
-            }
-        }
-    }
-
-    for (id, output_module) in program_info
-        .output_modules
-        .iter_mut()
-        .filter(|(id, _m)| *id != MAIN_ID)
-    {
-        for moved_fn in to_move.iter() {
-            // definitions are moved to main
-            if output_module.defined_symbols.remove(moved_fn) {
-                let fn_name = &module.symbols.get(*moved_fn).unwrap().name;
-                log::debug!(
-                    "Moving function {:?} ({}) from module {} to main module",
-                    fn_name,
-                    moved_fn,
-                    id
-                );
-
-                output_module.exports.remove(moved_fn);
-                output_module.imports.insert(*moved_fn);
-            }
-        }
-    }
-    let main_module = &mut program_info
-        .output_modules
-        .iter_mut()
-        .find(|(id, _)| *id == MAIN_ID)
-        .expect("Main module not found")
-        .1;
-
-    // remove main linkage to moved functions (if any), since it is now defined in main
-    for moved_fn in &to_move {
-        main_module.imports.remove(moved_fn);
-    }
-
-    main_module
-        .defined_symbols
-        .extend(to_move.iter().map(|id| *id));
-
-    to_move
-}
-
 pub fn emit_modules<'a, 'src>(
     module: &'a analysis::ModuleInfo<'src>,
     verbose: bool,
     program_info: &SplitProgramInfo,
-    wbg_fns: &HashSet<SymbolId>,
+    wbg_fns: &MiniSet<SymbolId>,
     precise_modification: bool,
     whitelist: Option<&BTreeSet<SplitModuleIdentifier>>,
     version: BumpVersion,

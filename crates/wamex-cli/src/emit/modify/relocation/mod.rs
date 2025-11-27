@@ -114,7 +114,6 @@ impl RelocateState<'_, '_> {
         &self,
         getter: impl Fn(&ModuleEmitState) -> Option<U>,
         not_found: impl FnOnce() -> anyhow::Error,
-        no_got: impl FnOnce() -> anyhow::Error,
     ) -> Result<SymbolOp<U>> {
         if let Some(value) = getter(&self.computed_modules.main_module) {
             return Ok(SymbolOp::StaticOffset { value });
@@ -126,7 +125,7 @@ impl RelocateState<'_, '_> {
                     .emit_module
                     .get_submodule_extra(None)
                     .map(|extra| T::get_got(extra))
-                    .ok_or_else(no_got)?,
+                    .ok_or_else(not_found)?,
             });
         }
 
@@ -139,7 +138,7 @@ impl RelocateState<'_, '_> {
                         .emit_module
                         .get_submodule_extra(Some(id))
                         .map(|extra| T::get_got(extra))
-                        .ok_or_else(no_got)?,
+                        .ok_or_else(not_found)?,
                 });
             }
         }
@@ -165,12 +164,6 @@ impl RelocateState<'_, '_> {
                 "Symbol within relocation {relocation:?} not found in either main or emit module"
             )
             },
-            || {
-                anyhow!(
-                    "No GOT global for symbol {src:?} in emit module",
-                    src = relocation.index
-                )
-            },
         ).map(|res| res.map(|v| v + relocation.addend.try_into().unwrap()))
     }
 
@@ -186,11 +179,6 @@ impl RelocateState<'_, '_> {
             || {
                 anyhow!(
                     "Data symbol {segment_id:?}: {data_symbol_id:?} not found in either main or emit module"
-                )
-            },
-            || {
-                anyhow!(
-                    "No GOT global for data symbol {segment_id:?}: {data_symbol_id:?} in emit module"
                 )
             },
         )

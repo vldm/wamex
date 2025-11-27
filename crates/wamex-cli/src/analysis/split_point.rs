@@ -1,9 +1,10 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt::{Debug, Display},
 };
 
 use anyhow::{anyhow, bail};
+use wamex_types::map_vec::MiniSet;
 
 use super::dep_graph::DepGraph;
 use crate::{
@@ -11,6 +12,7 @@ use crate::{
     analysis::{
         self,
         dep_graph::{DepMiniSet, DepSet, NamedGraph, find_reachable_deps},
+        symbols::SymbolKind,
     },
     index::{ExportId, IdMap, ImportId, InputFuncId, SymbolId},
 };
@@ -315,7 +317,11 @@ pub struct SplitProgramInfo {
 impl SplitProgramInfo {
     // Add start_func, exports and imports
     // Filter-out all split points related functions.
-    fn get_main_module_roots(info: &analysis::ModuleInfo, split_points: &[SplitPoint]) -> DepSet {
+    fn get_main_module_roots(
+        info: &analysis::ModuleInfo,
+        split_points: &[SplitPoint],
+        wbg_descriptors: &MiniSet<SymbolId>,
+    ) -> DepSet {
         let mut roots: DepSet = DepSet::new();
         if let Some(id) = info.wasm.code.section_payload.start_func {
             roots.insert(info.symbols.get_function_symbol(id).unwrap());
@@ -353,6 +359,10 @@ impl SplitProgramInfo {
             );
         }
 
+        for descriptor in wbg_descriptors {
+            roots.insert(*descriptor);
+        }
+
         for split_point in split_points.iter() {
             roots.remove(
                 &info
@@ -368,6 +378,44 @@ impl SplitProgramInfo {
             );
         }
         roots
+    }
+
+    fn is_wasm_bindgen_cast(name: &str) -> bool {
+        name == "__wbindgen_describe_closure" || name == "__wbindgen_describe_cast" // in later version closure was replaced by more generic cast
+        // || name == "__wbindgen_describe"
+    }
+
+    // Find all wasm-bindgen closures
+    //
+    // Most of wasm-bindgen descriptors are exported functions and handling during `find_main_entrypoints`.
+    // However, some are made for closures and are not exported directly.
+    //
+    // wasm-bindgen do dfs to find all `__wbindgen_describe_closure` (check out interpret_closure_descriptor in wasm-bindgen source).
+    // This are entrypoints for closures.
+    // Within this entrypoints, wasm-bindgen finds and dynamic `describe` declaration and process it. For entrpoints imports are generated.
+    //
+    pub fn wbg_closures(module: &analysis::ModuleInfo, graph: &DepGraph) -> MiniSet<SymbolId> {
+        let wbg_fns: BTreeSet<_> = module
+            .symbols
+            .iter()
+            .filter(|(_id, sym)| Self::is_wasm_bindgen_cast(&sym.name))
+            .map(|(id, _name)| id)
+            .collect();
+
+        let mut wbg_descriptors = BTreeSet::new();
+        for id in wbg_fns.iter().cloned() {
+            wbg_descriptors.insert(id);
+            if let Some(parents) = graph.get_parents(id) {
+                for parent in parents {
+                    debug_assert!(matches!(
+                        module.symbols.get(*parent).unwrap().kind,
+                        SymbolKind::Func { .. }
+                    ));
+                    wbg_descriptors.insert(*parent);
+                }
+            }
+        }
+        wbg_descriptors.into_iter().collect()
     }
 
     pub fn merge_split_points_by_name(
@@ -391,10 +439,11 @@ impl SplitProgramInfo {
         info: &analysis::ModuleInfo,
         dep_graph: &DepGraph,
         split_points: &[SplitPoint],
+        wbg_descriptors: &MiniSet<SymbolId>,
     ) -> anyhow::Result<SplitProgramInfo> {
         let split_points_by_module = Self::merge_split_points_by_name(split_points);
 
-        let main_roots = Self::get_main_module_roots(info, split_points);
+        let main_roots = Self::get_main_module_roots(info, split_points, wbg_descriptors);
 
         // graph root -> dep -> dep
         let main_deps = find_reachable_deps(dep_graph, &main_roots);

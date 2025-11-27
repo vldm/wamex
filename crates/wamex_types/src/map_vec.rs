@@ -84,6 +84,12 @@ impl<K: Ord, V> MiniMap<K, V> {
     pub fn iter(&self) -> impl Iterator<Item = &(K, V)> {
         self.entries.iter()
     }
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&K, &V) -> bool,
+    {
+        self.entries.retain(|(k, v)| f(k, v));
+    }
 
     fn compare_with<Q>(key: &Q) -> impl FnMut(&(K, V)) -> std::cmp::Ordering
     where
@@ -204,6 +210,12 @@ where
     }
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.map.iter().map(|(k, _)| k)
+    }
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        self.map.retain(|k, _| f(k));
     }
     #[doc(hidden)]
     pub fn extend_and_resort(&mut self, iter: impl IntoIterator<Item = T>) {
