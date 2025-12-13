@@ -2,6 +2,8 @@
 name = "wamex_types"
 version = "0.1.0"
 edition = "2024"
+license-file = "../../LICENSE"
+description = "Common types for wamex loader and splitter"
 
 [dependencies]
 anyhow = "1.0.82"

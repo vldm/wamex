@@ -2,6 +2,8 @@
 name = "wamex"
 version = "0.1.0"
 edition = "2021"
+license-file = "../../LICENSE"
+description = "WebAssembly binary splitter for dynamic module loading"
 
 [dependencies]
 wamex_macro = { version = "0.1.0", path = "../wamex_macro" }
