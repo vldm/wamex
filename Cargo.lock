@@ -1636,6 +1636,7 @@ dependencies = [
 name = "wamex"
 version = "0.1.0"
 dependencies = [
+ "pin-project-lite",
  "wamex_loader",
  "wamex_macro",
  "wamex_types",
