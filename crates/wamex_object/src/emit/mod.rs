@@ -1450,8 +1450,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     fn generate_compiler_tools_sections(
         &self,
         output_module: &mut wasm_encoder::Module,
-        shifted_code_relocs: Vec<RelocationEntry>,
-        shifted_data_relocs: Vec<RelocationEntry>,
+        _shifted_code_relocs: Vec<RelocationEntry>,
+        _shifted_data_relocs: Vec<RelocationEntry>,
     ) -> Result<()> {
         let wamex_version = wasm_encoder::CustomSection {
             name: "__wamex_version".into(),

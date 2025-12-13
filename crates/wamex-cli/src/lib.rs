@@ -1,16 +1,20 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 
-// todo: Refactor analysis and emit modules.
-pub mod analysis;
-pub mod emit;
-mod helpers;
-#[macro_use]
-mod index;
+use crate::emit::CommonEmitInfo;
+
+pub use wamex_object::{analysis, emit, read};
+
+mod helpers {
+    pub use wamex_object::helpers::*;
+}
+mod index {
+    pub use wamex_object::index::*;
+}
+
 mod diff;
 mod incremental;
-pub mod read;
 
 pub use analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use anyhow::Result;
@@ -18,9 +22,8 @@ pub use incremental::{
     IncrementalSplitResult, IncrementalSplitState, ModuleDeps, ModuleUpdate, SplitResult,
 };
 pub use read::InputModule;
+pub use wamex_object::SplitPointExtractor;
 pub use wamex_types::{BumpVersion, ModuleId};
-
-use crate::emit::CommonEmitInfo;
 
 #[derive(Debug, Parser)]
 #[command(name = "wasm-split")]
@@ -55,14 +58,6 @@ pub struct Split {
     pub split_point_extractor: SplitPointExtractor,
 }
 
-/// This is temporary solution to support old __wamex__ split points
-#[derive(Debug, ValueEnum, Clone, Copy)]
-pub enum SplitPointExtractor {
-    /// Use regexp and _wasm_split_ prefix to identify split points.
-    Legacy,
-    /// Use _wamex_ prefix and .start_with instead of regexp.
-    Wamex,
-}
 
 #[derive(Debug, Args)]
 pub struct Diff {
