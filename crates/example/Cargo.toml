@@ -1,8 +1,10 @@
 [package]
-name = "example"
+name = "wamex_example"
 version = "0.1.0"
-authors = ["Jeremy Maitin-Shepard <jeremy@jeremyms.com>"]
+authors = ["Volodymyr Motylenko <me@vldm.cc>"]
 edition = "2021"
+license-file = "../../LICENSE"
+description = "An example WebAssembly binary splitted with wamex"
 
 [lib]
 crate-type = ["cdylib"]
@@ -15,7 +17,7 @@ js-sys = "0.3.69"
 wasm-bindgen = "^0.2.104"
 wasm-bindgen-futures = "0.4.42"
 wasm-streams = "0.4.0"
-wamex = { path = "../wamex", optional = true }
+wamex = { version = "0.1.0", path = "../wamex", optional = true }
 wasm-log = "0.3"
 hex = "0.4"
 
