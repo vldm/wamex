@@ -15,12 +15,7 @@ use crate::{
     },
     read,
 };
-mod debug;
-pub mod dep_graph;
-pub mod split_point;
 pub mod symbols;
-#[cfg(test)]
-mod testing;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ImportInfo {

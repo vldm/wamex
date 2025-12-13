@@ -1693,6 +1693,7 @@ dependencies = [
  "smallvec",
  "tempdir",
  "vec_map",
+ "wamex_object",
  "wamex_types",
  "wasm-encoder",
  "wasmparser",
@@ -1739,6 +1740,22 @@ dependencies = [
  "quote",
  "sha2",
  "syn 2.0.111",
+]
+
+[[package]]
+name = "wamex_object"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "leb128fmt",
+ "log",
+ "rustc-demangle",
+ "smallvec",
+ "vec_map",
+ "wamex_types",
+ "wasm-encoder",
+ "wasmparser",
 ]
 
 [[package]]

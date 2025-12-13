@@ -312,7 +312,7 @@ mod tests {
         }
     }
     // checkout test-data/simple-graph crate at root (just keep wasm in case rustc changes)
-    const WASM_FILE: &[u8] = include_bytes!("../../../wamex-cli/test-data/simple_graph.wasm");
+    const WASM_FILE: &[u8] = include_bytes!("../../test-data/simple_graph.wasm");
 
     #[test]
     fn load_dep_graph() {

@@ -141,15 +141,13 @@ impl<'any, 'src> Compare<'any, 'src> {
             crate::SplitPointExtractor::Wamex,
         )?;
         let dep_graph = crate::analysis::dep_graph::get_dependencies(&self.right)?;
-        let wbg_closures =
-            crate::analysis::split_point::SplitProgramInfo::wbg_closures(&self.right, &dep_graph);
-        let split_program_info =
-            crate::analysis::split_point::SplitProgramInfo::compute_split_modules(
-                &self.right,
-                &dep_graph,
-                &split_points,
-                &wbg_closures,
-            )?;
+        let wbg_closures = crate::analysis::split_point::wbg_closures(&self.right, &dep_graph);
+        let split_program_info = crate::analysis::split_point::compute_split_modules(
+            &self.right,
+            &dep_graph,
+            &split_points,
+            &wbg_closures,
+        )?;
 
         let changed_deps = diff_result
             .entries()

@@ -8,11 +8,8 @@ use wamex_types::{BumpVersion, ModuleId, map_vec::MiniSet};
 
 use crate::{
     ModuleIdentifier, SplitModuleIdentifier, SplitPointExtractor,
-    analysis::{
-        self, StaticModuleInfo,
-        split_point::{OutputModuleInfo, SharedModuleIdentifier},
-        symbols::DiffEntry,
-    },
+    analysis::{self, StaticModuleInfo, symbols::DiffEntry},
+    emit::plan::{OutputModuleInfo, SharedModuleIdentifier},
     index::{IdMap, SymbolId},
 };
 
@@ -68,8 +65,8 @@ impl IncrementalSplitState {
         let info = analysis::ModuleInfo::from_raw_module(module)?;
         let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
         let split_points = analysis::split_point::find_split_points(&info, split_point_extractor)?;
-        let wbg_closures = analysis::split_point::SplitProgramInfo::wbg_closures(&info, &dep_graph);
-        let mut split_program_info = crate::SplitProgramInfo::compute_split_modules(
+        let wbg_closures = analysis::split_point::wbg_closures(&info, &dep_graph);
+        let mut split_program_info = analysis::split_point::compute_split_modules(
             &info,
             &dep_graph,
             &split_points,
@@ -89,7 +86,12 @@ impl IncrementalSplitState {
 
             println!("Module split details:");
             for (name, split_deps) in split_program_info.output_modules.iter() {
-                split_deps.print(format!("{:?}", name).as_str(), &info, &dep_graph);
+                analysis::debug::print_deps_inner(
+                    format!("{:?}", name).as_str(),
+                    &info,
+                    &split_deps.defined_symbols,
+                    &dep_graph,
+                );
             }
         }
 

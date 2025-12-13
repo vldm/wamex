@@ -135,13 +135,7 @@ where
     }
 
     fn wamex_parse_name(name: &str) -> Option<(&str, &str)> {
-        use analysis::split_point::{
-            SPLIT_EXPORT_POSTFIX, SPLIT_IMPORT_POSTFIX, WAMEX_ENTRY_PREFIX, parser,
-        };
-        if let Some(v) = parser(name, WAMEX_ENTRY_PREFIX, SPLIT_IMPORT_POSTFIX) {
-            return Some(v);
-        };
-        parser(name, WAMEX_ENTRY_PREFIX, SPLIT_EXPORT_POSTFIX)
+        crate::emit::plan::parse_wamex_entry_name(name)
     }
     // Try to match unmatched wamex split points by their module name and function position.
     fn try_match_wamex_split_point(&self, mapping: &mut SymbolMapping) {
@@ -156,7 +150,7 @@ where
             let Some(name) = &left_symbol.linking_name else {
                 continue;
             };
-            if !name.contains(analysis::split_point::WAMEX_ENTRY_PREFIX) {
+            if !name.contains(crate::emit::plan::WAMEX_ENTRY_PREFIX) {
                 continue;
             }
             let Some((module, fn_name)) = Self::wamex_parse_name(name) else {
@@ -172,7 +166,7 @@ where
             let Some(name) = &right_symbol.linking_name else {
                 continue;
             };
-            if !name.contains(analysis::split_point::WAMEX_ENTRY_PREFIX) {
+            if !name.contains(crate::emit::plan::WAMEX_ENTRY_PREFIX) {
                 continue;
             }
             let Some((module, fn_name)) = Self::wamex_parse_name(name) else {

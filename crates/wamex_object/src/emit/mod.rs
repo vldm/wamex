@@ -13,18 +13,15 @@ use wasm_encoder::{GlobalType, reencode::Reencode};
 use wasmparser::{RelocationEntry, TypeRef};
 
 use crate::{
-    analysis::{
-        self,
-        split_point::{
-            ModuleIdentifier, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint,
-            SplitProgramInfo,
-        },
-        symbols::SymbolKind,
-    },
+    analysis::{self, symbols::SymbolKind},
     emit::{
         globals::{DefinedGlobal, GlobalImport},
         index_safety::OutputGlobalId,
         modify::{RelocateState, StartFnGen},
+        plan::{
+            ModuleIdentifier, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint,
+            SplitProgramInfo,
+        },
     },
     helpers::encoding_size,
     index::{
@@ -32,6 +29,8 @@ use crate::{
         InputFuncId, InputGlobalId, MemoryId, SymbolId, WithOriginalIndex,
     },
 };
+
+pub mod plan;
 
 mod globals;
 mod memory_layout;
@@ -219,10 +218,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         module_info: &'any analysis::ModuleInfo<'src>,
         verbose: bool,
         emit_info: &'any CommonEmitInfo,
-        (module_id, output_module_info): &(
-            SplitModuleIdentifier,
-            analysis::split_point::OutputModuleInfo,
-        ),
+        (module_id, output_module_info): &(SplitModuleIdentifier, plan::OutputModuleInfo),
         // Main module with static layout of memory and table.
         // None if it is main module.
         static_main: Option<&Self>,

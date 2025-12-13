@@ -1,13 +1,5 @@
-use std::fmt::Debug;
-
 use crate::{
-    analysis::{
-        self,
-        dep_graph::{DepGraph, DepSet},
-        split_point::OutputModuleInfo,
-        symbols::{SymbolKind, SymbolRecord},
-    },
-    helpers::debug_fmt_mostly_filled,
+    analysis::{self, dep_graph::{DepGraph, DepSet}, symbols::{SymbolKind, SymbolRecord}},
     index::SymbolId,
 };
 
@@ -86,37 +78,3 @@ pub(crate) fn print_deps_inner(
     println!("SPLIT: ============== {module_name} : total size: {total_size}");
 }
 
-impl Debug for OutputModuleInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut defined_symbols = self.defined_symbols.iter().copied().collect::<Vec<_>>();
-
-        let mut imported_symbols = self.imports.iter().copied().collect::<Vec<_>>();
-
-        let mut exported_symbols = self.exports.iter().copied().collect::<Vec<_>>();
-
-        defined_symbols.sort_unstable();
-        imported_symbols.sort_unstable();
-        exported_symbols.sort_unstable();
-
-        f.debug_struct("OutputModuleInfo")
-            .field(
-                "imported_symbols",
-                &debug_fmt_mostly_filled(&imported_symbols, 3, 7, "...", |a, b| a.next() != *b),
-            )
-            .field(
-                "exported_symbols",
-                &debug_fmt_mostly_filled(&exported_symbols, 3, 7, "...", |a, b| a.next() != *b),
-            )
-            .field(
-                "defined_symbols",
-                &debug_fmt_mostly_filled(&defined_symbols, 3, 7, "...", |a, b| a.next() != *b),
-            )
-            .finish()
-    }
-}
-
-impl OutputModuleInfo {
-    pub fn print(&self, module_name: &str, info: &analysis::ModuleInfo, graph: &DepGraph) {
-        print_deps_inner(module_name, info, &self.defined_symbols, graph);
-    }
-}

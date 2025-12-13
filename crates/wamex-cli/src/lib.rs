@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::emit::CommonEmitInfo;
 
-pub use wamex_object::{analysis, emit, read};
+pub mod analysis;
+pub use wamex_object::{emit, read};
 
 mod helpers {
     pub use wamex_object::helpers::*;
@@ -16,13 +17,12 @@ mod index {
 mod diff;
 mod incremental;
 
-pub use analysis::split_point::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
+pub use wamex_object::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use anyhow::Result;
 pub use incremental::{
     IncrementalSplitResult, IncrementalSplitState, ModuleDeps, ModuleUpdate, SplitResult,
 };
 pub use read::InputModule;
-pub use wamex_object::SplitPointExtractor;
 pub use wamex_types::{BumpVersion, ModuleId};
 
 #[derive(Debug, Parser)]
@@ -58,6 +58,14 @@ pub struct Split {
     pub split_point_extractor: SplitPointExtractor,
 }
 
+/// Strategy for identifying split points in the input module.
+#[derive(Debug, ValueEnum, Clone, Copy)]
+pub enum SplitPointExtractor {
+    /// Use regexp and `_wasm_split_` prefix to identify split points.
+    Legacy,
+    /// Use `__wamex_` prefix and `.start_with` instead of regexp.
+    Wamex,
+}
 
 #[derive(Debug, Args)]
 pub struct Diff {
@@ -121,8 +129,12 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
     let info = analysis::ModuleInfo::from_raw_module(module)?;
     let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
 
-    let split_program_info =
-        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &[], &Default::default())?;
+    let split_program_info = analysis::split_point::compute_split_modules(
+        &info,
+        &dep_graph,
+        &[],
+        &Default::default(),
+    )?;
 
     assert!(
         split_program_info.output_modules.len() == 1,
@@ -264,7 +276,7 @@ pub fn debug(args: Debug) -> Result<()> {
     let module = InputModule::parse(&input)?;
     let info = analysis::ModuleInfo::from_raw_module(module)?;
 
-    let program_info = analysis::split_point::SplitProgramInfo::default();
+    let program_info = SplitProgramInfo::default();
     // verbose flag will print debug info as side effect.
     // TODO: make it more functional.
     let _ci = CommonEmitInfo::new(&info, true, &program_info)?;
