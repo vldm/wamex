@@ -1,3 +1,7 @@
+crates/wamex-cli/test-data/example.wasm filter=lfs diff=lfs merge=lfs -text
+crates/wamex-cli/test-data/extended-example.wasm filter=lfs diff=lfs merge=lfs -text
+crates/wamex-cli/test-data/lazy_routes.wasm filter=lfs diff=lfs merge=lfs -text
+crates/wamex-cli/test-data/simple_graph.wasm filter=lfs diff=lfs merge=lfs -text
 /crates/wamex-cli/test-data/lazy_routes.wasm filter=lfs diff=lfs merge=lfs -text
 /crates/wamex-cli/test-data/lazy-small-change/lazy_routes.wasm filter=lfs diff=lfs merge=lfs -text
 /crates/wamex-cli/test-data/lazy-small-change/lazy_routes_changed.wasm filter=lfs diff=lfs merge=lfs -text
