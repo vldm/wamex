@@ -87,6 +87,15 @@ where
     }
 }
 
+impl<T: Indexed> From<Vec<T>> for IdVec<T> {
+    fn from(vec: Vec<T>) -> Self {
+        IdVec {
+            types: vec,
+            _idx: PhantomData,
+        }
+    }
+}
+
 pub trait Indexed {
     type StaticTypeTagForIndex: 'static;
     type IndexType: 'static;
@@ -345,7 +354,7 @@ macro_rules! impl_indexed_type {
         $(
             impl<'a> Indexed for $ty<'a> {
                 type StaticTypeTagForIndex = $ty<'static>;
-                type IndexType = Id<$ty<'static>>;
+                type IndexType = crate::index::Id<$ty<'static>>;
             }
         )*
     };
@@ -353,7 +362,7 @@ macro_rules! impl_indexed_type {
         $(
             impl Indexed for $ty {
                 type StaticTypeTagForIndex = $ty;
-                type IndexType = Id<$ty>;
+                type IndexType = crate::index::Id<$ty>;
             }
         )*
     };
@@ -384,7 +393,7 @@ macro_rules! impl_standalone_index {
 // and all imports are stored before defined, so index for defined is always shifted by imports count.
 // Currently Defined or Import can be: function, global, table, memory, ..etc.
 pub trait Defined<'src>: Indexed {
-    type Import;
+    type Import: Indexed;
 }
 
 pub enum OutputMapType<Input> {

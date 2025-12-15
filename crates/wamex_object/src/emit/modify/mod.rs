@@ -385,7 +385,7 @@ pub type CodeModifyEntry = ModifyEntry<ConstantExtractionEntry>;
 pub type DataModifyEntry = ModifyEntry<start_fn_gen::DataEntry>;
 
 pub struct RelocationContext {
-    pub dyn_relocate: bool,
+    pub dyn_base: bool,
     // If relocation entry is in data segment - this is information about symbol
     pub containing_symbol: Option<DataSymbolWithOffset>,
 }

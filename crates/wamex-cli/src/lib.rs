@@ -17,12 +17,12 @@ mod index {
 mod diff;
 mod incremental;
 
-pub use wamex_object::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use anyhow::Result;
 pub use incremental::{
     IncrementalSplitResult, IncrementalSplitState, ModuleDeps, ModuleUpdate, SplitResult,
 };
 pub use read::InputModule;
+pub use wamex_object::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use wamex_types::{BumpVersion, ModuleId};
 
 #[derive(Debug, Parser)]
@@ -129,12 +129,8 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
     let info = analysis::ModuleInfo::from_raw_module(module)?;
     let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
 
-    let split_program_info = analysis::split_point::compute_split_modules(
-        &info,
-        &dep_graph,
-        &[],
-        &Default::default(),
-    )?;
+    let split_program_info =
+        analysis::split_point::compute_split_modules(&info, &dep_graph, &[], &Default::default())?;
 
     assert!(
         split_program_info.output_modules.len() == 1,

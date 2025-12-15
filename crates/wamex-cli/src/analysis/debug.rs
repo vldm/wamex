@@ -1,5 +1,9 @@
 use crate::{
-    analysis::{self, dep_graph::{DepGraph, DepSet}, symbols::{SymbolKind, SymbolRecord}},
+    analysis::{
+        self,
+        dep_graph::{DepGraph, DepSet},
+        symbols::{SymbolKind, SymbolRecord},
+    },
     index::SymbolId,
 };
 
@@ -77,4 +81,3 @@ pub(crate) fn print_deps_inner(
     }
     println!("SPLIT: ============== {module_name} : total size: {total_size}");
 }
-

@@ -4,12 +4,14 @@
 //! `wamex-cli`: lossless module parsing (`read`), structural inspection (`analysis`), and
 //! emission/relocation (`emit`).
 
+#[macro_use]
+pub mod index;
+
 pub mod analysis;
 pub mod emit;
 pub mod helpers;
-pub mod index;
 pub mod read;
 
 pub use anyhow::Result;
-pub use emit::plan::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
+pub use emit::split::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use read::InputModule;

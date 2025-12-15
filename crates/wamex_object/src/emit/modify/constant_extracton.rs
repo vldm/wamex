@@ -235,7 +235,7 @@ impl CustomModify for ConstantExtractionEntry {
         Ok(match entry.ty {
             RelocationType::MemoryAddrLeb
             | RelocationType::MemoryAddrSleb
-            | RelocationType::TableIndexSleb if context.dyn_relocate =>{
+            | RelocationType::TableIndexSleb if context.dyn_base =>{
                 Some(Self {
                     entry: *entry,
                 })

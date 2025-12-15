@@ -1,15 +1,16 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, bail};
+use wamex_object::emit::split::{
+    ModuleIdentifier, OutputModuleInfo, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint,
+    SplitProgramInfo,
+};
 use wamex_types::map_vec::MiniSet;
 
-use crate::{SplitPointExtractor, analysis, index::{ExportId, IdMap, ImportId, InputFuncId, SymbolId}};
-
 use super::dep_graph::{DepGraph, DepMiniSet, DepSet, NamedGraph, find_reachable_deps};
-
-use wamex_object::emit::plan::{
-    ModuleIdentifier, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint, SplitProgramInfo,
-    OutputModuleInfo,
+use crate::{
+    SplitPointExtractor, analysis,
+    index::{ExportId, IdMap, ImportId, InputFuncId, SymbolId},
 };
 
 pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {
@@ -55,9 +56,9 @@ fn find_split_points_with_prefix(
     let split_points = import_map
         .into_iter()
         .map(|(key, import_id)| -> anyhow::Result<SplitPoint> {
-            let export_id = export_map.remove(&key).with_context(|| {
-                format!("No corresponding export for split import {key:?}")
-            })?;
+            let export_id = export_map
+                .remove(&key)
+                .with_context(|| format!("No corresponding export for split import {key:?}"))?;
             let export = info.wasm.exports[export_id];
             let wasmparser::Export {
                 kind: wasmparser::ExternalKind::Func,
@@ -146,7 +147,9 @@ pub fn wbg_closures(module: &analysis::ModuleInfo, graph: &DepGraph) -> MiniSet<
     wbg_descriptors.into_iter().collect()
 }
 
-pub fn merge_split_points_by_name(split_points: &[SplitPoint]) -> BTreeMap<String, Vec<SplitPoint>> {
+pub fn merge_split_points_by_name(
+    split_points: &[SplitPoint],
+) -> BTreeMap<String, Vec<SplitPoint>> {
     let mut result = BTreeMap::<String, Vec<SplitPoint>>::new();
     for split_point in split_points {
         result
@@ -209,8 +212,18 @@ pub fn compute_split_modules(
     }
 
     for split_point in split_points.iter() {
-        roots.remove(&info.symbols.get_function_symbol(split_point.export_func).unwrap());
-        roots.remove(&info.symbols.get_function_symbol(split_point.import_func).unwrap());
+        roots.remove(
+            &info
+                .symbols
+                .get_function_symbol(split_point.export_func)
+                .unwrap(),
+        );
+        roots.remove(
+            &info
+                .symbols
+                .get_function_symbol(split_point.import_func)
+                .unwrap(),
+        );
     }
 
     let main_deps = find_reachable_deps(dep_graph, &roots);
@@ -220,7 +233,11 @@ pub fn compute_split_modules(
     for (module_name, entry_points) in split_points_by_module.iter() {
         let mut roots = DepSet::new();
         for entry_point in entry_points.iter() {
-            roots.insert(info.symbols.get_function_symbol(entry_point.export_func).unwrap());
+            roots.insert(
+                info.symbols
+                    .get_function_symbol(entry_point.export_func)
+                    .unwrap(),
+            );
         }
         let split_functions = find_reachable_deps(dep_graph, &roots);
         named_modules.push(NamedGraph::new(

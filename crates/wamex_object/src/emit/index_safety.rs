@@ -10,10 +10,16 @@ use crate::{
 
 pub type OutputFuncId = crate::index::Id<DefinedFunction>;
 
-impl Indexed for DefinedFunction {
-    type StaticTypeTagForIndex = Self;
-    type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
-}
+// impl Indexed for DefinedFunction {
+//     type StaticTypeTagForIndex = Self;
+//     type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
+// }
+// impl Indexed for ImportedFunction<'_> {
+//     type StaticTypeTagForIndex = ImportedFunction<'static>;
+//     type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
+// }
+impl_indexed_type! {DefinedFunction}
+impl_indexed_type! {@lf ImportedFunction, GlobalImport, DefinedGlobal}
 
 impl<'src> crate::index::Defined<'src> for DefinedFunction {
     type Import = ImportedFunction<'src>;
@@ -41,11 +47,6 @@ impl<'src> crate::index::OutputType<'src> for ImportedFunction<'src> {
 }
 
 pub type OutputGlobalId = crate::index::Id<DefinedGlobal<'static>>;
-
-impl Indexed for DefinedGlobal<'_> {
-    type StaticTypeTagForIndex = DefinedGlobal<'static>;
-    type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
-}
 
 impl<'src> crate::index::Defined<'src> for DefinedGlobal<'src> {
     type Import = crate::emit::globals::GlobalImport<'src>;

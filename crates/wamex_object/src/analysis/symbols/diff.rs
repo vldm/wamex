@@ -135,7 +135,7 @@ where
     }
 
     fn wamex_parse_name(name: &str) -> Option<(&str, &str)> {
-        crate::emit::plan::parse_wamex_entry_name(name)
+        crate::emit::split::parse_wamex_entry_name(name)
     }
     // Try to match unmatched wamex split points by their module name and function position.
     fn try_match_wamex_split_point(&self, mapping: &mut SymbolMapping) {
@@ -150,7 +150,7 @@ where
             let Some(name) = &left_symbol.linking_name else {
                 continue;
             };
-            if !name.contains(crate::emit::plan::WAMEX_ENTRY_PREFIX) {
+            if !name.contains(crate::emit::split::WAMEX_ENTRY_PREFIX) {
                 continue;
             }
             let Some((module, fn_name)) = Self::wamex_parse_name(name) else {
@@ -166,7 +166,7 @@ where
             let Some(name) = &right_symbol.linking_name else {
                 continue;
             };
-            if !name.contains(crate::emit::plan::WAMEX_ENTRY_PREFIX) {
+            if !name.contains(crate::emit::split::WAMEX_ENTRY_PREFIX) {
                 continue;
             }
             let Some((module, fn_name)) = Self::wamex_parse_name(name) else {

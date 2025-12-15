@@ -7,37 +7,36 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use index_safety::OutputFuncId;
 pub use memory_layout::{DataChunk, DataSegmentOutput, SegmentLayout, SymbolRelation};
-use modify::{ModifyContext, StoreType, init_each_store_var};
+use modify::{ModifyContext, StoreType};
 use wamex_types::{BumpVersion, dylink0::Dylink0Section, map_vec::MiniSet};
-use wasm_encoder::{GlobalType, reencode::Reencode};
-use wasmparser::{RelocationEntry, TypeRef};
+use wasmparser::RelocationEntry;
 
 use crate::{
-    analysis::{self, symbols::SymbolKind},
+    analysis,
     emit::{
-        globals::{DefinedGlobal, GlobalImport},
+        globals::DefinedGlobal,
         index_safety::OutputGlobalId,
         modify::{RelocateState, StartFnGen},
-        plan::{
-            ModuleIdentifier, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint,
+        split::{
+            ModuleIdentifier, SharedModuleIdentifier, Split, SplitModuleIdentifier, SplitPoint,
             SplitProgramInfo,
         },
     },
     helpers::encoding_size,
     index::{
-        AnySymbolId, DataSegmentId, FuncTypeId, Id, IdMap, IdVec, ImportsOrDefined, Indexed,
-        InputFuncId, InputGlobalId, MemoryId, SymbolId, WithOriginalIndex,
+        DataSegmentId, FuncTypeId, IdMap, IdVec, Indexed, InputFuncId, InputGlobalId, MemoryId,
+        SymbolId, WithOriginalIndex,
     },
 };
 
-pub mod plan;
+mod builder;
+pub mod split;
 
 mod globals;
 mod memory_layout;
 
 mod index_safety;
 mod modify;
-mod names;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkageType {
@@ -217,457 +216,26 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     pub fn produce_state(
         module_info: &'any analysis::ModuleInfo<'src>,
         verbose: bool,
-        emit_info: &'any CommonEmitInfo,
-        (module_id, output_module_info): &(SplitModuleIdentifier, plan::OutputModuleInfo),
-        // Main module with static layout of memory and table.
-        // None if it is main module.
-        static_main: Option<&Self>,
+        emit_info: &CommonEmitInfo<'src>,
+        modinfo: &(SplitModuleIdentifier, split::OutputModuleInfo),
         // deps of current module
         shared_modules: &[SharedModuleIdentifier],
         linkage_type: LinkageType,
-        is_nonexportable: impl Fn(SymbolId) -> bool,
+        static_symbols: &BTreeSet<SymbolId>,
+        nonexported_symbols: &MiniSet<SymbolId>,
         version: BumpVersion,
     ) -> ModuleEmitState<'any, 'src> {
-        log::debug!("output_module_info: {output_module_info:#?}");
-        // log::debug!("module_id: {module_id:#?}");
-        log::debug!("shared_modules: {shared_modules:#?}");
-        // We need to include definitions for all of the `defined_symbols`.
-        let mut funcs_to_define = BTreeSet::new();
-        let mut import_functions = Vec::new();
-
-        let mut indirect_funcs_stubs = Vec::new();
-        let mut import_funcs_stubs = Vec::new();
-
-        let main_module = static_main.is_none();
-
-        let mut used_funcs = BTreeSet::new();
-        for (sym, func_id) in output_module_info.defined_symbols.iter().filter_map(|s| {
-            module_info
-                .symbols
-                .as_input_function(*s)
-                .map(|func_id| (*s, func_id))
-        }) {
-            if used_funcs.contains(&func_id) {
-                continue;
-            }
-            used_funcs.insert(func_id);
-
-            let need_export = {
-                // if any module linked to current function
-                let static_export = output_module_info.exports.contains(&sym);
-                // Or it is linked indirectly via split points
-                let lazy_export = output_module_info
-                    .split_points
-                    .iter()
-                    .any(|split_point| split_point.export_func() == func_id);
-                static_export || lazy_export
-            };
-
-            if emit_info.is_external_entrypoint(&func_id) {
-                indirect_funcs_stubs.push((func_id, need_export));
-            } else if let Some(import_id) = module_info.get_function_import_id(func_id) {
-                let import_fn = module_info.wasm.imports[import_id];
-
-                import_functions.push(ImportedFunction {
-                    input_func_id: func_id,
-                    kind: ImportFunctionKind::Existing {
-                        module_name: import_fn.module,
-                        import_function_name: import_fn.name,
-                    },
-                });
-
-                if need_export {
-                    import_funcs_stubs.push(func_id);
-                }
-            } else {
-                funcs_to_define.insert((func_id, need_export, sym));
-            }
-        }
-
-        if !main_module {
-            // submodule imports needed function from main module.
-            import_functions.extend(
-                output_module_info
-                    .imports
-                    .iter()
-                    .inspect(|symbol| {
-                        debug_assert!(!output_module_info.defined_symbols.contains(*symbol))
-                    })
-                    .filter_map(|s| module_info.symbols.as_input_function(*s))
-                    .map(|func_id| ImportedFunction {
-                        input_func_id: func_id,
-                        kind: ImportFunctionKind::New {
-                            // TODO: support multiple dep modules
-                            link_module: 0,
-                            output_function_index: 0,
-                            mangled_function_name: module_info
-                                .wasm
-                                .names
-                                .functions
-                                .get(func_id)
-                                .expect("Function name should be defined"),
-                        },
-                    }),
-            );
-        }
-
-        let imported_globals = if main_module {
-            module_info
-                .wasm
-                .imports
-                .iter()
-                .filter_map(|(_id, import)| {
-                    if let TypeRef::Global(global_type) = &import.ty {
-                        Some((
-                            wasm_encoder::reencode::RoundtripReencoder
-                                .global_type(*global_type)
-                                .expect("failed to reencode global type"),
-                            import,
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .enumerate()
-                .map(|(i, (ty, import))| GlobalImport::Existing {
-                    global_name: import.name,
-                    module_name: import.module,
-                    input_global_id: Id::from_index(i),
-                    global_type: ty,
-                })
-                .collect::<Vec<_>>()
-        } else {
-            SubModuleExtra::MAIN_GLOBAL_EXPORTS
-                .iter()
-                .map(|&name| {
-                    let input_global_id =
-                        module_info.find_global_id_by_name(name).unwrap_or_else(|| {
-                            panic!(
-                                "Globals {:?} should be defined in main module, {} is missing",
-                                SubModuleExtra::MAIN_GLOBAL_EXPORTS,
-                                name
-                            )
-                        });
-                    GlobalImport::New {
-                        input_global_id: Some(input_global_id),
-                        global_name: Cow::Borrowed(name),
-                        global_type: GlobalType {
-                            val_type: wasm_encoder::ValType::I32,
-                            // TODO: only __stack_pointer should be mutable
-                            mutable: true,
-                            shared: false,
-                        },
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let defined_globals: Vec<_> = if main_module {
-            module_info
-                .wasm
-                .globals
-                .iter()
-                .map(|(id, global)| DefinedGlobal::PlainCopy {
-                    global: global.clone(),
-                    input_global_id: id,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let mut globals = ImportsOrDefined::new(imported_globals, defined_globals);
-
-        let lib_base_import = (!main_module).then(|| {
-            globals.push_import(GlobalImport::New {
-                input_global_id: None,
-                global_name: Cow::Borrowed("__lib_base"),
-                global_type: GlobalType {
-                    val_type: wasm_encoder::ValType::I32,
-                    mutable: false,
-                    shared: false,
-                },
-            })
-        });
-
-        let mut data_to_define = BTreeMap::new();
-        for symbol_id in output_module_info.defined_symbols.iter() {
-            let symbol = module_info.symbols.get(*symbol_id).unwrap();
-            let SymbolKind::DataDefined { segment_id, .. } = symbol.kind else {
-                continue;
-            };
-            data_to_define
-                .entry(segment_id)
-                .or_insert_with(BTreeSet::new)
-                .insert(*symbol_id);
-        }
-
-        // filter only used entries
-        let data_segments = emit_info
-            .src_data_segments
-            .iter()
-            .map(|(data_segment_id, data)| {
-                let empty = BTreeSet::new();
-                let entries = data_to_define.get(&data_segment_id).unwrap_or(&empty);
-                let data_segment = data.clone();
-                data_segment.new_with_whitelist(entries)
-            })
-            .collect::<IdVec<_>>();
-        if verbose {
-            SegmentLayout::debug_layout(
-                &module_info.symbols,
-                module_id.to_string(),
-                &data_segments,
-            );
-        }
-
-        let mut data_segment_outputs = IdMap::new();
-
-        let mem_start = if main_module {
-            let first_segment = data_segments
-                .iter()
-                .next()
-                .expect("There should be at least one data segment")
-                .1;
-            first_segment.memory_offset()
-        } else {
-            0
-        };
-
-        // offset of current segment.
-        let mut segment_mem_offset = 0;
-        log::trace!("Data segments for module: {:#?}", data_segments);
-        for (id, segment) in data_segments.iter() {
-            let lib_base_global_id = lib_base_import.as_ref().map(|id| id.as_raw_index() as u32);
-
-            let (new_segment_offset, out) =
-                segment.to_segment_output(lib_base_global_id, mem_start, segment_mem_offset);
-            // TODO: apply relocations to data segment
-            segment_mem_offset = new_segment_offset + out.as_raw().len();
-
-            data_segment_outputs.insert(id, out);
-        }
-
-        // TODO: replace with is_symbol_static (is it located in main module?)
-        let is_static_symbol = |symbol: AnySymbolId| {
-            let main_module = static_main
-                .as_ref()
-                .expect("is_static should be called only for submodules");
-            let symbol_id = Id::from_index(symbol);
-            let symbol = module_info.symbols.get(symbol_id).unwrap();
-            match symbol.kind {
-                SymbolKind::Func { input_id } => {
-                    main_module.functions.get_output_id(input_id).is_some()
-                }
-                SymbolKind::DataDefined { segment_id, .. } => {
-                    let main = static_main.as_ref().unwrap();
-                    let Some(segment) = main.data.get(segment_id) else {
-                        return false;
-                    };
-                    segment.symbols().get(&symbol_id).is_some()
-                }
-                _ => false,
-            }
-        };
-
-        let mut data_relocations = IdMap::new();
-
-        // TODO: move shift in previous (segment_id, segment) in data_segments.iter()
-        for (segment_id, data_segment) in data_segment_outputs.iter() {
-            for (symbol_index, sym) in data_segment.symbols() {
-                let sym_relocs = module_info
-                    .symbols
-                    .get(*symbol_index)
-                    .expect("symbol should be valid")
-                    .relocs
-                    .iter()
-                    .map(|reloc| {
-                        let relocation_context = modify::RelocationContext {
-                            dyn_relocate: !main_module
-                                && !is_static_symbol(reloc.index as AnySymbolId),
-                            containing_symbol: Some(modify::DataSymbolWithOffset {
-                                storage_segment_id: segment_id,
-                                storage_symbol_id: *symbol_index,
-                                storage_offset_in_data: reloc.offset, // sym.data_mem_offset as u32,
-                            }),
-                        };
-
-                        // relocs has offset relative to symbol - update to be relative to segment
-                        let mut reloc = reloc.clone();
-                        reloc.offset += sym.data_mem_offset as u32;
-                        modify::DataModifyEntry::from_relocation_entry(&reloc, &relocation_context)
-                    })
-                    .collect::<Result<Vec<_>>>()
-                    .unwrap();
-                data_relocations
-                    .entry(segment_id)
-                    .or_insert_with(Vec::new)
-                    .extend(sym_relocs);
-            }
-        }
-
-        let mut defined_functions = vec![];
-
-        for &(func_id, mut export, sym_id) in &funcs_to_define {
-            // Collect all relocation entries that modify something within this function.
-            let func_relocs = &*module_info.symbols.get(sym_id).unwrap().relocs;
-
-            let modification_list = func_relocs
-                .iter()
-                .map(|entry| {
-                    let relocation_context = modify::RelocationContext {
-                        dyn_relocate: !main_module && !is_static_symbol(entry.index as AnySymbolId),
-                        containing_symbol: None,
-                    };
-                    modify::CodeModifyEntry::from_relocation_entry(&entry, &relocation_context)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-
-            // TODO: Add trampoline for __wasm_bindgen_ functions that for some reasons exported.
-            // For now there known to be only `wasm_bindgen::__rt::wbg_cast::breaks_if_inlined::`
-            // special functions are exported trough trampolines
-            if export && is_nonexportable(sym_id) {
-                defined_functions.push(DefinedFunction {
-                    export: true,
-                    input_func_id: func_id,
-                    kind: DefinedFunctionKind::Trampoline {},
-                });
-                export = false
-            }
-
-            defined_functions.push(DefinedFunction {
-                export,
-                input_func_id: func_id,
-                kind: DefinedFunctionKind::Copied { modification_list },
-            });
-        }
-
-        defined_functions.extend(indirect_funcs_stubs.iter().map(
-            |(input_func_id, need_export)| DefinedFunction {
-                export: *need_export,
-                input_func_id: *input_func_id,
-                kind: DefinedFunctionKind::IndirectTrampoline {
-                    table_index_offset: emit_info.external_entrypoint_index(input_func_id).unwrap(),
-                },
-            },
-        ));
-
-        defined_functions.extend(
-            import_funcs_stubs
-                .iter()
-                .map(|input_func_id| DefinedFunction {
-                    export: true,
-                    input_func_id: *input_func_id,
-                    kind: DefinedFunctionKind::Trampoline {},
-                }),
-        );
-
-        import_functions.sort();
-        defined_functions.sort();
-
-        log::trace!("import_functions: {:#?}", import_functions);
-        log::trace!("defined_functions: {:#?}", defined_functions);
-
-        let funcs = ImportsOrDefined::new(import_functions, defined_functions).lock();
-
-        let indirect_function_table: Vec<_> = module_info
-            .indirect_function_list
-            .iter()
-            .filter(|indirect_func_id| funcs.get_output_id(**indirect_func_id).is_some())
-            .copied()
-            .collect();
-
-        let indirect_functions = IndirectFunctionEmitInfo::new(
-            main_module.then(|| emit_info.num_entrypoints()),
-            indirect_function_table,
-        );
-
-        let sub_module_extra = lib_base_import.map(|lib_base| {
-            let table_base = globals.push_import(GlobalImport::New {
-                input_global_id: None,
-                global_name: Cow::Borrowed("__table_base"),
-                global_type: wasm_encoder::GlobalType {
-                    val_type: wasm_encoder::ValType::I32,
-                    mutable: false,
-                    shared: false,
-                },
-            });
-
-            let entrypoints = output_module_info
-                .split_points
-                .iter()
-                .map(|sp| sp.export_func())
-                .collect::<Vec<_>>();
-
-            let extern_modules = shared_modules
-                .iter()
-                .map(|module_id| {
-                    let got_base = GotBase {
-                        lib_base_id: globals.push_import(GlobalImport::New {
-                            input_global_id: None,
-                            global_name: Cow::Owned(format!("__{}_lib_base", module_id)),
-                            global_type: wasm_encoder::GlobalType {
-                                val_type: wasm_encoder::ValType::I32,
-                                mutable: false,
-                                shared: false,
-                            },
-                        }),
-                        table_base_id: globals.push_import(GlobalImport::New {
-                            input_global_id: None,
-                            global_name: Cow::Owned(format!("__{}_table_base", module_id)),
-                            global_type: wasm_encoder::GlobalType {
-                                val_type: wasm_encoder::ValType::I32,
-                                mutable: false,
-                                shared: false,
-                            },
-                        }),
-                    };
-                    (module_id.clone(), got_base)
-                })
-                .collect::<Vec<_>>();
-
-            let export_got_with_id = module_id.as_shared().cloned();
-            SubModuleExtra {
-                self_base: GotBase {
-                    lib_base_id: lib_base,
-                    table_base_id: table_base,
-                },
-                extern_modules,
-                entrypoints,
-                export_got_with_id,
-            }
-        });
-
-        let mut global_tmp_store = BTreeMap::new();
-        if !main_module {
-            for (store_type, val_type) in init_each_store_var() {
-                let global_id = globals.imports.len() + globals.defined.len();
-                global_tmp_store.insert(store_type, OutputGlobalId::from_index(global_id));
-
-                globals
-                    .defined
-                    .push(DefinedGlobal::WithConstructor(GlobalType {
-                        val_type,
-                        mutable: true,
-                        shared: false,
-                    }));
-            }
-        }
-        // dbg!(&globals);
-
-        Self {
-            src: module_info,
-            data: data_segment_outputs,
-            data_relocations,
-            globals: globals.lock(),
-            sub_module_extra,
-            global_tmp_store,
-            indirect_functions,
-            functions: funcs,
+        Split::build_split_object(
+            module_info,
+            verbose,
+            emit_info,
+            modinfo,
+            shared_modules,
             linkage_type,
-            linked_modules: shared_modules.to_vec(),
-            incremental_version: version,
-        }
+            static_symbols,
+            nonexported_symbols,
+            version,
+        )
     }
 
     // Return got info for a given dep or this module itself.
@@ -1572,12 +1140,12 @@ impl<'src> CommonEmitInfo<'src> {
             start..end
         })
     }
-    fn external_entrypoint_index(&self, entrypoint_func: &InputFuncId) -> Option<u32> {
+    fn external_entrypoint_index(&self, entrypoint_func: InputFuncId) -> Option<u32> {
         self.modules_decl.values().find_map(|module| {
             module
                 .split_points
                 .iter()
-                .position(|sp| sp.import_func() == *entrypoint_func)
+                .position(|sp| sp.import_func() == entrypoint_func)
                 .map(|pos| module.split_points_offset + pos as u32)
         })
     }
@@ -1695,8 +1263,21 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
         module: &'a analysis::ModuleInfo<'src>,
         program_info: &SplitProgramInfo,
         version: BumpVersion,
-        is_nonexported_fn: impl Fn(SymbolId) -> bool + Copy,
+        nonexported_symbols: &'a MiniSet<SymbolId>,
     ) -> Result<Self> {
+        // main module defined symbols
+        let static_symbols = program_info
+            .output_modules
+            .iter()
+            .find_map(|(id, output_module)| {
+                if *id == MAIN_ID {
+                    Some(&output_module.defined_symbols)
+                } else {
+                    None
+                }
+            })
+            .expect("Main module not found");
+
         let modules_ids_iter = program_info
             .output_modules
             .iter()
@@ -1752,10 +1333,10 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                         verbose,
                         common_emit_info,
                         &program_info.output_modules[output_module_index],
-                        None,
                         &NO_DEPS,
                         linkage_type,
-                        is_nonexported_fn,
+                        static_symbols,
+                        nonexported_symbols,
                         version,
                     ),
                     id,
@@ -1794,10 +1375,10 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
                         verbose,
                         common_emit_info,
                         &program_info.output_modules[output_module_index],
-                        Some(&main_module.0),
                         &module_deps,
                         linkage_type,
-                        is_nonexported_fn,
+                        static_symbols,
+                        nonexported_symbols,
                         version,
                     ),
                     id,
@@ -1972,7 +1553,7 @@ pub fn emit_modules<'a, 'src>(
         module,
         program_info,
         version,
-        |func_id| wbg_fns.contains(&func_id),
+        &wbg_fns,
     )
     .context("Error calculating modules")?;
     calculated.emit_modules(precise_modification, whitelist, emit_fn)?;

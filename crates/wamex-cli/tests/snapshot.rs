@@ -16,7 +16,7 @@ fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
     let cli = Split {
         input: src.into(),
         output: output_temp.path().into(),
-        verbose: false,
+        verbose: true,
         dry_run: false,
         precise_modification: true,
         split_point_extractor: SplitPointExtractor::Legacy,

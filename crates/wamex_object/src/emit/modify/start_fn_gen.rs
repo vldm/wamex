@@ -168,7 +168,7 @@ impl CustomModify for DataEntry {
         Self::check_whitelisted_data_relocation(entry)?;
         Ok(match entry.ty {
             RelocationType::MemoryAddrI32 | RelocationType::TableIndexI32
-                if context.dyn_relocate =>
+                if context.dyn_base =>
             {
                 let storage = context.containing_symbol.as_ref().unwrap().clone(); // storage should always exist in dyn relocation mode
                 let relocation = entry.clone();

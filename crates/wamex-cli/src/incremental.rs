@@ -9,7 +9,7 @@ use wamex_types::{BumpVersion, ModuleId, map_vec::MiniSet};
 use crate::{
     ModuleIdentifier, SplitModuleIdentifier, SplitPointExtractor,
     analysis::{self, StaticModuleInfo, symbols::DiffEntry},
-    emit::plan::{OutputModuleInfo, SharedModuleIdentifier},
+    emit::split::{OutputModuleInfo, SharedModuleIdentifier},
     index::{IdMap, SymbolId},
 };
 
