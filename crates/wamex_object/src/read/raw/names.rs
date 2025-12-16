@@ -1,10 +1,11 @@
 use anyhow::{Result, bail};
+use cranelift_entity::EntityRef;
 use vec_map::VecMap;
 
 use super::CustomSectionReader;
 use crate::index::{
-    DataSegmentId, ElementId, FuncTypeId, IdMap, InputFuncId, InputGlobalId, MemoryId, TableId,
-    TagId,
+    DataSegmentId, ElementId, FuncTypeId, IdMap, InputFuncId, InputGlobalId, MemoryId,
+    SecondaryMap, TableId, TagId,
 };
 
 // Custom sections
@@ -20,7 +21,7 @@ pub struct Names<'a> {
     pub globals: IdMap<InputGlobalId, &'a str>,
     pub elements: IdMap<ElementId, &'a str>,
     pub data_segments: IdMap<DataSegmentId, &'a str>,
-    pub tags: IdMap<TagId, &'a str>,
+    pub tags: SecondaryMap<TagId, &'a str>,
 }
 
 impl<'a> CustomSectionReader<'a> for Names<'a> {
@@ -63,7 +64,7 @@ impl<'a> CustomSectionReader<'a> for Names<'a> {
                     names.elements = convert_name_map(name_map)?;
                 }
                 Name::Tag(name_map) => {
-                    names.tags = convert_name_map(name_map)?;
+                    names.tags = convert_name_map_cf(name_map)?;
                 }
                 Name::Field(_name_map) => {
                     bail!("Field names not supported");
@@ -100,4 +101,18 @@ fn convert_indirect_name_map<'a>(
             Ok((indirect_naming.index as usize, indirect_naming.names))
         })
         .collect::<Result<VecMap<_>, _>>()
+}
+
+
+fn convert_name_map_cf<'a, Idx>(
+    name_map: wasmparser::NameMap<'a>,
+) -> Result<SecondaryMap<Idx, &'a str>>
+where
+    Idx: crate::index::EntityRef + From<u32>,
+{
+    name_map
+        .into_iter()
+        .map(|r| r.map(|naming| (naming.index.into(), naming.name)))
+        .collect::<Result<SecondaryMap<Idx, &'a str>, _>>()
+        .map_err(|e| e.into())
 }

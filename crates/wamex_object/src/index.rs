@@ -2,10 +2,11 @@ use std::{
     fmt::Debug,
     hash::Hash,
     marker::PhantomData,
-    ops::{Deref, Index, IndexMut},
+    ops::{Deref, DerefMut, Index, IndexMut},
     str::FromStr,
 };
 
+pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use vec_map::VecMap;
 use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
@@ -13,6 +14,84 @@ use crate::{
     read::code::{FunctionWithBody, InputFunction},
     symbols::SymbolRecord,
 };
+
+macro_rules! impl_entity_index {
+    ( $( $ty:ident $(($( $type:tt)*))? $( => $display:literal)? );* $(;)? ) => {
+        $(
+
+            #[derive(Clone, Copy, PartialEq, Eq)]
+            pub struct $ty(u32);
+            impl_entity_index!(@entity $ty $(, $display)?);
+            impl From<u32> for $ty {
+                fn from(value: u32) -> Self {
+                    $ty(value)
+                }
+            }
+            $(
+                impl_entity_index!(@primary_key $ty $($type)*);
+            )?
+        )*
+    };
+    (@primary_key $entity:ident $type: ident) => {
+        impl PrimaryKey for $type {
+            type EntityType = $entity;
+        }
+    };
+    (@primary_key $entity:ident for<$b: lifetime> $type: ty) => {
+        impl<$b> PrimaryKey for $type {
+            type EntityType = $entity;
+        }
+    };
+
+    (@entity $ty:ident, $display:literal) => {
+        cranelift_entity::entity_impl!($ty, $display);
+    };
+    (@entity $ty:ident) => {
+        cranelift_entity::entity_impl!($ty);
+    };
+}
+
+///
+/// Allows creating `IdVec` of some entity type with default index type.
+///
+pub trait PrimaryKey {
+    type EntityType: EntityRef;
+}
+
+// A wrapper around `PrimaryMap` that allows only entities with defined `PrimaryKey`.
+pub struct IdVec2<T: PrimaryKey>(PrimaryMap<T::EntityType, T>);
+
+impl<T> Deref for IdVec2<T>
+where
+    T: PrimaryKey,
+{
+    type Target = PrimaryMap<T::EntityType, T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<T> DerefMut for IdVec2<T>
+where
+    T: PrimaryKey,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+// Test macro usage
+#[cfg(debug_assertions)]
+impl_entity_index! {
+    First;
+    SecondWithDisplay => "SecondWithDisplay";
+    WithPrimary(SectionId) => "WithPrimary";
+    WithPrimaryLf(for <'lf> SymbolRecord<'lf>);
+}
+
+impl_entity_index! {
+    TagId(TagType) => "tag";
+}
 
 pub type AnySymbolId = usize;
 pub type SymbolId = Id<SymbolRecord<'static>>;
@@ -28,7 +107,6 @@ pub type MemoryId = Id<MemoryType>;
 pub type InputGlobalId = Id<Global<'static>>;
 pub type ElementId = Id<Element<'static>>;
 pub type DataSegmentId = Id<Data<'static>>;
-pub type TagId = Id<TagType>;
 // TODO: Maybe replace Vecs with id_arena?
 // Currently the only difference is that we also use
 
