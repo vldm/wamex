@@ -1,11 +1,11 @@
 //!
-//! Module with external info usefull to build dep graph, and request information about function and data entries.
+//! Wasm object representation useful for future analysis.
+//!
 //!
 
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Range};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-pub use symbols::{StaticModuleInfo, SymbolMap};
 use wasmparser::{ElementItems, ElementKind, TypeRef};
 
 use crate::{
@@ -14,8 +14,8 @@ use crate::{
         InputGlobalId, TableId,
     },
     read,
+    symbols::SymbolMap,
 };
-pub mod symbols;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ImportInfo {
@@ -27,13 +27,19 @@ pub struct ImportInfo {
     pub imported_global_map: IdMap<ImportId, InputGlobalId>,
 }
 
-/// Provides a additional info about module.
-/// Like ordered_data_symbols - ordered by offsets where symbol is defined (relative to module start)
-/// and info about imported functions
-pub struct ModuleInfo<'src> {
+/// Partially parsed wasm object.
+/// It expects that module has valid structure and contains additional custom sections:
+/// - name section with function and global names
+/// - linking section with symbol information
+/// 
+/// Unlike `read::ObjectReader` which is low-level representation of wasm module sections structure,
+/// `InputObject` provides higher-level API to access wasm entities like functions and globals, in a way that concatenates imported and defined entities.
+/// So user can use type-safe indexes from original module.
+pub struct InputObject<'src> {
+    pub wasm: read::ObjectReader<'src>,
+
     pub import_info: ImportInfo,
 
-    pub wasm: read::InputModule<'src>,
     pub export_map: HashMap<(isize, AnySymbolId), (ExportId, &'src str)>,
     pub symbols: SymbolMap<'src>,
 
@@ -41,12 +47,12 @@ pub struct ModuleInfo<'src> {
     pub indirect_function_list: Vec<InputFuncId>,
 }
 
-impl<'src> ModuleInfo<'src> {
+impl<'src> InputObject<'src> {
     pub fn from_wasm_bytes(wasm_bytes: &'src [u8]) -> Result<Self> {
-        let module = read::InputModule::parse(&wasm_bytes)?;
+        let module = read::ObjectReader::parse(&wasm_bytes)?;
         Self::from_raw_module(module)
     }
-    pub fn from_raw_module(module: read::InputModule<'src>) -> Result<Self> {
+    pub fn from_raw_module(module: read::ObjectReader<'src>) -> Result<Self> {
         //TODO: Maybe we should use `IdMap` here?
         let mut imported_funcs: Vec<ImportId> = Vec::new();
         let mut imported_globals: Vec<ImportId> = Vec::new();
@@ -147,9 +153,9 @@ impl<'src> ModuleInfo<'src> {
         let (indirect_element_id, indirect_function_list) = indirect_element
             .ok_or_else(|| anyhow!("No element segment with __indirect_function_table found"))?;
 
-        let symbols_map = symbols::SymbolMap::new(&module, import_funcs_info.imported_funcs.len())?;
+        let symbols_map = SymbolMap::new(&module, import_funcs_info.imported_funcs.len())?;
 
-        Ok(ModuleInfo {
+        Ok(InputObject {
             import_info: import_funcs_info,
             symbols: symbols_map,
             wasm: module,
@@ -291,7 +297,7 @@ impl<'src> ModuleInfo<'src> {
     }
 }
 
-impl<'src> Debug for ModuleInfo<'src> {
+impl<'src> Debug for InputObject<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModuleInfo")
             .field("import_funcs_info", &self.import_info)

@@ -7,10 +7,8 @@
 
 use std::{collections::BTreeMap, mem, ops::Deref};
 
-use crate::{
-    analysis::{self, SymbolMap},
-    index::{IdMap, SymbolId},
-};
+use super::SymbolMap;
+use crate::index::{IdMap, SymbolId};
 
 pub struct SymbolMapping {
     // Most of symbols are mapped.
@@ -720,12 +718,14 @@ impl SymbolMapping {
     }
 }
 
+use crate::InputObject;
+
 pub trait SymbolMapWithContent<'src> {
     fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>>;
     fn symbols(&self) -> &SymbolMap<'src>;
 }
 
-impl<'src> SymbolMapWithContent<'src> for analysis::ModuleInfo<'src> {
+impl<'src> SymbolMapWithContent<'src> for InputObject<'src> {
     fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>> {
         self.symbols
             .get(sym_id)
@@ -749,7 +749,7 @@ impl StaticModuleInfo {
             contents: IdMap::new(),
         }
     }
-    pub fn new(info: &analysis::ModuleInfo<'_>) -> Self {
+    pub fn new(info: &InputObject<'_>) -> Self {
         let symbols = info.symbols.clone_owned();
         let mut contents = IdMap::new();
         for (sym_id, symbol) in info.symbols.iter() {

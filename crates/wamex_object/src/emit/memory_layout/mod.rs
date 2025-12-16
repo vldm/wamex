@@ -9,12 +9,9 @@ use anyhow::Result;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
-    analysis::{
-        self,
-        symbols::{self, SymbolKind},
-    },
     helpers::{RangeComp, RangeExt},
     index::{Id, IdVec, Indexed, SymbolId},
+    symbols::{self, SymbolKind},
 };
 mod hexdump;
 
@@ -109,7 +106,7 @@ impl<'src> SegmentLayout<'src> {
     pub fn new_inner<'a>(
         data: &Data<'src>,
         segment_info: &wasmparser::Segment<'src>,
-        data_symbols: impl Iterator<Item = (SymbolId, &'a analysis::symbols::SymbolRecord<'src>)>,
+        data_symbols: impl Iterator<Item = (SymbolId, &'a symbols::SymbolRecord<'src>)>,
     ) -> Result<SegmentLayout<'src>>
     where
         'src: 'a,
@@ -119,7 +116,7 @@ impl<'src> SegmentLayout<'src> {
         let mem_offset = match &data.kind {
             DataKind::Passive => panic!("Passive data is not currently supported"),
             DataKind::Active { offset_expr, .. } => {
-                crate::analysis::ModuleInfo::read_const_expr(offset_expr)?
+                crate::InputObject::read_const_expr(offset_expr)?
             }
         };
 

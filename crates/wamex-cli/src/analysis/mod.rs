@@ -1,4 +1,7 @@
-pub use wamex_object::analysis::{ImportInfo, ModuleInfo, StaticModuleInfo, SymbolMap};
+pub use wamex_object::{
+    InputObject,
+    symbols::{StaticModuleInfo, SymbolMap},
+};
 
 pub mod debug;
 pub mod dep_graph;
@@ -7,5 +10,5 @@ pub mod split_point;
 pub mod testing;
 
 pub mod symbols {
-    pub use wamex_object::analysis::symbols::*;
+    pub use wamex_object::symbols::*;
 }

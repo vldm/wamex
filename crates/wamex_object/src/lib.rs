@@ -7,11 +7,12 @@
 #[macro_use]
 pub mod index;
 
-pub mod analysis;
 pub mod emit;
 pub mod helpers;
 pub mod read;
+pub mod symbols;
 
 pub use anyhow::Result;
 pub use emit::split::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
-pub use read::InputModule;
+pub use read::{InputObject, ObjectReader};
+pub use symbols::{StaticModuleInfo, SymbolMap};

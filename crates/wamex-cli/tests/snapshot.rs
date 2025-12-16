@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Result, bail};
 use tempdir::TempDir;
-use wamex_cli::{InputModule, Split, SplitPointExtractor, split};
+use wamex_cli::{ObjectReader, Split, SplitPointExtractor, split};
 
 fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
     let output_temp = TempDir::new("wasm_split_test")?;
@@ -26,14 +26,14 @@ fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
     Ok(output_temp)
 }
 
-fn list_data_segments(src: &InputModule) -> Vec<String> {
+fn list_data_segments(src: &ObjectReader) -> Vec<String> {
     src.data
         .data_segments
         .iter()
         .map(|(_id, s)| hex::encode(s.data))
         .collect()
 }
-fn list_imports(src: &InputModule) -> BTreeSet<String> {
+fn list_imports(src: &ObjectReader) -> BTreeSet<String> {
     src.imports
         .iter()
         // .filter(|(_id, i)| matches!(i.ty, wasmparser::TypeRef::Func(_)))
@@ -41,7 +41,7 @@ fn list_imports(src: &InputModule) -> BTreeSet<String> {
         .collect()
 }
 
-fn list_exports(src: &InputModule) -> BTreeSet<String> {
+fn list_exports(src: &ObjectReader) -> BTreeSet<String> {
     src.exports
         .iter()
         // .filter(|(_id, i)| matches!(i.kind, wasmparser::ExternalKind::Func))
@@ -145,7 +145,7 @@ fn test_correct_imports_exports() {
 
     let output_temp = split_cmd(&src).expect("Failed to split wasm file");
     let input_bytes = std::fs::read(&src).expect("Failed to read wasm file");
-    let input_module = InputModule::parse(&input_bytes).expect("Failed to parse wasm file");
+    let input_module = ObjectReader::parse(&input_bytes).expect("Failed to parse wasm file");
 
     let imports = list_imports(&input_module);
     let exports = list_exports(&input_module);
@@ -168,7 +168,7 @@ fn test_correct_imports_exports() {
     );
 
     let main = std::fs::read(output_temp.path().join("main.wasm")).unwrap();
-    let main = InputModule::parse(&main).unwrap();
+    let main = ObjectReader::parse(&main).unwrap();
 
     let main_imports = list_imports(&main);
     let main_exports = list_exports(&main);
@@ -181,7 +181,7 @@ fn test_correct_imports_exports() {
     }
 
     let static_str = std::fs::read(output_temp.path().join("static_str.wasm")).unwrap();
-    let static_str = InputModule::parse(&static_str).unwrap();
+    let static_str = ObjectReader::parse(&static_str).unwrap();
     let static_str_imports = list_imports(&static_str);
     let static_str_exports = list_exports(&static_str);
 
@@ -195,7 +195,7 @@ fn test_correct_imports_exports() {
     let string_from_static =
         std::fs::read(output_temp.path().join("string_from_static.wasm")).unwrap();
 
-    let string_from_static = InputModule::parse(&string_from_static).unwrap();
+    let string_from_static = ObjectReader::parse(&string_from_static).unwrap();
 
     let string_from_static_imports = list_imports(&string_from_static);
     let string_from_static_exports = list_exports(&string_from_static);
@@ -210,7 +210,7 @@ fn test_correct_imports_exports() {
 // Snapshot imports, exports and data segments of wasm modules.
 fn snapshot_module_structure(src: &Path) {
     let input_bytes = std::fs::read(src).expect("Failed to read wasm file");
-    let input_module = InputModule::parse(&input_bytes).expect("Failed to parse wasm file");
+    let input_module = ObjectReader::parse(&input_bytes).expect("Failed to parse wasm file");
 
     let imports = list_imports(&input_module);
     let exports = list_exports(&input_module);

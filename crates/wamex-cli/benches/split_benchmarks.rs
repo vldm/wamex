@@ -10,8 +10,9 @@ use wamex_cli::{
     SplitPointExtractor,
     analysis::{self, split_point},
     emit,
-    read::InputModule,
+    read::ObjectReader,
 };
+use wamex_object::InputObject;
 
 fn load_lazy_routes_wasm() -> Vec<u8> {
     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
@@ -56,7 +57,7 @@ fn benchmark_parse_module(c: &mut Criterion) {
     let lazy_routes_wasm = load_lazy_routes_wasm();
     c.bench_function("parse_lazy_routes", |b| {
         b.iter(|| {
-            let module = InputModule::parse(black_box(&lazy_routes_wasm)).unwrap();
+            let module = ObjectReader::parse(black_box(&lazy_routes_wasm)).unwrap();
             hint_black_box(module);
         })
     });
@@ -64,8 +65,8 @@ fn benchmark_parse_module(c: &mut Criterion) {
 
 fn benchmark_dependency_analysis(c: &mut Criterion) {
     let lazy_routes_wasm = load_lazy_routes_wasm();
-    let module = InputModule::parse(&lazy_routes_wasm).unwrap();
-    let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
+    let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
+    let info = InputObject::from_raw_module(module).unwrap();
 
     c.bench_function("get_dependencies", |b| {
         b.iter(|| {
@@ -77,8 +78,8 @@ fn benchmark_dependency_analysis(c: &mut Criterion) {
 
 fn benchmark_compute_split_modules(c: &mut Criterion) {
     let lazy_routes_wasm = load_lazy_routes_wasm();
-    let module = InputModule::parse(&lazy_routes_wasm).unwrap();
-    let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
+    let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
+    let info = InputObject::from_raw_module(module).unwrap();
     let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
     let wbg_fns = split_point::wbg_closures(&info, &dep_graph);
     let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
@@ -99,8 +100,8 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
 
 fn benchmark_emit_modules(c: &mut Criterion) {
     let lazy_routes_wasm = load_lazy_routes_wasm();
-    let module = InputModule::parse(&lazy_routes_wasm).unwrap();
-    let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
+    let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
+    let info = InputObject::from_raw_module(module).unwrap();
     let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
     let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
     let wbg_fns = split_point::wbg_closures(&info, &dep_graph);

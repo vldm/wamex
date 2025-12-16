@@ -1,3 +1,5 @@
+use wamex_object::InputObject;
+
 use crate::{
     analysis::{
         self,
@@ -9,7 +11,7 @@ use crate::{
 
 pub(crate) fn print_deps_inner(
     module_name: &str,
-    info: &analysis::ModuleInfo,
+    info: &InputObject,
     reachable: &DepSet,
     graph: &DepGraph,
 ) {

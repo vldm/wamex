@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use colored::Colorize;
 use similar::{ChangeTag, TextDiff};
+use wamex_object::InputObject;
 use wasmparser::{Data, Global};
 
 use crate::{
@@ -16,15 +17,15 @@ use crate::{
     read::code::FunctionWithBody,
 };
 pub struct Compare<'any, 'src> {
-    left: &'any analysis::ModuleInfo<'src>,
-    right: &'any analysis::ModuleInfo<'src>,
+    left: &'any InputObject<'src>,
+    right: &'any InputObject<'src>,
     structural: bool,
 }
 
 impl<'any, 'src> Compare<'any, 'src> {
     pub fn new(
-        left: &'any analysis::ModuleInfo<'src>,
-        right: &'any analysis::ModuleInfo<'src>,
+        left: &'any InputObject<'src>,
+        right: &'any InputObject<'src>,
         structural: bool,
     ) -> Self {
         Self {
@@ -130,10 +131,7 @@ impl<'any, 'src> Compare<'any, 'src> {
     // Mark changed modules and print what caused the change.
     fn print_changed_modules(
         &self,
-        differ: &crate::analysis::symbols::Differ<
-            &'any analysis::ModuleInfo<'src>,
-            &'any analysis::ModuleInfo<'src>,
-        >,
+        differ: &crate::analysis::symbols::Differ<&'any InputObject<'src>, &'any InputObject<'src>>,
         diff_result: &crate::analysis::symbols::DiffResult,
     ) -> Result<(), anyhow::Error> {
         let split_points = crate::analysis::split_point::find_split_points(

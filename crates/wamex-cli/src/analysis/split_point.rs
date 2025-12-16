@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, bail};
-use wamex_object::emit::split::{
-    ModuleIdentifier, OutputModuleInfo, SharedModuleIdentifier, SplitModuleIdentifier, SplitPoint,
-    SplitProgramInfo,
+use wamex_object::{
+    InputObject,
+    emit::split::{
+        ModuleIdentifier, OutputModuleInfo, SharedModuleIdentifier, SplitModuleIdentifier,
+        SplitPoint, SplitProgramInfo,
+    },
 };
 use wamex_types::map_vec::MiniSet;
 
@@ -29,7 +32,7 @@ pub(crate) const SPLIT_IMPORT_POSTFIX: &str = "00_import_";
 pub(crate) const SPLIT_EXPORT_POSTFIX: &str = "00_export_";
 
 fn find_split_points_with_prefix(
-    info: &analysis::ModuleInfo,
+    info: &InputObject,
     prefix: &str,
 ) -> anyhow::Result<Vec<SplitPoint>> {
     macro_rules! process_imports_or_exports {
@@ -101,18 +104,18 @@ fn find_split_points_with_prefix(
     Ok(split_points)
 }
 
-pub fn find_split_points_legacy(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
+pub fn find_split_points_legacy(info: &InputObject) -> anyhow::Result<Vec<SplitPoint>> {
     find_split_points_with_prefix(info, "__wasm_split_00")
 }
 
 pub(crate) const WAMEX_ENTRY_PREFIX: &str = "__wamex_00";
 
-fn find_split_points_wamex(info: &analysis::ModuleInfo) -> anyhow::Result<Vec<SplitPoint>> {
+fn find_split_points_wamex(info: &InputObject) -> anyhow::Result<Vec<SplitPoint>> {
     find_split_points_with_prefix(info, WAMEX_ENTRY_PREFIX)
 }
 
 pub fn find_split_points(
-    info: &analysis::ModuleInfo,
+    info: &InputObject,
     split_point_type: SplitPointExtractor,
 ) -> anyhow::Result<Vec<SplitPoint>> {
     match split_point_type {
@@ -125,7 +128,7 @@ fn is_wasm_bindgen_cast(name: &str) -> bool {
     name == "__wbindgen_describe_closure" || name == "__wbindgen_describe_cast"
 }
 
-pub fn wbg_closures(module: &analysis::ModuleInfo, graph: &DepGraph) -> MiniSet<SymbolId> {
+pub fn wbg_closures(module: &InputObject, graph: &DepGraph) -> MiniSet<SymbolId> {
     let wbg_fns: std::collections::BTreeSet<_> = module
         .symbols
         .iter()
@@ -164,7 +167,7 @@ pub fn merge_split_points_by_name(
 }
 
 pub fn compute_split_modules(
-    info: &analysis::ModuleInfo,
+    info: &InputObject,
     dep_graph: &DepGraph,
     split_points: &[SplitPoint],
     wbg_descriptors: &MiniSet<SymbolId>,

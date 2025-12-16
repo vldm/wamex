@@ -9,7 +9,7 @@ pub use diff::{DiffEntry, DiffResult, Differ, StaticModuleInfo};
 use smallvec::SmallVec;
 
 use crate::{
-    InputModule, analysis,
+    InputObject, ObjectReader,
     helpers::{RangeComp, RangeExt},
     index::{DataSegmentId, Id, IdMap, IdVec, InputFuncId, InputGlobalId, SymbolId, TableId},
 };
@@ -60,7 +60,7 @@ impl SymbolRecord<'_> {
     }
 
     // Return content with cleared relocations.
-    pub fn stable_content(&self, input: &analysis::ModuleInfo) -> Option<Vec<u8>> {
+    pub fn stable_content(&self, input: &InputObject) -> Option<Vec<u8>> {
         match self.kind {
             SymbolKind::Func { input_id } => {
                 let Some(defined_id) = input.as_defined_function_id(input_id) else {
@@ -131,7 +131,7 @@ impl<'src> SymbolMap<'src> {
             datas_ids: BTreeSet::new(),
         }
     }
-    pub fn new(wasm: &'_ crate::read::InputModule<'src>, num_imports_fn: usize) -> Result<Self> {
+    pub fn new(wasm: &'_ crate::read::ObjectReader<'src>, num_imports_fn: usize) -> Result<Self> {
         use wasmparser::SymbolInfo;
 
         #[derive(Debug)]
@@ -451,7 +451,7 @@ impl<'src> SymbolMap<'src> {
 
     // Return a list of all relocations in the module, ordered by their offset.
     fn collect_ordered_relocs(
-        input: &'_ InputModule<'src>,
+        input: &'_ ObjectReader<'src>,
     ) -> Result<(
         VecDeque<wasmparser::RelocationEntry>,
         VecDeque<wasmparser::RelocationEntry>,

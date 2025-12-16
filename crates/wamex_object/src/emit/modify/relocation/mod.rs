@@ -6,18 +6,19 @@ use anyhow::{Result, anyhow, bail};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    analysis::{self, ModuleInfo, symbols::SymbolKind},
+    InputObject,
     emit::{
         ComputedModules, GotBase, ModuleEmitState, index_safety::OutputGlobalId, modify::SymbolOp,
     },
     index::{DataSegmentId, Id, InputFuncId, InputGlobalId, SymbolId},
+    symbols::SymbolKind,
 };
 
 pub(crate) trait EntryTypeTag {
     type OutputValue;
     // Index or offset of symbol in corresponding module
     fn get_mapped_value(
-        input: &analysis::ModuleInfo<'_>,
+        input: &InputObject<'_>,
         state: &ModuleEmitState,
         src_symbol: SymbolId,
     ) -> Option<Self::OutputValue>;
@@ -28,10 +29,7 @@ pub enum FunctionIndexTag {}
 pub enum DataSymbolTag {}
 
 impl FunctionIndexTag {
-    fn get_input_function_id(
-        input: &analysis::ModuleInfo<'_>,
-        src_symbol: SymbolId,
-    ) -> Option<InputFuncId> {
+    fn get_input_function_id(input: &InputObject<'_>, src_symbol: SymbolId) -> Option<InputFuncId> {
         let SymbolKind::Func { input_id } = input.symbols.get(src_symbol)?.kind else {
             return None;
         };
@@ -42,7 +40,7 @@ impl FunctionIndexTag {
 impl EntryTypeTag for FunctionIndexTag {
     type OutputValue = usize;
     fn get_mapped_value(
-        input: &analysis::ModuleInfo<'_>,
+        input: &InputObject<'_>,
         state: &ModuleEmitState,
         src_symbol: SymbolId,
     ) -> Option<Self::OutputValue> {
@@ -76,7 +74,7 @@ impl DataSymbolTag {
 impl EntryTypeTag for DataSymbolTag {
     type OutputValue = i64;
     fn get_mapped_value(
-        input: &ModuleInfo<'_>,
+        input: &InputObject<'_>,
         state: &ModuleEmitState,
         src_symbol: SymbolId,
     ) -> Option<Self::OutputValue> {
@@ -93,7 +91,7 @@ impl EntryTypeTag for DataSymbolTag {
 
 #[derive(Clone)]
 pub(crate) struct RelocateState<'any, 'src> {
-    pub input_module: &'any analysis::ModuleInfo<'src>,
+    pub input_module: &'any InputObject<'src>,
     pub computed_modules: &'any ComputedModules<'any, 'src>,
     pub global_id_mapper: &'any dyn Fn(InputGlobalId) -> Option<OutputGlobalId>,
     pub emit_module: &'any ModuleEmitState<'any, 'src>,

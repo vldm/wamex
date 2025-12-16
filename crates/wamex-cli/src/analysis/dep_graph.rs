@@ -3,6 +3,8 @@ use std::{
     fmt::Debug,
 };
 
+use wamex_object::InputObject;
+
 use crate::{
     analysis::{self},
     index::{Id, IdMap, SymbolId},
@@ -100,7 +102,7 @@ pub struct SharedEntries<Id> {
     pub imports: DepMiniSet,
 }
 
-pub fn get_dependencies(info: &analysis::ModuleInfo) -> anyhow::Result<DepGraph> {
+pub fn get_dependencies(info: &InputObject) -> anyhow::Result<DepGraph> {
     let mut deps = DepGraph::new();
 
     // TypeIndexLeb relocations index is not in symbol index space.
@@ -280,6 +282,7 @@ mod tests {
     use std::{fs::File, io::Write};
 
     use lazy_static::lazy_static;
+    use wamex_object::InputObject;
 
     use crate::{
         analysis::{
@@ -294,7 +297,7 @@ mod tests {
 
     trait DepListExt {
         fn check_unreachable(&self, other: &DepSet) -> bool;
-        fn print(&self, title: &str, info: &analysis::ModuleInfo, graph: &DepGraph);
+        fn print(&self, title: &str, info: &InputObject, graph: &DepGraph);
     }
     impl DepListExt for DepSet {
         // Check that self list of deps does not contain any nodes from other list
@@ -307,7 +310,7 @@ mod tests {
             }
             true
         }
-        fn print(&self, title: &str, info: &analysis::ModuleInfo, graph: &DepGraph) {
+        fn print(&self, title: &str, info: &InputObject, graph: &DepGraph) {
             print_deps_inner(title, info, self, graph);
         }
     }
@@ -316,7 +319,7 @@ mod tests {
 
     #[test]
     fn load_dep_graph() {
-        let info = analysis::ModuleInfo::from_wasm_bytes(&WASM_FILE).unwrap();
+        let info = InputObject::from_wasm_bytes(&WASM_FILE).unwrap();
         let dep_graph = super::get_dependencies(&info).unwrap();
 
         let format_dep = |dep: SymbolId| {
@@ -378,7 +381,7 @@ mod tests {
 
     #[test]
     fn reachablity_graph() {
-        let info = analysis::ModuleInfo::from_wasm_bytes(&WASM_FILE).unwrap();
+        let info = InputObject::from_wasm_bytes(&WASM_FILE).unwrap();
         let dep_graph = super::get_dependencies(&info).unwrap();
 
         let no_inline_fn = info.find_function_id_by_name("no_inline_fn").unwrap();

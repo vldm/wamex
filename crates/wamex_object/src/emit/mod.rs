@@ -12,7 +12,7 @@ use wamex_types::{BumpVersion, dylink0::Dylink0Section, map_vec::MiniSet};
 use wasmparser::RelocationEntry;
 
 use crate::{
-    analysis,
+    InputObject,
     emit::{
         globals::DefinedGlobal,
         index_safety::OutputGlobalId,
@@ -203,7 +203,7 @@ pub struct ModuleEmitState<'any, 'src> {
     data_relocations: IdMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
 
     // src module
-    pub src: &'any analysis::ModuleInfo<'src>,
+    pub src: &'any InputObject<'src>,
     // Indirect function table Functions from original table that are used in this module.
     pub indirect_functions: IndirectFunctionEmitInfo,
     linkage_type: LinkageType,
@@ -214,7 +214,7 @@ pub struct ModuleEmitState<'any, 'src> {
 const MEMORY_INDEX: u32 = 0; //TODO: Support multiple memories
 impl<'any, 'src> ModuleEmitState<'any, 'src> {
     pub fn produce_state(
-        module_info: &'any analysis::ModuleInfo<'src>,
+        module_info: &'any InputObject<'src>,
         verbose: bool,
         emit_info: &CommonEmitInfo<'src>,
         modinfo: &(SplitModuleIdentifier, split::OutputModuleInfo),
@@ -1160,7 +1160,7 @@ impl<'src> CommonEmitInfo<'src> {
     }
 
     pub fn new(
-        module: &analysis::ModuleInfo<'src>,
+        module: &InputObject<'src>,
         verbose: bool,
         program_info: &SplitProgramInfo,
     ) -> Result<Self> {
@@ -1260,7 +1260,7 @@ impl<'a, 'src> ComputedModules<'a, 'src> {
     pub fn produce_state(
         common_emit_info: &'a CommonEmitInfo<'src>,
         verbose: bool,
-        module: &'a analysis::ModuleInfo<'src>,
+        module: &'a InputObject<'src>,
         program_info: &SplitProgramInfo,
         version: BumpVersion,
         nonexported_symbols: &'a MiniSet<SymbolId>,
@@ -1537,7 +1537,7 @@ pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
 }
 
 pub fn emit_modules<'a, 'src>(
-    module: &'a analysis::ModuleInfo<'src>,
+    module: &'a InputObject<'src>,
     verbose: bool,
     program_info: &SplitProgramInfo,
     wbg_fns: &MiniSet<SymbolId>,

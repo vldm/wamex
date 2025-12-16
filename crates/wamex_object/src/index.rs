@@ -10,8 +10,8 @@ use vec_map::VecMap;
 use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
 use crate::{
-    analysis::symbols::SymbolRecord,
     read::code::{FunctionWithBody, InputFunction},
+    symbols::SymbolRecord,
 };
 
 pub type AnySymbolId = usize;

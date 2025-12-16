@@ -8,7 +8,7 @@ use wamex_types::{BumpVersion, map_vec::MiniSet};
 use wasm_encoder::{GlobalType, reencode::Reencode};
 
 use crate::{
-    analysis::{self, symbols::SymbolKind},
+    InputObject,
     emit::{
         CommonEmitInfo, DefinedFunction, DefinedFunctionKind, GotBase, ImportFunctionKind,
         ImportedFunction, IndirectFunctionEmitInfo, LinkageType, ModuleEmitState, SegmentLayout,
@@ -19,6 +19,7 @@ use crate::{
         modify::{self, init_each_store_var},
     },
     index::{ExportId, Id, IdMap, ImportId, InputFuncId, SymbolId},
+    symbols::SymbolKind,
 };
 
 pub const WAMEX_ENTRY_PREFIX: &str = "__wamex_00";
@@ -308,7 +309,7 @@ pub fn merge_split_points_by_module_name<'a>(
 }
 
 struct SplitContext<'any, 'src> {
-    module_info: &'any analysis::ModuleInfo<'src>,
+    module_info: &'any InputObject<'src>,
     emit_info: &'any CommonEmitInfo<'src>,
     static_symbols: &'any BTreeSet<SymbolId>,
     nonexported_symbols: &'any MiniSet<SymbolId>,
@@ -489,7 +490,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
 }
 impl Split<()> {
     pub fn build_split_object<'any, 'src>(
-        module_info: &'any analysis::ModuleInfo<'src>,
+        module_info: &'any InputObject<'src>,
         verbose: bool,
         emit_info: &CommonEmitInfo<'src>,
         (module_id, output_module_info): &(SplitModuleIdentifier, OutputModuleInfo),

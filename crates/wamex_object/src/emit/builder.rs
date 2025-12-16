@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 
 use crate::{
-    analysis,
+    InputObject,
     emit::{
         DefinedFunction, ImportedFunction, SegmentLayout, SubModuleExtra,
         globals::{DefinedGlobal, GlobalImport},
@@ -159,7 +159,7 @@ impl<'src> ObjectBuilder<'src> {
 }
 
 pub struct BuilderContextToBeRemoved<'any, 'src> {
-    pub module_info: &'any analysis::ModuleInfo<'src>,
+    pub module_info: &'any InputObject<'src>,
     pub sub_module_extra: &'any Option<SubModuleExtra>,
     pub static_symbols: &'any BTreeSet<SymbolId>,
 }

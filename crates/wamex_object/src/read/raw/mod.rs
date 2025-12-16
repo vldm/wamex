@@ -22,15 +22,14 @@ use relocs::Relocation;
 
 type Ind<T> = IndexedSection<T>;
 
-/// Lossless representation of wasm module, without preprocessing
-/// That can pass round-trip test without any loss.
-/// After round-trip section will have canonical order.
+/// Lossless representation of wasm object, without preprocessing
+/// that can pass round-trip test without any loss. After round-trip section will have canonical order.
 ///
 /// Only primitive types are copied, function/data segments and other fields borrow input data for zero-copy parsing.
 ///
 /// By design it is inflated version of `wasmparser::Parser` with all sections traversed and stored in corresponding fields.
 #[derive(Default)]
-pub struct InputModule<'a> {
+pub struct ObjectReader<'a> {
     // parsed sections
     pub types: IdVec<FuncType>,
     pub imports: IdVec<Import<'a>>,
@@ -60,7 +59,7 @@ pub struct InputModule<'a> {
     pub custom_sections: VecMap<Ind<CustomSection<'a>>>,
 }
 
-impl<'a> InputModule<'a> {
+impl<'a> ObjectReader<'a> {
     pub fn parse(wasm: &'a [u8]) -> anyhow::Result<Self> {
         let mut module = Self {
             ..Default::default()
