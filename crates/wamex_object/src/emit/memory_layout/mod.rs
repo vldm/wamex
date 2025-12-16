@@ -260,9 +260,12 @@ impl<'src> SegmentLayout<'src> {
                         // TODO: add padding
                         base += chunk.len();
                     }
-                    SymbolRelation::BoundToPrevious { .. } => {
-                        writeln!(print_data_format, "<bound to previous>").unwrap()
-                    }
+                    SymbolRelation::BoundToPrevious { offset, len } => writeln!(
+                        print_data_format,
+                        "<bound to previous> (offset: {}, len: {})",
+                        offset, len
+                    )
+                    .unwrap(),
                 };
             }
         }

@@ -13,7 +13,7 @@ use crate::{
     index::{DataSegmentId, Id, InputFuncId, InputGlobalId, SymbolId},
 };
 
-pub trait EntryTypeTag {
+pub(crate) trait EntryTypeTag {
     type OutputValue;
     // Index or offset of symbol in corresponding module
     fn get_mapped_value(
@@ -92,7 +92,7 @@ impl EntryTypeTag for DataSymbolTag {
 }
 
 #[derive(Clone)]
-pub struct RelocateState<'any, 'src> {
+pub(crate) struct RelocateState<'any, 'src> {
     pub input_module: &'any analysis::ModuleInfo<'src>,
     pub computed_modules: &'any ComputedModules<'any, 'src>,
     pub global_id_mapper: &'any dyn Fn(InputGlobalId) -> Option<OutputGlobalId>,
@@ -146,7 +146,7 @@ impl RelocateState<'_, '_> {
         Err(not_found())
     }
 
-    pub fn get_entry_symbol_op<T: EntryTypeTag>(
+    pub(crate) fn get_entry_symbol_op<T: EntryTypeTag>(
         &self,
         relocation: &RelocationEntry,
     ) -> Result<SymbolOp<T::OutputValue>>
@@ -167,7 +167,7 @@ impl RelocateState<'_, '_> {
         ).map(|res| res.map(|v| v + relocation.addend.try_into().unwrap()))
     }
 
-    pub fn get_data_symbol_op(
+    pub(crate) fn get_data_symbol_op(
         &self,
         segment_id: DataSegmentId,
         data_symbol_id: SymbolId,

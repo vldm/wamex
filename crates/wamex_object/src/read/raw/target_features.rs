@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use wasm_encoder::Encode;
 use wasmparser::{WasmFeatures, WasmFeaturesInflated};
 
-use crate::read::CustomSectionReader;
+use super::CustomSectionReader;
 
 pub struct TargetFeatures {
     pub features: WasmFeaturesInflated,

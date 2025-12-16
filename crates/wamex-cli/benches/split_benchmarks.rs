@@ -8,7 +8,7 @@ use criterion::{
 };
 use wamex_cli::{
     SplitPointExtractor,
-    analysis::{self, split_point::SplitProgramInfo},
+    analysis::{self, split_point},
     emit,
     read::InputModule,
 };
@@ -80,12 +80,12 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
     let module = InputModule::parse(&lazy_routes_wasm).unwrap();
     let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
     let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
-    let wbg_fns = SplitProgramInfo::wbg_closures(&info, &dep_graph);
+    let wbg_fns = split_point::wbg_closures(&info, &dep_graph);
     let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
 
     c.bench_function("compute_split_modules", |b| {
         b.iter(|| {
-            let split_program_info = SplitProgramInfo::compute_split_modules(
+            let split_program_info = split_point::compute_split_modules(
                 black_box(&info),
                 black_box(&dep_graph),
                 black_box(&split_points),
@@ -103,10 +103,9 @@ fn benchmark_emit_modules(c: &mut Criterion) {
     let info = analysis::ModuleInfo::from_raw_module(module).unwrap();
     let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
     let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
-    let wbg_fns = SplitProgramInfo::wbg_closures(&info, &dep_graph);
+    let wbg_fns = split_point::wbg_closures(&info, &dep_graph);
     let mut split_program_info =
-        SplitProgramInfo::compute_split_modules(&info, &dep_graph, &split_points, &wbg_fns)
-            .unwrap();
+        split_point::compute_split_modules(&info, &dep_graph, &split_points, &wbg_fns).unwrap();
 
     // Apply the same optimizations as the main split function
     emit::merge_main_shared(&mut split_program_info);

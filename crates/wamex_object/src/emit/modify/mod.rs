@@ -14,7 +14,7 @@ use std::{collections::BTreeMap, ops::Range};
 
 use anyhow::{Result, bail};
 use constant_extracton::ConstantExtractionEntry;
-pub use relocation::RelocateState;
+pub(crate) use relocation::RelocateState;
 pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
 use wasm_encoder::reencode::Reencode;
 use wasmparser::{BinaryReader, FunctionBody};
