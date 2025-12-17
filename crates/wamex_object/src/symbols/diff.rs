@@ -7,12 +7,14 @@
 
 use std::{collections::BTreeMap, mem, ops::Deref};
 
+use cranelift_entity::SecondaryMap;
+
 use super::SymbolMap;
-use crate::index::{IdMap, SymbolId};
+use crate::index::{IdMap, IdMap2, SymbolId};
 
 pub struct SymbolMapping {
     // Most of symbols are mapped.
-    left_to_right: IdMap<SymbolId, SymbolId>,
+    left_to_right: IdMap2<SymbolId, SymbolId>,
     left_non_matched: Vec<SymbolId>,
     right_non_matched: Vec<SymbolId>,
 }
@@ -86,7 +88,7 @@ where
         }
 
         //2. Match left symbols to the right.
-        let mut mapping = IdMap::new();
+        let mut mapping = IdMap2::<SymbolId, SymbolId>::new();
 
         let mut non_matched_right_symbols: Vec<SymbolId> = Vec::new();
         let mut dups: SVec<_, 16> = SVec::new();
@@ -739,22 +741,22 @@ impl<'src> SymbolMapWithContent<'src> for InputObject<'src> {
 #[derive(Clone, Default, Debug)]
 pub struct StaticModuleInfo {
     symbols: SymbolMap<'static>,
-    contents: IdMap<SymbolId, Vec<u8>>,
+    contents: SecondaryMap<SymbolId, Vec<u8>>,
 }
 
 impl StaticModuleInfo {
     pub fn empty() -> Self {
         Self {
             symbols: SymbolMap::empty(),
-            contents: IdMap::new(),
+            contents: SecondaryMap::new(),
         }
     }
     pub fn new(info: &InputObject<'_>) -> Self {
         let symbols = info.symbols.clone_owned();
-        let mut contents = IdMap::new();
+        let mut contents = SecondaryMap::new();
         for (sym_id, symbol) in info.symbols.iter() {
             if let Some(content) = symbol.stable_content(info) {
-                contents.insert(sym_id, content);
+                contents[sym_id] = content;
             }
         }
         Self { symbols, contents }

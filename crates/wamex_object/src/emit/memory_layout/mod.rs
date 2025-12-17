@@ -6,17 +6,18 @@ use std::{
 };
 
 use anyhow::Result;
+use wasm_encoder::Encode;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
     helpers::{RangeComp, RangeExt},
-    index::{Id, IdVec, Indexed, SymbolId},
+    index::{DataSegmentId, Id, IdMap2, IdVec, IdVec2, Indexed, InvalidValue, SymbolId},
     symbols::{self, SymbolKind},
 };
 mod hexdump;
 
 /// Describes how a data symbol relates to its neighboring symbols within a segment.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SymbolRelation<'a> {
     /// A standalone symbol with no binding constraints.
     Regular {
@@ -39,7 +40,7 @@ pub enum SymbolRelation<'a> {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataChunk<'a> {
     name: Cow<'a, str>,
     #[allow(dead_code)]
@@ -70,6 +71,20 @@ pub struct SegmentLayout<'a> {
     alignment: usize,
     kind: DataKind<'a>,
     mem_offset: usize,
+}
+
+impl InvalidValue for SegmentLayout<'_> {
+    fn invalid_value() -> Self {
+        Self {
+            alignment: 1,
+            data_parts: Vec::new(),
+            kind: DataKind::Passive,
+            mem_offset: 0,
+        }
+    }
+    fn is_invalid_value(&self) -> bool {
+        self.data_parts.is_empty() && matches!(self.kind, DataKind::Passive) && self.mem_offset == 0
+    }
 }
 
 impl Debug for SegmentLayout<'_> {
@@ -215,7 +230,7 @@ impl<'src> SegmentLayout<'src> {
     pub fn debug_layout(
         symbol_table: &symbols::SymbolMap,
         module_name: String,
-        data_segments: &IdVec<SegmentLayout<'_>>,
+        data_segments: &IdMap2<DataSegmentId, SegmentLayout<'_>>,
     ) {
         use std::fmt::Write;
         let mut print_data_format = String::new();
@@ -240,7 +255,7 @@ impl<'src> SegmentLayout<'src> {
                             .iter()
                             .map(|reloc| {
                                 let reloc_symbol =
-                                    symbol_table.get(Id::from_index(reloc.index)).unwrap();
+                                    symbol_table.get(SymbolId::from_index(reloc.index)).unwrap();
                                 hexdump::Ref {
                                     range: reloc.relocation_range(),
                                     name: &reloc_symbol.name,
@@ -466,7 +481,7 @@ impl<'src> SegmentLayout<'src> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DataSymbolRefs {
     // Relative to lib_base for submodules
     pub data_mem_offset: usize,
@@ -475,7 +490,7 @@ pub struct DataSymbolRefs {
 // generate data segment and global initializers
 /// Representation of calculated data segment for output module.
 /// Contain data chunk
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DataSegmentOutput {
     // only for active segments
     data_init: wasm_encoder::ConstExpr,
@@ -483,6 +498,19 @@ pub struct DataSegmentOutput {
 
     data: Vec<u8>,
     data_symbols: BTreeMap<SymbolId, DataSymbolRefs>,
+}
+impl InvalidValue for DataSegmentOutput {
+    fn invalid_value() -> Self {
+        Self {
+            data_init: wasm_encoder::ConstExpr::empty(),
+            memory_offset: usize::MAX,
+            data: Vec::new(),
+            data_symbols: BTreeMap::new(),
+        }
+    }
+    fn is_invalid_value(&self) -> bool {
+        self.memory_offset == usize::MAX && self.data.is_empty() && self.data_symbols.is_empty()
+    }
 }
 
 impl DataSegmentOutput {

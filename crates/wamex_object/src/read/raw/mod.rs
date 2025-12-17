@@ -5,7 +5,7 @@ use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::index::{DefinedFuncId, FuncTypeId, IdVec, IndexedSection};
+use crate::index::{DefinedFuncId, FuncTypeId, IdVec2, IndexedSection};
 
 pub mod code;
 pub mod data;
@@ -31,17 +31,17 @@ type Ind<T> = IndexedSection<T>;
 #[derive(Default)]
 pub struct ObjectReader<'a> {
     // parsed sections
-    pub types: IdVec<FuncType>,
-    pub imports: IdVec<Import<'a>>,
-    pub exports: IdVec<Export<'a>>,
-    pub tables: IdVec<Table<'a>>,
+    pub types: IdVec2<FuncType>,
+    pub imports: IdVec2<Import<'a>>,
+    pub exports: IdVec2<Export<'a>>,
+    pub tables: IdVec2<Table<'a>>,
     // elements is just a table initialisation
-    pub elements: IdVec<Element<'a>>,
+    pub elements: IdVec2<Element<'a>>,
     // tags are used for exceptions
-    pub tags: IdVec<TagType>,
-    pub globals: IdVec<Global<'a>>,
+    pub tags: IdVec2<TagType>,
+    pub globals: IdVec2<Global<'a>>,
     // Should be only one memory ?
-    pub memories: IdVec<MemoryType>,
+    pub memories: IdVec2<MemoryType>,
     // code and data is only interested section for relocation application
     pub code: Ind<CodeSection<'a>>,
     pub data: Ind<DataSection<'a>>,
@@ -82,37 +82,37 @@ impl<'a> ObjectReader<'a> {
                 Payload::TypeSection(reader) => {
                     module.types = reader
                         .into_iter_err_on_gc_types()
-                        .collect::<Result<IdVec<_>, _>>()?;
+                        .collect::<Result<IdVec2<_>, _>>()?;
                 }
                 Payload::ImportSection(reader) => {
-                    module.imports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.imports = reader.into_iter().collect::<Result<IdVec2<_>, _>>()?;
                 }
                 Payload::TableSection(reader) => {
-                    module.tables = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.tables = reader.into_iter().collect::<Result<IdVec2<_>, _>>()?;
                 }
                 Payload::MemorySection(reader) => {
-                    module.memories = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.memories = reader.into_iter().collect::<Result<IdVec2<_>, _>>()?;
                 }
                 Payload::TagSection(reader) => {
-                    module.tags = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.tags = reader.into_iter().collect::<Result<IdVec2<_>, _>>()?;
                 }
                 Payload::GlobalSection(reader) => {
-                    module.globals = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.globals = reader.into_iter().collect::<Result<IdVec2<_>, _>>()?;
                 }
                 Payload::ElementSection(reader) => {
-                    module.elements = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.elements = reader.into_iter().collect::<Result<IdVec2<_>, _>>()?;
                 }
                 Payload::FunctionSection(reader) => {
                     function_types = reader
                         .into_iter()
-                        .map(|t| t.map(crate::index::Id::from_index))
+                        .map(|t| t.map(crate::index::FuncTypeId::from_u32))
                         .collect::<Result<Vec<_>, _>>()?;
                 }
                 Payload::ExportSection(reader) => {
-                    module.exports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.exports = reader.into_iter().collect::<Result<IdVec2<_>, _>>()?;
                 }
                 Payload::StartSection { func, .. } => {
-                    code_start = Some(crate::index::Id::from_index(func));
+                    code_start = Some(crate::index::InputFuncId::from_index(func));
                 }
                 Payload::DataCountSection { count, .. } => {
                     data_count = Some(count as usize);
@@ -121,7 +121,7 @@ impl<'a> ObjectReader<'a> {
                     let starting_offset = reader.range().start;
 
                     let data = DataSection {
-                        data_segments: reader.into_iter().collect::<Result<IdVec<_>, _>>()?,
+                        data_segments: reader.into_iter().collect::<Result<IdVec2<_>, _>>()?,
                     };
                     module.data = Ind {
                         section_payload: data,

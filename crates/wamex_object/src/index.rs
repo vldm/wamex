@@ -11,6 +11,7 @@ use vec_map::VecMap;
 use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
 use crate::{
+    emit::SegmentLayout,
     read::code::{FunctionWithBody, InputFunction},
     symbols::SymbolRecord,
 };
@@ -19,12 +20,43 @@ macro_rules! impl_entity_index {
     ( $( $ty:ident $(($( $type:tt)*))? $( => $display:literal)? );* $(;)? ) => {
         $(
 
-            #[derive(Clone, Copy, PartialEq, Eq)]
+            #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
             pub struct $ty(u32);
             impl_entity_index!(@entity $ty $(, $display)?);
             impl From<u32> for $ty {
                 fn from(value: u32) -> Self {
                     $ty(value)
+                }
+            }
+            // Default is invalid_value (U32::max) for easier debugging
+            impl $crate::index::InvalidValue for $ty {
+                fn invalid_value() -> Self {
+                    $ty(u32::MAX)
+                }
+                fn is_invalid_value(&self) -> bool {
+                    self.0 == u32::MAX
+                }
+            }
+            impl Default for $ty {
+                fn default() -> Self {
+                    $crate::index::InvalidValue::invalid_value()
+                }
+            }
+            // Compatibility methods for migration from Id<T>
+            impl $ty {
+                pub fn as_raw_index(&self) -> usize {
+                    cranelift_entity::EntityRef::index(*self)
+                }
+
+                pub fn from_index<T>(id: T) -> Self
+                where
+                    T: TryInto<u32> + std::fmt::Debug + Copy,
+                {
+                    $ty::from_u32(id.try_into().ok().unwrap_or_else(|| panic!("Invalid ID: {:?}", id)))
+                }
+                pub fn next(&self) -> Self {
+                    debug_assert!(self.0 != u32::MAX);
+                    $ty::from_u32(self.0 + 1)
                 }
             }
             $(
@@ -33,12 +65,12 @@ macro_rules! impl_entity_index {
         )*
     };
     (@primary_key $entity:ident $type: ident) => {
-        impl PrimaryKey for $type {
+        impl $crate::index::PrimaryKey for $type {
             type EntityType = $entity;
         }
     };
     (@primary_key $entity:ident for<$b: lifetime> $type: ty) => {
-        impl<$b> PrimaryKey for $type {
+        impl<$b> $crate::index::PrimaryKey for $type {
             type EntityType = $entity;
         }
     };
@@ -58,8 +90,131 @@ pub trait PrimaryKey {
     type EntityType: EntityRef;
 }
 
+pub trait InvalidValue: Clone {
+    fn invalid_value() -> Self;
+    fn is_invalid_value(&self) -> bool;
+}
+impl<T: Clone> InvalidValue for Vec<T> {
+    fn invalid_value() -> Self {
+        Vec::new()
+    }
+    fn is_invalid_value(&self) -> bool {
+        self.is_empty()
+    }
+}
+
+// A wrapper around `SecondaryMap` that handles gaps as `None`.
+#[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
+pub struct IdMap2<K: EntityRef, V: InvalidValue> {
+    map: SecondaryMap<K, V>,
+    // tracked length of inserted non-default items
+    length: usize,
+}
+
+impl<K: EntityRef, V> IdMap2<K, V>
+where
+    V: Clone + InvalidValue,
+{
+    pub fn new() -> Self {
+        IdMap2 {
+            map: SecondaryMap::with_default(V::invalid_value()),
+            length: 0,
+        }
+    }
+    /// Insert value, returning previous value if any.
+    ///
+    /// Not expecting default value to be inserted.
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        debug_assert!(!value.is_invalid_value(), "Cannot insert default value");
+        let prev = self.map.get(key).filter(|v| !v.is_invalid_value()).cloned();
+        self.map[key] = value;
+
+        if prev.is_none() {
+            self.length += 1;
+        }
+        prev
+    }
+    pub fn push(&mut self, value: V) -> K {
+        let last = self
+            .map
+            .iter()
+            .rev()
+            .next()
+            .map(|(k, _)| k)
+            .unwrap_or(K::new(0));
+        self.insert(last, value);
+        last
+    }
+
+    pub fn remove(&mut self, key: K) -> Option<V> {
+        let prev = self.map.get(key).filter(|v| !v.is_invalid_value()).cloned();
+        self.map[key] = V::invalid_value();
+        if prev.is_some() {
+            self.length -= 1;
+        }
+        prev
+    }
+    pub fn get(&self, key: K) -> Option<&V> {
+        let v = &self.map[key];
+        if v.is_invalid_value() { None } else { Some(v) }
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (K, &V)> {
+        self.map.iter().filter_map(|(k, v)| {
+            if v.is_invalid_value() {
+                None
+            } else {
+                Some((k, v))
+            }
+        })
+    }
+    pub fn len(&self) -> usize {
+        self.length
+    }
+}
+
+impl<K, V> Index<K> for IdMap2<K, V>
+where
+    K: EntityRef,
+    V: Clone + InvalidValue,
+{
+    type Output = V;
+
+    fn index(&self, key: K) -> &V {
+        self.map.index(key)
+    }
+}
+impl<K, V> IndexMut<K> for IdMap2<K, V>
+where
+    K: EntityRef,
+    V: Clone + InvalidValue,
+{
+    fn index_mut(&mut self, key: K) -> &mut V {
+        self.map.index_mut(key)
+    }
+}
+
+impl<K, V> FromIterator<(K, V)> for IdMap2<K, V>
+where
+    K: EntityRef,
+    V: Clone + InvalidValue,
+{
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut map = IdMap2::new();
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
+        map
+    }
+}
+
 // A wrapper around `PrimaryMap` that allows only entities with defined `PrimaryKey`.
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct IdVec2<T: PrimaryKey>(PrimaryMap<T::EntityType, T>);
+impl<T: PrimaryKey> IdVec2<T> {
+    pub fn new() -> Self {
+        IdVec2(PrimaryMap::new())
+    }
+}
 
 impl<T> Deref for IdVec2<T>
 where
@@ -80,33 +235,68 @@ where
     }
 }
 
+impl<T: PrimaryKey> Default for IdVec2<T> {
+    fn default() -> Self {
+        IdVec2(PrimaryMap::new())
+    }
+}
+
+impl<T: PrimaryKey> FromIterator<T> for IdVec2<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut map = PrimaryMap::new();
+        for item in iter {
+            map.push(item);
+        }
+        IdVec2(map)
+    }
+}
+
+impl<T: PrimaryKey + Debug> Debug for IdVec2<T>
+where
+    T::EntityType: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 // Test macro usage
 #[cfg(debug_assertions)]
-impl_entity_index! {
-    First;
-    SecondWithDisplay => "SecondWithDisplay";
-    WithPrimary(SectionId) => "WithPrimary";
-    WithPrimaryLf(for <'lf> SymbolRecord<'lf>);
+mod test_impl_entity_index {
+    use std::marker::PhantomData;
+
+    use super::SectionId;
+
+    struct Test<'f> {
+        _func: PhantomData<&'f ()>,
+    }
+    impl_entity_index! {
+        First;
+        SecondWithDisplay => "SecondWithDisplay";
+        WithPrimary(SectionId) => "WithPrimary";
+        WithPrimaryLf(for <'lf> Test<'lf>);
+    }
 }
 
 impl_entity_index! {
     TagId(TagType) => "tag";
+    FuncTypeId(FuncType) => "type";
+    MemoryId(MemoryType) => "memory";
+    ImportId(for<'a> Import<'a>) => "import";
+    ExportId(for<'a> Export<'a>) => "export";
+    TableId(for<'a> Table<'a>) => "table";
+    InputGlobalId(for<'a> Global<'a>) => "global";
+    ElementId(for<'a> Element<'a>) => "element";
+    DataSegmentId(for<'a> Data<'a>) => "data";
+    SymbolId(for<'a> SymbolRecord<'a>) => ""; // Basic symbol no need prefix for display
+    BuilderSegmentId(for<'a> SegmentLayout<'a>) => "segment";
+    InputFuncId(for<'a> InputFunction<'a>) => "func";
+    DefinedFuncId(for<'a> FunctionWithBody<'a>) => "defined_func";
 }
 
 pub type AnySymbolId = usize;
-pub type SymbolId = Id<SymbolRecord<'static>>;
 pub type SectionId = usize;
 
-pub type FuncTypeId = Id<FuncType>;
-pub type InputFuncId = Id<InputFunction<'static>>;
-pub type DefinedFuncId = Id<FunctionWithBody<'static>>;
-pub type TableId = Id<Table<'static>>;
-pub type ImportId = Id<Import<'static>>;
-pub type ExportId = Id<Export<'static>>;
-pub type MemoryId = Id<MemoryType>;
-pub type InputGlobalId = Id<Global<'static>>;
-pub type ElementId = Id<Element<'static>>;
-pub type DataSegmentId = Id<Data<'static>>;
 // TODO: Maybe replace Vecs with id_arena?
 // Currently the only difference is that we also use
 
@@ -137,7 +327,7 @@ impl<TypeTag> Id<TypeTag> {
     }
 }
 
-#[derive(Default, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct IdMap<Idx, Res> {
     vecmap: VecMap<Res>,
     _res: PhantomCovariant<Idx>,
@@ -350,6 +540,53 @@ impl<Type, Res> IdMap<Id<Type>, Res> {
     }
 }
 
+// Support for EntityRef types in IdMap
+impl<E: EntityRef + Default, Res> Default for IdMap<E, Res> {
+    fn default() -> Self {
+        IdMap {
+            vecmap: VecMap::new(),
+            _res: PhantomData,
+        }
+    }
+}
+
+impl<E: EntityRef + From<u32>, Res> FromIterator<(E, Res)> for IdMap<E, Res> {
+    fn from_iter<I: IntoIterator<Item = (E, Res)>>(iter: I) -> Self {
+        let vecmap = VecMap::from_iter(iter.into_iter().map(|(entity, res)| (entity.index(), res)));
+        IdMap {
+            vecmap,
+            _res: PhantomData,
+        }
+    }
+}
+
+impl<E: EntityRef, Res> IdMap<E, Res> {
+    pub fn get(&self, entity: E) -> Option<&Res> {
+        self.vecmap.get(entity.index())
+    }
+
+    pub fn insert(&mut self, entity: E, res: Res) -> Option<Res> {
+        self.vecmap.insert(entity.index(), res)
+    }
+
+    pub fn remove(&mut self, entity: E) -> Option<Res> {
+        self.vecmap.remove(entity.index())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (E, &Res)>
+    where
+        E: From<u32>,
+    {
+        self.vecmap
+            .iter()
+            .map(|(idx, res)| (E::from(idx as u32), res))
+    }
+
+    pub fn entry(&mut self, entity: E) -> vec_map::Entry<'_, Res> {
+        self.vecmap.entry(entity.index())
+    }
+}
+
 impl<T: Indexed> Index<Id<T::StaticTypeTagForIndex>> for IdVec<T> {
     type Output = T;
 
@@ -470,8 +707,8 @@ macro_rules! impl_standalone_index {
 // In WASM a lot of objects can be either defined or imported,
 // and all imports are stored before defined, so index for defined is always shifted by imports count.
 // Currently Defined or Import can be: function, global, table, memory, ..etc.
-pub trait Defined<'src>: Indexed {
-    type Import: Indexed;
+pub trait Defined<'src>: PrimaryKey {
+    type Import: PrimaryKey;
 }
 
 pub enum OutputMapType<Input> {
@@ -507,12 +744,10 @@ impl<Input> OutputMapType<Input> {
 }
 
 pub trait OutputType<'src> {
-    type InputType: Indexed + 'src;
+    type InputType: PrimaryKey + 'src;
 
     // to use InputType::IndexType we need rtn
-    fn get_input_index(
-        &self,
-    ) -> OutputMapType<Id<<Self::InputType as Indexed>::StaticTypeTagForIndex>>;
+    fn get_input_index(&self) -> OutputMapType<<Self::InputType as PrimaryKey>::EntityType>;
 }
 
 /// One place for storing imports and defined items,
@@ -534,9 +769,9 @@ impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
         &self.defined
     }
 
-    pub fn push_import(&mut self, import: D::Import) -> Id<D::StaticTypeTagForIndex> {
+    pub fn push_import(&mut self, import: D::Import) -> D::EntityType {
         self.imports.push(import);
-        Id::from_index(self.imports.len() - 1)
+        EntityRef::new(self.imports.len() - 1)
     }
 
     /// After locking, no modification is allowed.
@@ -545,6 +780,7 @@ impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
     where
         D: OutputType<'src>,
         D::Import: OutputType<'src, InputType = D::InputType>,
+        <D as PrimaryKey>::EntityType: InvalidValue,
     {
         WithOriginalIndex::new(self)
     }
@@ -554,18 +790,19 @@ impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
 pub struct WithOriginalIndex<'src, T>
 where
     T: OutputType<'src> + Defined<'src>,
+    <T as PrimaryKey>::EntityType: InvalidValue,
 {
     collection: ImportsOrDefined<'src, T>,
-    map: IdMap<
-        Id<<T::InputType as Indexed>::StaticTypeTagForIndex>,
-        Id<<T as Indexed>::StaticTypeTagForIndex>,
-    >,
+    map: IdMap2<<T::InputType as PrimaryKey>::EntityType, <T as PrimaryKey>::EntityType>,
 }
 
 impl<'src, T: Debug> Debug for WithOriginalIndex<'src, T>
 where
     T: OutputType<'src> + Defined<'src>,
     T::Import: Debug,
+    <T as PrimaryKey>::EntityType: InvalidValue,
+    // TODO: better clause
+    IdMap2<<T::InputType as PrimaryKey>::EntityType, <T as PrimaryKey>::EntityType>: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WithOriginalIndex")
@@ -580,6 +817,7 @@ impl<'src, T> WithOriginalIndex<'src, T>
 where
     T: OutputType<'src> + Defined<'src>,
     T::Import: OutputType<'src, InputType = T::InputType>,
+    <T as PrimaryKey>::EntityType: InvalidValue,
 {
     pub fn new(collection: ImportsOrDefined<'src, T>) -> Self {
         let imports = collection.imports().iter().map(OutputType::get_input_index);
@@ -590,7 +828,7 @@ where
             .filter_map(|(i, input_id)| {
                 input_id
                     .into_bidirectional()
-                    .map(|input_id| (input_id, Id::from_index(i)))
+                    .map(|input_id| (input_id, EntityRef::new(i)))
             })
             .collect();
         WithOriginalIndex { collection, map }
@@ -598,15 +836,15 @@ where
 
     pub fn get_output_id(
         &self,
-        input_id: Id<<T::InputType as Indexed>::StaticTypeTagForIndex>,
-    ) -> Option<Id<<T as Indexed>::StaticTypeTagForIndex>> {
+        input_id: <T::InputType as PrimaryKey>::EntityType,
+    ) -> Option<<T as PrimaryKey>::EntityType> {
         self.map.get(input_id).cloned()
     }
     pub fn get_input_id(
         &self,
-        output_id: Id<<T as Indexed>::StaticTypeTagForIndex>,
-    ) -> Option<Id<<T::InputType as Indexed>::StaticTypeTagForIndex>> {
-        let raw_output_id = output_id.as_raw_index();
+        output_id: <T as PrimaryKey>::EntityType,
+    ) -> Option<<T::InputType as PrimaryKey>::EntityType> {
+        let raw_output_id = output_id.index();
         if raw_output_id < self.collection.imports().len() {
             // If output_id is less than imports count, then it is import
             self.collection
@@ -625,30 +863,32 @@ where
 
     pub fn imports(
         &self,
-    ) -> impl ExactSizeIterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T::Import)>
-    {
+    ) -> impl ExactSizeIterator<Item = (<T as PrimaryKey>::EntityType, &T::Import)> {
         self.collection
             .imports()
             .iter()
             .enumerate()
-            .map(|(id, import)| (Id::from_index(id), import))
+            .map(|(id, import)| (<T as PrimaryKey>::EntityType::new(id), import))
     }
-    pub fn defined(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T)> {
+    pub fn defined(&self) -> impl ExactSizeIterator<Item = (<T as PrimaryKey>::EntityType, &T)> {
         let num_imports = self.collection.imports().len();
         self.collection
             .defined()
             .iter()
             .enumerate()
-            .map(move |(id, defined)| (Id::from_index(id + num_imports), defined))
+            .map(move |(id, defined)| {
+                (
+                    <T as PrimaryKey>::EntityType::new(id + num_imports),
+                    defined,
+                )
+            })
     }
 
     pub fn get_import_for_output_id(
         &self,
-        output_id: Id<<T as Indexed>::StaticTypeTagForIndex>,
+        output_id: <T as PrimaryKey>::EntityType,
     ) -> Option<&T::Import> {
-        let raw_output_id = output_id.as_raw_index();
+        let raw_output_id = output_id.index();
         if raw_output_id < self.collection.imports().len() {
             self.collection.imports().get(raw_output_id)
         } else {
@@ -658,9 +898,9 @@ where
 
     pub fn get_defined_for_output_id(
         &self,
-        output_id: Id<<T as Indexed>::StaticTypeTagForIndex>,
+        output_id: <T as PrimaryKey>::EntityType,
     ) -> Option<&T> {
-        let raw_output_id = output_id.as_raw_index();
+        let raw_output_id = output_id.index();
         if raw_output_id > self.collection.imports().len() {
             self.collection
                 .defined()
@@ -670,8 +910,8 @@ where
         }
     }
 
-    pub fn iter_all_ids(&self) -> impl Iterator<Item = Id<<T as Indexed>::StaticTypeTagForIndex>> {
-        (0..self.len()).map(Id::from_index)
+    pub fn iter_all_ids(&self) -> impl Iterator<Item = <T as PrimaryKey>::EntityType> {
+        (0..self.len()).map(<T as PrimaryKey>::EntityType::new)
     }
     pub fn len(&self) -> usize {
         self.collection.imports().len() + self.collection.defined().len()

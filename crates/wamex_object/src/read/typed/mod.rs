@@ -31,7 +31,7 @@ pub struct ImportInfo {
 /// It expects that module has valid structure and contains additional custom sections:
 /// - name section with function and global names
 /// - linking section with symbol information
-/// 
+///
 /// Unlike `read::ObjectReader` which is low-level representation of wasm module sections structure,
 /// `InputObject` provides higher-level API to access wasm entities like functions and globals, in a way that concatenates imported and defined entities.
 /// So user can use type-safe indexes from original module.
@@ -251,7 +251,11 @@ impl<'src> InputObject<'src> {
 
     pub fn find_function_id_containing_range(&self, range: Range<usize>) -> Result<InputFuncId> {
         let func_index = Self::find_by_range(
-            self.wasm.code.section_payload.defined_funcs.as_slice(),
+            self.wasm
+                .code
+                .section_payload
+                .defined_funcs
+                .as_values_slice(),
             &range,
             |defined_func| defined_func.body.range(),
         )

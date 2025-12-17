@@ -18,7 +18,7 @@ use crate::{
         index_safety::OutputGlobalId,
         modify::{self, init_each_store_var},
     },
-    index::{ExportId, Id, IdMap, ImportId, InputFuncId, SymbolId},
+    index::{ExportId, Id, IdMap, ImportId, InputFuncId, InputGlobalId, SymbolId},
     symbols::SymbolKind,
 };
 
@@ -195,6 +195,12 @@ impl<'a> IntoIterator for &'a SharedModuleIdentifier {
 pub enum SplitModuleIdentifier {
     Single(ModuleIdentifier),
     Shared(SharedModuleIdentifier),
+}
+
+impl Default for SplitModuleIdentifier {
+    fn default() -> Self {
+        Self::Single(ModuleIdentifier::Main)
+    }
 }
 
 impl Display for ModuleIdentifier {
@@ -379,8 +385,8 @@ impl<'src> Split<ObjectBuilder<'src>> {
             let modification_list = func_relocs
                 .iter()
                 .map(|entry| {
-                    let dyn_base =
-                        !ctx.main_module && !ctx.is_static_symbol(Id::from_index(entry.index));
+                    let dyn_base = !ctx.main_module
+                        && !ctx.is_static_symbol(SymbolId::from_index(entry.index));
                     let relocation_context = modify::RelocationContext {
                         dyn_base,
                         containing_symbol: None,
@@ -415,7 +421,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
 
     fn copy_src_globals(&mut self, ctx: &SplitContext<'_, 'src>) {
         debug_assert!(ctx.main_module);
-        let mut input_global_id = Id::from_index(0);
+        let mut input_global_id = InputGlobalId::from_index(0);
         for (_id, import) in ctx.module_info.wasm.imports.iter() {
             let wasmparser::TypeRef::Global(global_type) = &import.ty else {
                 continue;

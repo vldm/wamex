@@ -11,12 +11,19 @@ use tempdir::TempDir;
 use wamex_cli::{ObjectReader, Split, SplitPointExtractor, split};
 
 fn split_cmd(src: &Path) -> anyhow::Result<TempDir> {
+    let _ = env_logger::Builder::new()
+        .filter(None, log::LevelFilter::Info)
+        .parse_env("RUST_LOG")
+        .try_init();
+    // init verbosity based on RUST_LOG
+    let verbose = matches!(log::max_level(), log::LevelFilter::Trace);
+
     let output_temp = TempDir::new("wasm_split_test")?;
 
     let cli = Split {
         input: src.into(),
         output: output_temp.path().into(),
-        verbose: true,
+        verbose,
         dry_run: false,
         precise_modification: true,
         split_point_extractor: SplitPointExtractor::Legacy,
@@ -133,10 +140,6 @@ macro_rules! test_list_contain {
 
 #[test]
 fn test_correct_imports_exports() {
-    let _ = env_logger::Builder::new()
-        .filter(None, log::LevelFilter::Debug)
-        .parse_env("RUST_LOG")
-        .try_init();
     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
 
     src.push("test-data");
@@ -233,10 +236,6 @@ fn snapshot_module_structure(src: &Path) {
 
 #[test]
 fn test_insta_imports_exports_of_extended_example() {
-    let _ = env_logger::Builder::new()
-        .filter(None, log::LevelFilter::Warn)
-        .parse_env("RUST_LOG")
-        .try_init();
     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
     src.push("test-data");
     src.push("extended-example.wasm");

@@ -24,7 +24,7 @@ use crate::index::SymbolId;
 
 fn parse_symbol_id(input: &str) -> IResult<&str, SymbolId> {
     let (input, val) = map_res(take_while(|c: char| c.is_digit(10)), |s: &str| {
-        s.parse::<SymbolId>()
+        s.parse::<u32>().map(|id| SymbolId::from_index(id))
     })
     .parse(input)?;
 

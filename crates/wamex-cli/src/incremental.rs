@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Result;
-use wamex_object::InputObject;
+use wamex_object::{InputObject, index::SecondaryMap};
 use wamex_types::{BumpVersion, ModuleId, map_vec::MiniSet};
 
 use crate::{
@@ -364,10 +364,10 @@ impl StructureDiffResult {
         }
 
         // Build symbol -> module map.
-        let mut symbol_map = IdMap::<SymbolId, SplitModuleIdentifier>::new();
+        let mut symbol_map = SecondaryMap::<SymbolId, SplitModuleIdentifier>::new();
         for (module_id, split_module) in new_module_structure.iter() {
             for symbol in &split_module.defined_symbols {
-                symbol_map.insert(*symbol, module_id.clone());
+                symbol_map[*symbol] = module_id.clone();
             }
         }
 

@@ -17,7 +17,7 @@ use crate::{
     index::{DataSegmentId, SymbolId},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 
 pub struct DataSymbolWithOffset {
     pub storage_segment_id: DataSegmentId,
@@ -25,7 +25,7 @@ pub struct DataSymbolWithOffset {
     pub storage_offset_in_data: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataEntry {
     // lvalue where to store address of source part in original data segment
     pub storage: DataSymbolWithOffset,
@@ -167,9 +167,7 @@ impl CustomModify for DataEntry {
     {
         Self::check_whitelisted_data_relocation(entry)?;
         Ok(match entry.ty {
-            RelocationType::MemoryAddrI32 | RelocationType::TableIndexI32
-                if context.dyn_base =>
-            {
+            RelocationType::MemoryAddrI32 | RelocationType::TableIndexI32 if context.dyn_base => {
                 let storage = context.containing_symbol.as_ref().unwrap().clone(); // storage should always exist in dyn relocation mode
                 let relocation = entry.clone();
                 Some(Self {

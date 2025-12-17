@@ -155,7 +155,7 @@ impl RelocateState<'_, '_> {
     {
         self._get_symbol_op::<T, _>(
             |module| {
-                T::get_mapped_value(self.input_module, module, Id::from_index(relocation.index))
+                T::get_mapped_value(self.input_module, module, SymbolId::from_index(relocation.index))
             },
             || {
                 anyhow!(
@@ -196,7 +196,7 @@ impl RelocateState<'_, '_> {
         Self::ensure_empty_addend(relocation)?;
         let Some(input_func_id) = FunctionIndexTag::get_input_function_id(
             self.input_module,
-            Id::from_index(relocation.index),
+            SymbolId::from_index(relocation.index),
         ) else {
             bail!("Relocation {relocation:?} does not refer to a valid function")
         };
@@ -229,7 +229,7 @@ impl RelocateState<'_, '_> {
         let symbol = self
             .input_module
             .symbols
-            .get(Id::from_index(relocation.index))
+            .get(SymbolId::from_index(relocation.index))
             .ok_or_else(|| {
                 anyhow!(
                     "Relocation {relocation:?} refers to invalid symbol id {}",

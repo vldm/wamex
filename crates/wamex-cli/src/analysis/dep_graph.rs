@@ -3,11 +3,14 @@ use std::{
     fmt::Debug,
 };
 
-use wamex_object::InputObject;
+use wamex_object::{
+    InputObject,
+    index::{IdMap2, InvalidValue},
+};
 
 use crate::{
     analysis::{self},
-    index::{Id, IdMap, SymbolId},
+    index::{Id, SecondaryMap, SymbolId},
 };
 
 pub type DepSet<T = SymbolId> = BTreeSet<T>;
@@ -17,25 +20,41 @@ pub type DepMiniSet<T = SymbolId> = wamex_types::map_vec::MiniSet<T>;
 struct SymbolStructure {
     pub parents: DepMiniSet,
     pub childs: DepMiniSet,
+    // marker that this is not important symbol
+    // (Global, Type, Table, Memory)
+    pub invalid: bool,
 }
+impl InvalidValue for SymbolStructure {
+    fn invalid_value() -> Self {
+        Self {
+            parents: DepMiniSet::new(),
+            childs: DepMiniSet::new(),
+            invalid: true,
+        }
+    }
+    fn is_invalid_value(&self) -> bool {
+        self.parents.is_empty() && self.childs.is_empty() && self.invalid
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct DepGraph {
     // TODO: use VecMap kind of structure for better performance
-    nodes: IdMap<SymbolId, SymbolStructure>,
+    nodes: IdMap2<SymbolId, SymbolStructure>,
 }
 impl DepGraph {
     pub fn new() -> Self {
         Self {
-            nodes: IdMap::new(),
+            nodes: IdMap2::new(),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn insert_child(&mut self, parent: SymbolId, child: SymbolId) {
-        let parent_struct = self.nodes.entry(parent).or_insert_with(Default::default);
+        let parent_struct = &mut self.nodes[parent];
         parent_struct.childs.insert(child);
 
-        let child_struct = self.nodes.entry(child).or_insert_with(Default::default);
+        let child_struct = &mut self.nodes[child];
         child_struct.parents.insert(parent);
     }
 
@@ -121,17 +140,19 @@ pub fn get_dependencies(info: &InputObject) -> anyhow::Result<DepGraph> {
                 .relocs
                 .iter()
                 .filter(non_type_index)
-                .map(|entry| Id::from_index(entry.index))
+                .map(|entry| SymbolId::from_index(entry.index))
                 .filter_map(|index| info.symbols.as_duplicate_mapped(index).or(Some(index)))
                 .filter(is_fn_or_data),
         );
 
         for child_id in &childs {
-            let child_struct = deps.nodes.entry(*child_id).or_insert_with(Default::default);
+            let child_struct = &mut deps.nodes[*child_id];
             child_struct.parents.insert(id);
+            child_struct.invalid = false;
         }
 
-        deps.nodes.entry(id).or_insert_with(Default::default).childs = childs;
+        deps.nodes[id].childs = childs;
+        deps.nodes[id].invalid = false;
     }
 
     Ok(deps)
@@ -336,7 +357,7 @@ mod tests {
                 } => {
                     format!("data[{segment_id}:{offset}:{length}] <{name:?}>")
                 }
-                _ => panic!("unexpected symbol kind"),
+                sym => panic!("unexpected symbol kind {:?}", sym),
             }
         };
 
@@ -612,7 +633,7 @@ mod tests {
         let shared_entries = super::NamedGraph::calculate_shared_modules(&mut modules, &graph);
 
         dbg!(&shared_entries);
-        let node = Id::from_index(1417);
+        let node = SymbolId::from_index(1417);
 
         assert!(modules[1].reachable.contains(&node));
 
@@ -673,7 +694,7 @@ mod tests {
 
         let _shared_entries = super::NamedGraph::calculate_shared_modules(&mut modules, &graph);
 
-        let node = Id::from_index(1417);
+        let node = SymbolId::from_index(1417);
 
         if !modules[2].reachable.contains(&node) {
             return true;
@@ -739,9 +760,9 @@ mod tests {
         );
 
         // 101 exported, but 101 and 102 are both defined
-        assert!(first.exports.contains(&Id::from_index(101)));
-        assert!(first.shared_deps.contains(&Id::from_index(101)));
-        assert!(first.shared_deps.contains(&Id::from_index(102)));
+        assert!(first.exports.contains(&SymbolId::from_index(101)));
+        assert!(first.shared_deps.contains(&SymbolId::from_index(101)));
+        assert!(first.shared_deps.contains(&SymbolId::from_index(102)));
 
         let second = &shared_entries[1];
         assert_eq!(
@@ -751,13 +772,13 @@ mod tests {
 
         dbg!(&second);
         // 100 are exported and defined (201 also defined, but not interesting here)
-        assert!(!second.imports.contains(&Id::from_index(100)));
-        assert!(second.exports.contains(&Id::from_index(100)));
-        assert!(second.shared_deps.contains(&Id::from_index(100)));
+        assert!(!second.imports.contains(&SymbolId::from_index(100)));
+        assert!(second.exports.contains(&SymbolId::from_index(100)));
+        assert!(second.shared_deps.contains(&SymbolId::from_index(100)));
         // 101 are imported only
-        assert!(second.imports.contains(&Id::from_index(101)));
-        assert!(!second.exports.contains(&Id::from_index(101)));
-        assert!(!second.shared_deps.contains(&Id::from_index(101)));
+        assert!(second.imports.contains(&SymbolId::from_index(101)));
+        assert!(!second.exports.contains(&SymbolId::from_index(101)));
+        assert!(!second.shared_deps.contains(&SymbolId::from_index(101)));
     }
 
     fn reduce(source: &str, test: impl Fn(&str) -> bool) {

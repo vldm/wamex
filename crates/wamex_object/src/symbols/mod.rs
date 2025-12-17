@@ -11,7 +11,10 @@ use smallvec::SmallVec;
 use crate::{
     InputObject, ObjectReader,
     helpers::{RangeComp, RangeExt},
-    index::{DataSegmentId, Id, IdMap, IdVec, InputFuncId, InputGlobalId, SymbolId, TableId},
+    index::{
+        DataSegmentId, DefinedFuncId, Id, IdMap, IdMap2, IdVec, IdVec2, InputFuncId, InputGlobalId,
+        InvalidValue, SymbolId, TableId,
+    },
 };
 mod diff;
 
@@ -104,7 +107,7 @@ impl SymbolRecord<'_> {
         self.relocs
             .iter()
             .filter(filter_non_types)
-            .map(|reloc| Id::from_index(reloc.index))
+            .map(|reloc| SymbolId::from_index(reloc.index))
             .chain(duplicate_iter)
     }
 }
@@ -118,23 +121,23 @@ struct DataSymbolKey {
 
 #[derive(Clone, Default, Debug)]
 pub struct SymbolMap<'src> {
-    symbols: IdVec<SymbolRecord<'src>>,
-    funcs_ids: IdMap<InputFuncId, SymbolId>,
+    symbols: IdVec2<SymbolRecord<'src>>,
+    funcs_ids: IdMap2<InputFuncId, SymbolId>,
     datas_ids: BTreeSet<DataSymbolKey>,
 }
 
 impl<'src> SymbolMap<'src> {
     pub fn empty() -> Self {
         Self {
-            symbols: IdVec::new(),
-            funcs_ids: IdMap::new(),
+            symbols: IdVec2::new(),
+            funcs_ids: IdMap2::new(),
             datas_ids: BTreeSet::new(),
         }
     }
     pub fn new(wasm: &'_ crate::read::ObjectReader<'src>, num_imports_fn: usize) -> Result<Self> {
         use wasmparser::SymbolInfo;
 
-        #[derive(Debug)]
+        #[derive(Debug, Clone)]
         struct SymbolRange {
             id: SymbolId,
             range: Range<usize>,
@@ -146,23 +149,39 @@ impl<'src> SymbolMap<'src> {
             symbol_kind: SymbolKind,
         }
 
-        let (code_relocs, data_relocs) = Self::collect_ordered_relocs(wasm)?;
+        #[derive(Clone)]
+        struct DupForRange(SymbolRange, DupIds);
+        impl InvalidValue for DupForRange {
+            fn invalid_value() -> Self {
+                Self(
+                    SymbolRange {
+                        id: SymbolId::invalid_value(),
+                        range: 0..0,
+                    },
+                    SmallVec::new(),
+                )
+            }
+            fn is_invalid_value(&self) -> bool {
+                self.0.id.as_u32() == u32::MAX
+            }
+        }
 
+        let (code_relocs, data_relocs) = Self::collect_ordered_relocs(wasm)?;
         type DupIds = SmallVec<[SymbolId; 4]>;
-        let mut func_ids = IdMap::<InputFuncId, (SymbolRange, DupIds)>::new();
+        let mut func_ids = IdMap2::<InputFuncId, DupForRange>::new();
         // TODO: Handle symbols that overlap in data segments.
         let mut data_ids = BTreeMap::<DataSymbolKey, SymbolRange>::new();
 
-        let mut symbols = IdVec::new();
+        let mut symbols = IdVec2::default();
 
         let data_section_start = wasm.data.starting_offset;
 
         for (symbol_id, symbol) in wasm.linking.linking_symbols.symbols.iter().enumerate() {
-            let symbol_id = Id::from_index(symbol_id);
+            let symbol_id = SymbolId::from_index(symbol_id);
 
             let sym = match *symbol {
                 SymbolInfo::Func { index, flags, name } => {
-                    let input_function_id = Id::from_index(index);
+                    let input_function_id = InputFuncId::from_index(index);
                     let fn_name = Self::get_or_create_name(
                         name,
                         wasm.names.functions.get(input_function_id).map(|n| *n),
@@ -174,7 +193,7 @@ impl<'src> SymbolMap<'src> {
                         let func = wasm
                             .code
                             .defined_funcs
-                            .get(Id::from_index(defined_index))
+                            .get(DefinedFuncId::from_index(defined_index))
                             .expect("defined function id should be valid");
                         func.body.range().shift_left(wasm.code.starting_offset)
                     } else {
@@ -182,19 +201,15 @@ impl<'src> SymbolMap<'src> {
                     };
 
                     // TODO: Handle weak symbols.
-                    func_ids
-                        .entry(input_function_id)
-                        .or_insert_with(|| {
-                            (
-                                SymbolRange {
-                                    id: symbol_id,
-                                    range: fn_range,
-                                },
-                                DupIds::new(),
-                            )
-                        })
-                        .1
-                        .push(symbol_id);
+                    let input_fn = &mut func_ids[input_function_id];
+
+                    if input_fn.0.id.as_raw_index() != usize::MAX {
+                        input_fn.0 = SymbolRange {
+                            id: symbol_id,
+                            range: fn_range,
+                        };
+                    }
+                    input_fn.1.push(symbol_id);
 
                     SymIm {
                         flags,
@@ -218,7 +233,7 @@ impl<'src> SymbolMap<'src> {
                         continue;
                     };
 
-                    let segment_id = Id::from_index(defined.index);
+                    let segment_id = DataSegmentId::from_index(defined.index);
                     let segment = &wasm.data.data_segments[segment_id];
 
                     // Remove header size from segment range.
@@ -261,7 +276,7 @@ impl<'src> SymbolMap<'src> {
                     }
                 }
                 SymbolInfo::Global { flags, name, index } => {
-                    let global_id = Id::from_index(index);
+                    let global_id = InputGlobalId::from_index(index);
                     let global_name = Self::get_or_create_name(
                         name,
                         wasm.names.globals.get(global_id).map(|n| *n),
@@ -275,7 +290,7 @@ impl<'src> SymbolMap<'src> {
                     }
                 }
                 SymbolInfo::Table { index, name, flags } => {
-                    let table_id = Id::from_index(index);
+                    let table_id = TableId::from_index(index);
                     let table_name = Self::get_or_create_name(
                         name,
                         wasm.names.tables.get(table_id).map(|n| *n),
@@ -305,7 +320,7 @@ impl<'src> SymbolMap<'src> {
         }
 
         fn move_relocs<'a, U: 'a>(
-            symbols: &mut IdVec<SymbolRecord>,
+            symbols: &mut IdVec2<SymbolRecord>,
             iterator: impl IntoIterator<Item = (U, &'a SymbolRange)>,
             mut relocations: VecDeque<wasmparser::RelocationEntry>,
         ) {
@@ -329,10 +344,10 @@ impl<'src> SymbolMap<'src> {
         }
         // Move relocs from duplicate symbols to main symbol, and mark duplicates.
         fn move_dup_symbols(
-            symbols: &mut IdVec<SymbolRecord>,
-            func_ids: &IdMap<InputFuncId, (SymbolRange, DupIds)>,
+            symbols: &mut IdVec2<SymbolRecord>,
+            func_ids: &IdMap2<InputFuncId, DupForRange>,
         ) {
-            for (_input_id, (sym_range, dup_ids)) in func_ids.iter() {
+            for (_input_id, DupForRange(sym_range, dup_ids)) in func_ids.iter() {
                 if dup_ids.len() <= 1 {
                     continue;
                 }
@@ -356,7 +371,7 @@ impl<'src> SymbolMap<'src> {
         // 3. same for data relocs.
         move_relocs(
             &mut symbols,
-            func_ids.iter().map(|(k, (v, _))| (k, v)),
+            func_ids.iter().map(|(k, DupForRange(v, _))| (k, v)),
             code_relocs,
         );
         move_relocs(&mut symbols, data_ids.iter(), data_relocs);
@@ -364,7 +379,10 @@ impl<'src> SymbolMap<'src> {
 
         Ok(Self {
             symbols,
-            funcs_ids: func_ids.into_iter().map(|(k, (v, _))| (k, v.id)).collect(),
+            funcs_ids: func_ids
+                .iter()
+                .map(|(k, DupForRange(v, _))| (k, v.id))
+                .collect(),
             datas_ids: data_ids.into_iter().map(|(k, _)| k).collect(),
         })
     }
@@ -499,7 +517,7 @@ impl<'src> SymbolMap<'src> {
             println!("---{id} <{name}>", name = &symbol.name);
             println!("    record: {:?}", symbol);
             for reloc in &symbol.relocs {
-                let id = Id::from_index(reloc.index);
+                let id = SymbolId::from_index(reloc.index);
                 println!(
                     "-->{id} <{name}> reloc{:?}",
                     reloc,

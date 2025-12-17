@@ -2,7 +2,7 @@ use anyhow::{Result, bail, ensure};
 pub use wasmparser::FunctionBody;
 
 use super::Ind;
-use crate::index::{FuncTypeId, IdVec, InputFuncId};
+use crate::index::{FuncTypeId, IdVec, IdVec2, InputFuncId};
 
 #[derive(Debug)]
 pub enum InputFunction<'a> {
@@ -19,7 +19,7 @@ pub struct FunctionWithBody<'a> {
 pub struct CodeSection<'a> {
     pub start_func: Option<InputFuncId>,
     // function (CodeSectionEntry)
-    pub defined_funcs: IdVec<FunctionWithBody<'a>>,
+    pub defined_funcs: IdVec2<FunctionWithBody<'a>>,
 }
 impl<'a> CodeSection<'a> {
     pub fn new(

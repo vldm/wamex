@@ -24,8 +24,8 @@ use crate::{
     },
     helpers::encoding_size,
     index::{
-        DataSegmentId, FuncTypeId, IdMap, IdVec, Indexed, InputFuncId, InputGlobalId, MemoryId,
-        SymbolId, WithOriginalIndex,
+        DataSegmentId, FuncTypeId, IdMap, IdMap2, IdVec, IdVec2, Indexed, InputFuncId,
+        InputGlobalId, MemoryId, SymbolId, WithOriginalIndex,
     },
 };
 
@@ -198,9 +198,9 @@ pub struct ModuleEmitState<'any, 'src> {
     sub_module_extra: Option<SubModuleExtra>,
 
     // Data Section
-    data: IdMap<DataSegmentId, memory_layout::DataSegmentOutput>,
+    data: IdMap2<DataSegmentId, memory_layout::DataSegmentOutput>,
     //TODO: Remove data_relocations, instead of DataSegmentOutput use SegmentLayout
-    data_relocations: IdMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
+    data_relocations: IdMap2<DataSegmentId, Vec<modify::DataModifyEntry>>,
 
     // src module
     pub src: &'any InputObject<'src>,
@@ -1118,7 +1118,7 @@ pub struct ModuleDecl {
 
 #[derive(Debug)]
 pub struct CommonEmitInfo<'src> {
-    pub src_data_segments: IdVec<SegmentLayout<'src>>,
+    pub src_data_segments: IdMap2<DataSegmentId, SegmentLayout<'src>>,
 
     // Imports (corresponding to split points) to exclude from all modules.
     pub split_point_imports: BTreeSet<InputFuncId>,
@@ -1192,7 +1192,7 @@ impl<'src> CommonEmitInfo<'src> {
             module.symbols.iter_data_symbols(),
             |(left_segment, ..), (right_segment, ..)| left_segment == right_segment,
         );
-        let data_segments: IdVec<SegmentLayout<'src>> = module
+        let data_segments: IdMap2<DataSegmentId, SegmentLayout<'src>> = module
             .wasm
             .data
             .section_payload
@@ -1205,13 +1205,14 @@ impl<'src> CommonEmitInfo<'src> {
                     .expect("Symbols for data segment not found");
                 let segment_info = &module.wasm.linking.segments_info[data_segment.as_raw_index()];
 
-                SegmentLayout::new_inner(
+                let layout = SegmentLayout::new_inner(
                     data,
                     segment_info,
                     data_symbols.into_iter().map(|(_, id, record)| (id, record)),
-                )
+                );
+                layout.map(|l| (data_segment, l))
             })
-            .collect::<Result<IdVec<SegmentLayout<'src>>>>()?;
+            .collect::<Result<IdMap2<DataSegmentId, SegmentLayout<'src>>>>()?;
 
         if verbose {
             SegmentLayout::debug_layout(&module.symbols, String::from("input"), &data_segments);

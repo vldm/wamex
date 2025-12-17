@@ -18,7 +18,10 @@ use crate::{
         globals::{DefinedGlobal, GlobalImport},
         memory_layout, modify,
     },
-    index::{DataSegmentId, Id, IdMap, IdVec, ImportsOrDefined, SymbolId, WithOriginalIndex},
+    index::{
+        DataSegmentId, Id, IdMap, IdMap2, IdVec, IdVec2, ImportsOrDefined, PrimaryKey, SymbolId,
+        WithOriginalIndex,
+    },
 };
 
 ///
@@ -32,7 +35,7 @@ use crate::{
 pub struct ObjectBuilder<'src> {
     pub globals: ImportsOrDefined<'src, DefinedGlobal<'src>>,
     pub functions: ImportsOrDefined<'src, DefinedFunction>,
-    pub data: IdVec<SegmentLayout<'src>>,
+    pub data: IdMap2<DataSegmentId, SegmentLayout<'src>>,
 }
 
 impl<'src> ObjectBuilder<'src> {
@@ -40,7 +43,7 @@ impl<'src> ObjectBuilder<'src> {
         Self {
             globals: ImportsOrDefined::new(Vec::new(), Vec::new()),
             functions: ImportsOrDefined::new(Vec::new(), Vec::new()),
-            data: IdVec::new(),
+            data: IdMap2::new(),
         }
     }
 
@@ -48,12 +51,15 @@ impl<'src> ObjectBuilder<'src> {
     pub fn add_imported_global(
         &mut self,
         global: GlobalImport<'src>,
-    ) -> Id<DefinedGlobal<'static>> {
+    ) -> <DefinedGlobal as PrimaryKey>::EntityType {
         self.globals.push_import(global)
     }
 
     /// Adds new function imported from other module.
-    pub fn add_imported_function(&mut self, func: ImportedFunction<'src>) -> Id<DefinedFunction> {
+    pub fn add_imported_function(
+        &mut self,
+        func: ImportedFunction<'src>,
+    ) -> <DefinedFunction as PrimaryKey>::EntityType {
         self.functions.push_import(func)
     }
 
@@ -82,7 +88,7 @@ impl<'src> ObjectBuilder<'src> {
         // TO remove this context data segment filling should change.
         ctx: BuilderContextToBeRemoved<'_, 'src>,
     ) -> Object<'src> {
-        let mut data_segment_outputs = IdMap::new();
+        let mut data_segment_outputs = IdMap2::new();
 
         let data_segments = &self.data;
         let mem_start = if ctx.is_main() {
@@ -113,7 +119,7 @@ impl<'src> ObjectBuilder<'src> {
             data_segment_outputs.insert(id, out);
         }
         // collect all relocations
-        let mut data_relocations = IdMap::new();
+        let mut data_relocations = IdMap2::<_, Vec<modify::DataModifyEntry>>::new();
 
         // TODO: move shift in previous (segment_id, segment) in data_segments.iter()
         for (segment_id, data_segment) in data_segment_outputs.iter() {
@@ -128,7 +134,7 @@ impl<'src> ObjectBuilder<'src> {
                     .map(|reloc| {
                         let relocation_context = modify::RelocationContext {
                             dyn_base: !ctx.is_main()
-                                && !ctx.is_static_symbol(Id::from_index(reloc.index)),
+                                && !ctx.is_static_symbol(SymbolId::from_index(reloc.index)),
                             containing_symbol: Some(modify::DataSymbolWithOffset {
                                 storage_segment_id: segment_id,
                                 storage_symbol_id: *symbol_index,
@@ -143,10 +149,7 @@ impl<'src> ObjectBuilder<'src> {
                     })
                     .collect::<Result<Vec<_>>>()
                     .unwrap();
-                data_relocations
-                    .entry(segment_id)
-                    .or_insert_with(Vec::new)
-                    .extend(sym_relocs);
+                data_relocations[segment_id].extend(sym_relocs);
             }
         }
         Object {
@@ -167,7 +170,7 @@ impl BuilderContextToBeRemoved<'_, '_> {
     fn is_main(&self) -> bool {
         self.sub_module_extra.is_none()
     }
-    fn lib_base_import(&self) -> Option<Id<DefinedGlobal>> {
+    fn lib_base_import(&self) -> Option<<DefinedGlobal as PrimaryKey>::EntityType> {
         self.sub_module_extra
             .as_ref()
             .map(|extra| extra.self_base.lib_base_id)
@@ -185,8 +188,8 @@ pub struct Object<'src> {
 
     pub functions: WithOriginalIndex<'src, DefinedFunction>,
 
-    pub data: IdMap<DataSegmentId, memory_layout::DataSegmentOutput>,
+    pub data: IdMap2<DataSegmentId, memory_layout::DataSegmentOutput>,
     //TODO: Remove data_relocations, instead of DataSegmentOutput use SegmentLayout
-    pub data_relocations: IdMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
+    pub data_relocations: IdMap2<DataSegmentId, Vec<modify::DataModifyEntry>>,
     // custom_sections: Vec<CustomSection>,
 }

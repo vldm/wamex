@@ -12,15 +12,15 @@ use crate::index::{
 #[derive(Default, Clone, Debug)]
 pub struct Names<'a> {
     pub module: Option<&'a str>,
-    pub functions: IdMap<InputFuncId, &'a str>,
+    pub functions: SecondaryMap<InputFuncId, &'a str>,
     pub locals: VecMap<wasmparser::NameMap<'a>>,
     pub labels: VecMap<wasmparser::NameMap<'a>>,
-    pub types: IdMap<FuncTypeId, &'a str>,
-    pub tables: IdMap<TableId, &'a str>,
-    pub memories: IdMap<MemoryId, &'a str>,
-    pub globals: IdMap<InputGlobalId, &'a str>,
-    pub elements: IdMap<ElementId, &'a str>,
-    pub data_segments: IdMap<DataSegmentId, &'a str>,
+    pub types: SecondaryMap<FuncTypeId, &'a str>,
+    pub tables: SecondaryMap<TableId, &'a str>,
+    pub memories: SecondaryMap<MemoryId, &'a str>,
+    pub globals: SecondaryMap<InputGlobalId, &'a str>,
+    pub elements: SecondaryMap<ElementId, &'a str>,
+    pub data_segments: SecondaryMap<DataSegmentId, &'a str>,
     pub tags: SecondaryMap<TagId, &'a str>,
 }
 
@@ -37,7 +37,7 @@ impl<'a> CustomSectionReader<'a> for Names<'a> {
                     names.module = Some(name);
                 }
                 Name::Function(name_map) => {
-                    names.functions = convert_name_map(name_map)?;
+                    names.functions = convert_name_map_cf(name_map)?;
                 }
                 Name::Local(indirect_name_map) => {
                     names.locals = convert_indirect_name_map(indirect_name_map)?;
@@ -46,22 +46,22 @@ impl<'a> CustomSectionReader<'a> for Names<'a> {
                     names.labels = convert_indirect_name_map(indirect_name_map)?;
                 }
                 Name::Type(name_map) => {
-                    names.types = convert_name_map(name_map)?;
+                    names.types = convert_name_map_cf(name_map)?;
                 }
                 Name::Table(name_map) => {
-                    names.tables = convert_name_map(name_map)?;
+                    names.tables = convert_name_map_cf(name_map)?;
                 }
                 Name::Memory(name_map) => {
-                    names.memories = convert_name_map(name_map)?;
+                    names.memories = convert_name_map_cf(name_map)?;
                 }
                 Name::Global(name_map) => {
-                    names.globals = convert_name_map(name_map)?;
+                    names.globals = convert_name_map_cf(name_map)?;
                 }
                 Name::Data(name_map) => {
-                    names.data_segments = convert_name_map(name_map)?;
+                    names.data_segments = convert_name_map_cf(name_map)?;
                 }
                 Name::Element(name_map) => {
-                    names.elements = convert_name_map(name_map)?;
+                    names.elements = convert_name_map_cf(name_map)?;
                 }
                 Name::Tag(name_map) => {
                     names.tags = convert_name_map_cf(name_map)?;
@@ -78,19 +78,6 @@ impl<'a> CustomSectionReader<'a> for Names<'a> {
     }
 }
 
-fn convert_name_map<'a, T>(
-    name_map: wasmparser::NameMap<'a>,
-) -> Result<IdMap<crate::index::Id<T>, &'a str>>
-where
-    crate::index::Id<T>: 'static,
-{
-    name_map
-        .into_iter()
-        .map(|r| r.map(|naming| (crate::index::Id::from_index(naming.index), naming.name)))
-        .collect::<Result<IdMap<crate::index::Id<T>, &'a str>, _>>()
-        .map_err(|e| e.into())
-}
-
 fn convert_indirect_name_map<'a>(
     indirect_name_map: wasmparser::IndirectNameMap<'a>,
 ) -> Result<VecMap<wasmparser::NameMap<'a>>> {
@@ -102,7 +89,6 @@ fn convert_indirect_name_map<'a>(
         })
         .collect::<Result<VecMap<_>, _>>()
 }
-
 
 fn convert_name_map_cf<'a, Idx>(
     name_map: wasmparser::NameMap<'a>,
