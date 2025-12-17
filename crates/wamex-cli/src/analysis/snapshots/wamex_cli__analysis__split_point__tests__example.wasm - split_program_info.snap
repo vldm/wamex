@@ -1,0 +1,880 @@
+---
+source: crates/wamex-cli/src/analysis/split_point.rs
+expression: split_info_output
+---
+=== Split Program Structure ===
+
+Module #0: Single(Main)
+  Defined symbols: 808
+    2 <memcmp>
+    3 <__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static>
+    4 <__wasm_split_00static_str00_import_776d8e51aac0782b17e57d45872c52d7_static_str>
+    5 <wasm_bindgen::__wbindgen_string_new::hf591ae4d10501fb5>
+    6 <wasm_bindgen::__wbindgen_object_drop_ref::h20f7b16803b27589>
+    7 <__wasm_split_load_string_from_static>
+    8 <__wasm_split_load_static_str>
+    11 <print_lazy_loaded_string>
+    12 <js_sys::Promise::new::__wbg_new_ac7361beaf933ba6::h7a144f61a087f9a8>
+    13 <__wbindgen_describe_print_lazy_loaded_string>
+    14 <wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42>
+    15 <__wbindgen_describe___wbg_decodeURIComponent_a8e924efdf198e65>
+    16 <__wbindgen_describe___wbg_eval_d20089e12db29559>
+    17 <__wbindgen_describe___wbg_parseInt_bbbda2e0fc59f8bf>
+    18 <__wbindgen_describe___wbg_new_e2d07398d7689006>
+    19 <__wbindgen_describe___wbg_newwithlength_88b49de1eb24d63e>
+    20 <__wbindgen_describe___wbg_at_1abf0efc31a7fc6e>
+    21 <__wbindgen_describe___wbg_get_0c3cc364764a0b98>
+    22 <__wbindgen_describe___wbg_set_93ba9407b5476ec6>
+    23 <__wbindgen_describe___wbg_delete_c5fa77e659cedc13>
+    24 <__wbindgen_describe___wbg_from_3aa0fcaa8eef0104>
+    25 <__wbindgen_describe___wbg_copyWithin_c7db88e1373c8b23>
+    26 <__wbindgen_describe___wbg_concat_b7cf6b6d57f30cc9>
+    27 <__wbindgen_describe___wbg_every_8b315d73e5080f3f>
+    28 <__wbindgen_describe___wbg_fill_839d08edf23ed6df>
+    29 <__wbindgen_describe___wbg_filter_7e2996638900e1d7>
+    30 <__wbindgen_describe___wbg_find_d0bfe85a67028d86>
+    31 <__wbindgen_describe___wbg_findIndex_fba8b3bd76912b63>
+    32 <__wbindgen_describe___wbg_flat_71c9f15786d3f75e>
+    33 <__wbindgen_describe___wbg_flatMap_1c303dcb962239b4>
+    34 <__wbindgen_describe___wbg_forEach_dacccf1786d50f5f>
+    35 <__wbindgen_describe___wbg_includes_4d64b03cd650dd50>
+    36 <__wbindgen_describe___wbg_indexOf_752d784e5b12bd58>
+    37 <__wbindgen_describe___wbg_isArray_8738f1062fa88586>
+    38 <__wbindgen_describe___wbg_join_9eddc0587df02e59>
+    39 <__wbindgen_describe___wbg_length_12246a78d2f65d3a>
+    40 <__wbindgen_describe___wbg_map_f903a5430255ab39>
+    41 <__wbindgen_describe___wbg_of_894f51209b51cdf4>
+    42 <__wbindgen_describe___wbg_of_968f342775805f3a>
+    43 <__wbindgen_describe___wbg_of_e50cd0201df50c33>
+    44 <__wbindgen_describe___wbg_of_aa8ce5dda0a8b77e>
+    45 <__wbindgen_describe___wbg_pop_995c54787d50d46a>
+    46 <__wbindgen_describe___wbg_push_e7d7247e69dad3ee>
+    47 <__wbindgen_describe___wbg_reduceRight_320e5d6d4b37303a>
+    48 <__wbindgen_describe___wbg_reverse_de1cce1c21d06bf7>
+    49 <__wbindgen_describe___wbg_slice_1adc1ec263416332>
+    50 <__wbindgen_describe___wbg_some_b146177112bc12d4>
+    51 <__wbindgen_describe___wbg_splice_34dcf13caf5e72d4>
+    52 <__wbindgen_describe___wbg_toLocaleString_047d7251bb196d14>
+    53 <__wbindgen_describe___wbg_toString_cd0e898a84b71db3>
+    54 <__wbindgen_describe___wbg_new_b8892b29da3e1f4f>
+    55 <__wbindgen_describe___wbg_byteLength_249a2b65c8315d45>
+    56 <__wbindgen_describe___wbg_slice_cfd9be7f38c03624>
+    57 <__wbindgen_describe___wbg_slice_1ce88459a1591604>
+    58 <__wbindgen_describe___wbg_new_48a9a838b4e67314>
+    59 <__wbindgen_describe___wbg_byteLength_5372ed1e7a498d8b>
+    60 <__wbindgen_describe___wbg_slice_77755760ad3b29c2>
+    61 <__wbindgen_describe___wbg_slice_a18e825e564c8ff1>
+    62 <__wbindgen_describe___wbg_entries_f769ac2219e993fa>
+    63 <__wbindgen_describe___wbg_BigInt_620548e2f5af9686>
+    64 <__wbindgen_describe___wbg_asIntN_23d288b647ece1f8>
+    65 <__wbindgen_describe___wbg_toLocaleString_689d242abd2edcd3>
+    66 <__wbindgen_describe___wbg_toString_976949cf829e9dca>
+    67 <__wbindgen_describe___wbg_toString_d5ef649a03a35a97>
+    68 <__wbindgen_describe___wbg_valueOf_d94641524bda33f2>
+    69 <__wbindgen_describe___wbg_new_a74ba185f3d463be>
+    70 <__wbindgen_describe___wbg_valueOf_44f57c9d9ab6cbcc>
+    71 <__wbindgen_describe___wbg_new_442a01c340625e5e>
+    72 <__wbindgen_describe___wbg_newwithsharedarraybuffer_c64bd9494db5ea3e>
+    73 <__wbindgen_describe___wbg_buffer_68d1ede7891b3f27>
+    74 <__wbindgen_describe___wbg_byteLength_67031b3e2b546fdf>
+    75 <__wbindgen_describe___wbg_getInt8_a1c93e6caa26b380>
+    76 <__wbindgen_describe___wbg_getUint8_9775109ab12071aa>
+    77 <__wbindgen_describe___wbg_getInt16_2c494f3019c57c35>
+    78 <__wbindgen_describe___wbg_getInt16_c70f5952012b2fb1>
+    79 <__wbindgen_describe___wbg_getUint16_206d4e2d31a4c2e0>
+    80 <__wbindgen_describe___wbg_getUint16_415a566d21b50939>
+    81 <__wbindgen_describe___wbg_getInt32_4b8fd738e765a6c5>
+    82 <__wbindgen_describe___wbg_getInt32_ab8ca1fc316f569c>
+    83 <__wbindgen_describe___wbg_getUint32_b9cd884748bb4195>
+    84 <__wbindgen_describe___wbg_getUint32_63d45e4587073756>
+    85 <__wbindgen_describe___wbg_getFloat32_00eca882e0792e82>
+    86 <__wbindgen_describe___wbg_getFloat32_d4c01f5f67a223eb>
+    87 <__wbindgen_describe___wbg_getFloat64_942ba3ad7bf5fdda>
+    88 <__wbindgen_describe___wbg_getFloat64_ad085842cc8edd69>
+    89 <__wbindgen_describe___wbg_setInt8_4098b814ab9c1212>
+    90 <__wbindgen_describe___wbg_setUint8_cb378b59e8d99d0d>
+    91 <__wbindgen_describe___wbg_setInt16_0a181a25242d3330>
+    92 <__wbindgen_describe___wbg_setInt16_46512c71a89a16d4>
+    93 <__wbindgen_describe___wbg_setUint16_3d8c3a7bd0580817>
+    94 <__wbindgen_describe___wbg_setUint16_7b5ab6d7046eae22>
+    95 <__wbindgen_describe___wbg_setInt32_195dc7df134b97ac>
+    96 <__wbindgen_describe___wbg_setInt32_5faa6693b0d2c55a>
+    97 <__wbindgen_describe___wbg_setUint32_193bdfa9bd572cc3>
+    98 <__wbindgen_describe___wbg_setUint32_2726c9067eca9128>
+    99 <__wbindgen_describe___wbg_setFloat32_9343f6a20c17b686>
+    100 <__wbindgen_describe___wbg_setFloat32_ffb62d9a11f46c83>
+    101 <__wbindgen_describe___wbg_setFloat64_c0a9a50561819606>
+    102 <__wbindgen_describe___wbg_setFloat64_842c64b1e72bd83a>
+    103 <__wbindgen_describe___wbg_new_6ac2a82ee00370b2>
+    104 <__wbindgen_describe___wbg_newwithoptions_4a88b19008de7922>
+    105 <__wbindgen_describe___wbg_cause_79507dc25db854f5>
+    106 <__wbindgen_describe___wbg_setcause_4f0c467c6c843e5a>
+    107 <__wbindgen_describe___wbg_message_6b6d81e3ec937f34>
+    108 <__wbindgen_describe___wbg_setmessage_bb2083d2da37bd63>
+    109 <__wbindgen_describe___wbg_new_48c5a5e39157e04e>
+    110 <js_sys::Function::call1::__wbg_call_a34b6b4765f27be0::h890fb55913df171c>
+    111 <__wbindgen_describe___wbg_newwithargs_f89ab26432777474>
+    112 <__wbindgen_describe___wbg_newnoargs_a136448eeb7d48ac>
+    113 <__wbindgen_describe___wbg_apply_0a14787340d769ec>
+    114 <__wbindgen_describe___wbg_call_0ad083564791763a>
+    115 <__wbindgen_describe___wbg_call_a34b6b4765f27be0>
+    116 <__wbindgen_describe___wbg_call_efe5a4db7065d1a2>
+    117 <__wbindgen_describe___wbg_call_d00953b926be4879>
+    118 <__wbindgen_describe___wbg_bind_0f1923cecb892261>
+    119 <__wbindgen_describe___wbg_bind_081e44f346f54911>
+    120 <__wbindgen_describe___wbg_bind_a735f62d385d448f>
+    121 <__wbindgen_describe___wbg_bind_07c63d4b9ebd35ed>
+    122 <__wbindgen_describe___wbg_length_e7c15bb147019e65>
+    123 <__wbindgen_describe___wbg_name_b52f50f993b38cc1>
+    124 <__wbindgen_describe___wbg_next_fb6963863a902553>
+    125 <__wbindgen_describe___wbg_throw_8c98c02eca5af6c0>
+    126 <__wbindgen_describe___wbg_clear_46524752c2e8115c>
+    127 <__wbindgen_describe___wbg_delete_f55147382d9490a4>
+    128 <__wbindgen_describe___wbg_forEach_0bc504c32ef3d80d>
+    129 <__wbindgen_describe___wbg_get_4e6b9f81dda2b9d8>
+    130 <__wbindgen_describe___wbg_new_518e2184725aa711>
+    131 <__wbindgen_describe___wbg_set_393f510a6b7e9da5>
+    132 <__wbindgen_describe___wbg_size_6989bc15bbf5ab2a>
+    133 <__wbindgen_describe___wbg_entries_4dce6361e3ba6fbc>
+    134 <__wbindgen_describe___wbg_next_9dc0926f351c7090>
+    135 <__wbindgen_describe___wbg_next_928df8c15fc0c9b0>
+    136 <__wbindgen_describe___wbg_next_e5561a5200527508>
+    137 <__wbindgen_describe___wbg_done_f4c254830a095eaf>
+    138 <__wbindgen_describe___wbg_value_51f8a88d4a1805fb>
+    139 <__wbindgen_describe___wbg_new_1deb3598ea82dc58>
+    140 <__wbindgen_describe___wbg_newfromstr_f6a7be93b8a9fa6d>
+    141 <__wbindgen_describe___wbg_parseFloat_ee7453a1cd031bc9>
+    142 <__wbindgen_describe___wbg_toLocaleString_63e17e264912cbbe>
+    143 <__wbindgen_describe___wbg_toExponential_611059bd3991ebd9>
+    144 <__wbindgen_describe___wbg_valueOf_ee3ad2a2b6bbdcb5>
+    145 <__wbindgen_describe___wbg_getDate_be2a89a16e766eb6>
+    146 <__wbindgen_describe___wbg_getTime_6953b8a865af729b>
+    147 <__wbindgen_describe___wbg_new_a96f21efc59c18b1>
+    148 <__wbindgen_describe___wbg_new0_fe1554a5ea9b2468>
+    149 <__wbindgen_describe___wbg_newwithyearmonth_3cfc40cd4e4478d5>
+    150 <__wbindgen_describe___wbg_newwithyearmonthday_e1f966e7659f278e>
+    151 <__wbindgen_describe___wbg_newwithyearmonthdayhr_29d9ee0fec145cf0>
+    152 <__wbindgen_describe___wbg_newwithyearmonthdayhrmin_28fcc808938832ac>
+    153 <__wbindgen_describe___wbg_newwithyearmonthdayhrminsec_47c401751bfe84ee>
+    154 <__wbindgen_describe___wbg_newwithyearmonthdayhrminsecmilli_4f2236926e555da4>
+    155 <__wbindgen_describe___wbg_now_c58794884eef001c>
+    156 <__wbindgen_describe___wbg_setDate_194183a18260f619>
+    157 <__wbindgen_describe___wbg_setFullYear_6d18b68ade86214a>
+    158 <__wbindgen_describe___wbg_setFullYear_803dff1a64974eab>
+    159 <__wbindgen_describe___wbg_setTime_9066d32ad407af82>
+    160 <__wbindgen_describe___wbg_toDateString_493ec278a6c45edd>
+    161 <__wbindgen_describe___wbg_toLocaleDateString_cf93d405883c8567>
+    162 <__wbindgen_describe___wbg_toLocaleTimeString_e225b6dd3c9cad82>
+    163 <__wbindgen_describe___wbg_UTC_9bb90d20b10e8357>
+    164 <__wbindgen_describe___wbg_assign_f08fe828a68fa5b8>
+    165 <__wbindgen_describe___wbg_assign_b70472dbbcf654c4>
+    166 <__wbindgen_describe___wbg_assign_8a8f909f3ed4d458>
+    167 <__wbindgen_describe___wbg_constructor_6db1368ddcd6e376>
+    168 <__wbindgen_describe___wbg_create_9a164f36b5041080>
+    169 <__wbindgen_describe___wbg_defineProperty_bcacd2a4f792974a>
+    170 <__wbindgen_describe___wbg_entries_83beb641792ccb9c>
+    171 <__wbindgen_describe___wbg_fromEntries_b7fbce53623419c1>
+    172 <__wbindgen_describe___wbg_getOwnPropertyDescriptor_b4b0377ffae2a8d7>
+    173 <__wbindgen_describe___wbg_getOwnPropertyDescriptors_77736d3fa2e47e41>
+    174 <__wbindgen_describe___wbg_isExtensible_20381e036bff55fd>
+    175 <__wbindgen_describe___wbg_preventExtensions_8db57a2022e01ac1>
+    176 <__wbindgen_describe___wbg_new_de0214e5bc5836dd>
+    177 <__wbindgen_describe___wbg_revocable_af9695e939917021>
+    178 <__wbindgen_describe___wbg_new_ba337b0c048e6014>
+    179 <__wbindgen_describe___wbg_new_50005eaabb7dfb33>
+    180 <__wbindgen_describe___wbg_exec_901efe5af0edea94>
+    181 <__wbindgen_describe___wbg_flags_4d37cd4fbef9161f>
+    182 <__wbindgen_describe___wbg_global_4c78c51c37fb2054>
+    183 <__wbindgen_describe___wbg_lastindex_5fed427b640e7b04>
+    184 <__wbindgen_describe___wbg_setlastindex_a6d4d4558b4df5e5>
+    185 <__wbindgen_describe___wbg_1_8cb9818407efd84b>
+    186 <__wbindgen_describe___wbg_new_1c35827aa5b3918a>
+    187 <__wbindgen_describe___wbg_newregexp_5893d9e66322afcb>
+    188 <__wbindgen_describe___wbg_test_850dca2623cd871d>
+    189 <__wbindgen_describe___wbg_add_593ff49f312ada2d>
+    190 <__wbindgen_describe___wbg_clear_0ac9da9552939057>
+    191 <__wbindgen_describe___wbg_delete_87d60ac9ac6217a6>
+    192 <__wbindgen_describe___wbg_forEach_7c4395dec06b4471>
+    193 <__wbindgen_describe___wbg_new_7da77890e3b9dd5b>
+    194 <__wbindgen_describe___wbg_size_c1521ee62e336bb1>
+    195 <__wbindgen_describe___wbg_entries_8e5c4049d8590b32>
+    196 <__wbindgen_describe___wbg_new_d49e35d9d5142542>
+    197 <__wbindgen_describe___wbg_new_66663387dba92587>
+    198 <__wbindgen_describe___wbg_new_c439213579c043d3>
+    199 <__wbindgen_describe___wbg_new_4852d8ca9bb8716a>
+    200 <__wbindgen_describe___wbg_set_f8bb90f4d9a2d5bb>
+    201 <__wbindgen_describe___wbg_get_8a7b03e3bcffd992>
+    202 <__wbindgen_describe___wbg_delete_6b3041719a4a0282>
+    203 <__wbindgen_describe___wbg_new_7bbb0571f71587a3>
+    204 <__wbindgen_describe___wbg_add_5e4ad04d0e90cab6>
+    205 <__wbindgen_describe___wbg_delete_8b258a999ef923e0>
+    206 <__wbindgen_describe___wbg_length_20a4a590cf5b5147>
+    207 <__wbindgen_describe___wbg_at_3fdfa0705c127df6>
+    208 <__wbindgen_describe___wbg_charAt_f575a6d629c1afc4>
+    209 <__wbindgen_describe___wbg_charCodeAt_43af4d9f39ff662d>
+    210 <__wbindgen_describe___wbg_codePointAt_bd8740a8044b8683>
+    211 <__wbindgen_describe___wbg_concat_df045385107e465c>
+    212 <__wbindgen_describe___wbg_endsWith_b8b89b5b5380f7e5>
+    213 <__wbindgen_describe___wbg_fromCharCode_04220156b6893a2f>
+    214 <__wbindgen_describe___wbg_fromCharCode_a06ffba81b03ce10>
+    215 <__wbindgen_describe___wbg_fromCharCode_259bf017c5f9d283>
+    216 <__wbindgen_describe___wbg_fromCharCode_22f65fdacc85f9d2>
+    217 <__wbindgen_describe___wbg_fromCharCode_bf998401f391889e>
+    218 <__wbindgen_describe___wbg_fromCharCode_754b16b0addc98fc>
+    219 <__wbindgen_describe___wbg_fromCodePoint_bea7d4157cb76bbf>
+    220 <__wbindgen_describe___wbg_indexOf_208875a6fa88025a>
+    221 <__wbindgen_describe___wbg_localeCompare_40dc0917b2227b46>
+    222 <__wbindgen_describe___wbg_match_5bf9ad58b6cdd5c8>
+    223 <__wbindgen_describe___wbg_matchAll_ccecb8248ad5db50>
+    224 <__wbindgen_describe___wbg_normalize_7a5f41d11cd9c7c8>
+    225 <__wbindgen_describe___wbg_padEnd_4396168db52a09a3>
+    226 <__wbindgen_describe___wbg_repeat_8c695ca1a9b715bb>
+    227 <__wbindgen_describe___wbg_replaceAll_7b1b5a62424176c7>
+    228 <__wbindgen_describe___wbg_replaceAll_86c7c3a784efa790>
+    229 <__wbindgen_describe___wbg_replaceAll_f14902f9f8279707>
+    230 <__wbindgen_describe___wbg_replaceAll_a5d11f67d8147620>
+    231 <__wbindgen_describe___wbg_search_97bf2c2237921618>
+    232 <__wbindgen_describe___wbg_slice_24d987b26449b067>
+    233 <__wbindgen_describe___wbg_split_485ed23f461314f0>
+    234 <__wbindgen_describe___wbg_split_8b0434c32b8535ea>
+    235 <__wbindgen_describe___wbg_split_b4a58f8c02a5b511>
+    236 <__wbindgen_describe___wbg_split_05212d3cccacd7d0>
+    237 <__wbindgen_describe___wbg_startsWith_7f051ac359335dc9>
+    238 <__wbindgen_describe___wbg_substr_8466b622f710d232>
+    239 <__wbindgen_describe___wbg_toLocaleLowerCase_42fdf4b992c67938>
+    240 <__wbindgen_describe___wbg_toLowerCase_83fe403068f82b6d>
+    241 <__wbindgen_describe___wbg_raw_cbbaa3fb8984dd7d>
+    242 <__wbindgen_describe___wbg_raw_7ca307e5fb137176>
+    243 <__wbindgen_describe___wbg_raw_5c93d88c10bf75b5>
+    244 <__wbindgen_describe___wbg_raw_1d1250f057632041>
+    245 <__wbindgen_describe___wbg_raw_46f489dec7226688>
+    246 <__wbindgen_describe___wbg_raw_27dbbb914e5a5d50>
+    247 <__wbindgen_describe___wbg_raw_721d7aa2e8187aa7>
+    248 <__wbindgen_describe___wbg_raw_6cc8d4030bf90acf>
+    249 <__wbindgen_describe___wbg_raw_860688eb80a2d244>
+    250 <__wbindgen_describe___wbg_asyncIterator_e55349661595cdb5>
+    251 <__wbindgen_describe___wbg_for_7d14376c5dc2d98f>
+    252 <__wbindgen_describe___wbg_keyFor_84187a82c19dfb6d>
+    253 <__wbindgen_describe___wbg_toString_572c57a2bb17dd90>
+    254 <__wbindgen_describe___wbg_valueOf_4f5b774163553172>
+    255 <__wbindgen_describe___wbg_new_ac7361beaf933ba6>
+    256 <__wbindgen_describe___wbg_allSettled_e604dacd4a4d1be7>
+    257 <__wbindgen_describe___wbg_catch_5f3fc20cabd97c0a>
+    258 <__wbindgen_describe___wbg_then_db12746ab6cec3f6>
+    259 <__wbindgen_describe___wbg_globalThis_6b4d52a0b6aaeaea>
+    260 <__wbindgen_describe___wbg_new_23e58ff3dd38dc24>
+    261 <__wbindgen_describe___wbg_newwithlength_bdb96ae7fcc3caf8>
+    262 <__wbindgen_describe___wbg_newwithbyteoffset_e6cc486b4c220bf5>
+    263 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_59d89a22b0995472>
+    264 <__wbindgen_describe___wbg_fill_ff2624bcc909289d>
+    265 <__wbindgen_describe___wbg_buffer_3dc2cb13cb9bd7a0>
+    266 <__wbindgen_describe___wbg_slice_1199c1e7a259894f>
+    267 <__wbindgen_describe___wbg_forEach_88d4e6d87182a621>
+    268 <__wbindgen_describe___wbg_byteLength_c17240808edf2660>
+    269 <__wbindgen_describe___wbg_set_9098fff58a05d503>
+    270 <__wbindgen_describe___wbg_at_d85b739f889eb366>
+    271 <__wbindgen_describe___wbg_getindex_979316456a4a029b>
+    272 <__wbindgen_describe___wbg_setindex_2afc46bee0a36bd3>
+    273 <__wbindgen_describe___wbg_new_9b3e0e0ec6a2f9d5>
+    274 <__wbindgen_describe___wbg_newwithlength_ab9812e358353798>
+    275 <__wbindgen_describe___wbg_newwithbyteoffset_c3d6fca3558b6d30>
+    276 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_958d61afe64d3137>
+    277 <__wbindgen_describe___wbg_fill_d65df3269890f7e7>
+    278 <__wbindgen_describe___wbg_buffer_11dfed7285906880>
+    279 <__wbindgen_describe___wbg_slice_7ec5b6f3dc2cb55f>
+    280 <__wbindgen_describe___wbg_forEach_91f3deaf7f968a02>
+    281 <__wbindgen_describe___wbg_byteLength_4b0c4d002b6b9d03>
+    282 <__wbindgen_describe___wbg_set_9b1e84dff82fe1eb>
+    283 <__wbindgen_describe___wbg_at_87666027169b4ba0>
+    284 <__wbindgen_describe___wbg_getindex_a66403ac1c74f79a>
+    285 <__wbindgen_describe___wbg_setindex_01c26ee8ee590438>
+    286 <__wbindgen_describe___wbg_new_265cb3a7cf6dbcbb>
+    287 <__wbindgen_describe___wbg_newwithlength_6ef5937c5e68ac48>
+    288 <__wbindgen_describe___wbg_newwithbyteoffset_cf2bbc2c9a0348b3>
+    289 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_eb3d68e22b1ac3b7>
+    290 <__wbindgen_describe___wbg_fill_c3ec9fd5df7eb581>
+    291 <__wbindgen_describe___wbg_buffer_4f34837a8abfea00>
+    292 <__wbindgen_describe___wbg_slice_3d9fc736c733df19>
+    293 <__wbindgen_describe___wbg_forEach_c5c721b3eb1eca61>
+    294 <__wbindgen_describe___wbg_byteLength_9733f77214eeb147>
+    295 <__wbindgen_describe___wbg_set_017a09e6c4bfab7b>
+    296 <__wbindgen_describe___wbg_at_22f464316209bb9a>
+    297 <__wbindgen_describe___wbg_getindex_4fcd20eb928ecb19>
+    298 <__wbindgen_describe___wbg_setindex_1d6bf37a60167605>
+    299 <__wbindgen_describe___wbg_new_59845962d1127937>
+    300 <__wbindgen_describe___wbg_newwithlength_4c216eaaf23f2f9a>
+    301 <__wbindgen_describe___wbg_newwithbyteoffset_2a752454e177c8af>
+    302 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_84908302a4c137cf>
+    303 <__wbindgen_describe___wbg_fill_5d2a8ddfb1d57793>
+    304 <__wbindgen_describe___wbg_buffer_bacd7706db793204>
+    305 <__wbindgen_describe___wbg_slice_6603f1c726642fa9>
+    306 <__wbindgen_describe___wbg_forEach_40323ef90772e775>
+    307 <__wbindgen_describe___wbg_byteLength_d52de988f95295b2>
+    308 <__wbindgen_describe___wbg_set_5deee49b10b2b780>
+    309 <__wbindgen_describe___wbg_at_ce6058b30e9badf8>
+    310 <__wbindgen_describe___wbg_getindex_a471648b3037c750>
+    311 <__wbindgen_describe___wbg_setindex_e0b7b31bfc87ba3f>
+    312 <__wbindgen_describe___wbg_new_aa20cc9c60a92da7>
+    313 <__wbindgen_describe___wbg_newwithlength_56be05099517721d>
+    314 <__wbindgen_describe___wbg_newwithbyteoffset_7d3513b9864dcbc8>
+    315 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_47fa079c1b326b76>
+    316 <__wbindgen_describe___wbg_fill_9d26e4d0d08d0b40>
+    317 <__wbindgen_describe___wbg_buffer_de79d246492a22d7>
+    318 <__wbindgen_describe___wbg_slice_68c9450ef9a7f4f1>
+    319 <__wbindgen_describe___wbg_forEach_cccaa6257cf05971>
+    320 <__wbindgen_describe___wbg_byteLength_fef2dee37e510e92>
+    321 <__wbindgen_describe___wbg_set_c3d7b5ee2e4560ae>
+    322 <__wbindgen_describe___wbg_at_bb8bc6df5459b43a>
+    323 <__wbindgen_describe___wbg_getindex_817e09ac88b759d6>
+    324 <__wbindgen_describe___wbg_setindex_76b86c48a7fc0d52>
+    325 <__wbindgen_describe___wbg_new_c089ac7d48bbf93a>
+    326 <__wbindgen_describe___wbg_newwithlength_0420d798b73b930c>
+    327 <__wbindgen_describe___wbg_newwithbyteoffset_f5f7906f89fe5f95>
+    328 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_3a98458a53e22262>
+    329 <__wbindgen_describe___wbg_fill_3a0282e8abcf56b6>
+    330 <__wbindgen_describe___wbg_buffer_470ac73621cf4072>
+    331 <__wbindgen_describe___wbg_slice_9b37152e84ffae8d>
+    332 <__wbindgen_describe___wbg_forEach_b94517082da888ff>
+    333 <__wbindgen_describe___wbg_byteLength_fbdfd573f4b0f5f2>
+    334 <__wbindgen_describe___wbg_set_b80877dc8e3ea97c>
+    335 <__wbindgen_describe___wbg_at_414be18b2a391513>
+    336 <__wbindgen_describe___wbg_getindex_f5d39ea747809816>
+    337 <__wbindgen_describe___wbg_setindex_0c09bed6c6038b5d>
+    338 <__wbindgen_describe___wbg_new_895409caad7c9110>
+    339 <__wbindgen_describe___wbg_newwithlength_04767c67bed856f5>
+    340 <__wbindgen_describe___wbg_newwithbyteoffset_bd20cf48adb34860>
+    341 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_5d942bb3843f29c4>
+    342 <__wbindgen_describe___wbg_fill_aeadda0ff4061ccb>
+    343 <__wbindgen_describe___wbg_buffer_834ebf41f4d32471>
+    344 <__wbindgen_describe___wbg_slice_9406252e7431dd19>
+    345 <__wbindgen_describe___wbg_forEach_3cb5e9c792a1f96d>
+    346 <__wbindgen_describe___wbg_byteLength_26a7b76d55e3f2e2>
+    347 <__wbindgen_describe___wbg_set_61652ef8d8091edf>
+    348 <__wbindgen_describe___wbg_at_b0c56773abe2f4ff>
+    349 <__wbindgen_describe___wbg_getindex_f05bc129e4416187>
+    350 <__wbindgen_describe___wbg_setindex_41fd2b5fd90081a6>
+    351 <__wbindgen_describe___wbg_new_7d8833cf9cb57bf7>
+    352 <__wbindgen_describe___wbg_newwithlength_1efb4a1a79af5a72>
+    353 <__wbindgen_describe___wbg_newwithbyteoffset_77e94797c1745e33>
+    354 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_0b992ad3c87c92aa>
+    355 <__wbindgen_describe___wbg_fill_bcb4a6f23443115b>
+    356 <__wbindgen_describe___wbg_buffer_a24f9c0dd3fb1d5b>
+    357 <__wbindgen_describe___wbg_slice_f1ca189ba12f7add>
+    358 <__wbindgen_describe___wbg_forEach_e36f14232926b882>
+    359 <__wbindgen_describe___wbg_byteLength_7314dcd3963f6228>
+    360 <__wbindgen_describe___wbg_set_682e6e997e17e6df>
+    361 <__wbindgen_describe___wbg_at_a8fad3d9d158e0b9>
+    362 <__wbindgen_describe___wbg_getindex_dfd22cf2fbcf43b4>
+    363 <__wbindgen_describe___wbg_setindex_6a8033f079b53f4c>
+    364 <__wbindgen_describe___wbg_new_325a150d23028b71>
+    365 <__wbindgen_describe___wbg_newwithlength_f76e8d536f7a996d>
+    366 <__wbindgen_describe___wbg_newwithbyteoffset_68bb40d9b4639a86>
+    367 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_b309cd45834c831c>
+    368 <__wbindgen_describe___wbg_fill_2f3c568e1870945d>
+    369 <__wbindgen_describe___wbg_buffer_2cfb96ac38619946>
+    370 <__wbindgen_describe___wbg_slice_e49af274db5e44a5>
+    371 <__wbindgen_describe___wbg_forEach_4ada8c4d2e742be7>
+    372 <__wbindgen_describe___wbg_byteLength_9b3b854b1d662581>
+    373 <__wbindgen_describe___wbg_set_da74bd43a9d7102b>
+    374 <__wbindgen_describe___wbg_at_cc8ef4462e8fbb5b>
+    375 <__wbindgen_describe___wbg_getindex_b54aa48b0a430b78>
+    376 <__wbindgen_describe___wbg_setindex_4f742ef8fc15b535>
+    377 <__wbindgen_describe___wbg_new_69b6ef825f90567e>
+    378 <__wbindgen_describe___wbg_newwithlength_076981a2f36e4676>
+    379 <__wbindgen_describe___wbg_newwithbyteoffset_bc8f799ea6f2baa6>
+    380 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_2fa19007d9d7a9a8>
+    381 <__wbindgen_describe___wbg_fill_8667a36cd87d03d8>
+    382 <__wbindgen_describe___wbg_buffer_371b4d96aeea210b>
+    383 <__wbindgen_describe___wbg_slice_cca59fd45669b218>
+    384 <__wbindgen_describe___wbg_forEach_29a2795c00b7de20>
+    385 <__wbindgen_describe___wbg_byteLength_1224d74e3e3127bd>
+    386 <__wbindgen_describe___wbg_set_ee680b251165b1a0>
+    387 <__wbindgen_describe___wbg_at_2305836cb96ed917>
+    388 <__wbindgen_describe___wbg_getindex_7c9be6a85daeb122>
+    389 <__wbindgen_describe___wbg_setindex_a6dd393be26b55be>
+    390 <__wbindgen_describe___wbg_new_af9ebc0a1c54f55f>
+    391 <__wbindgen_describe___wbg_newwithlength_7ef3a963f12bde6c>
+    392 <__wbindgen_describe___wbg_newwithbyteoffset_4318e8a7b28181c1>
+    393 <__wbindgen_describe___wbg_newwithbyteoffsetandlength_e150e2b6f5c9ae79>
+    394 <__wbindgen_describe___wbg_fill_fd003025d32574a9>
+    395 <__wbindgen_describe___wbg_buffer_c62ccfdf63614eb3>
+    396 <__wbindgen_describe___wbg_slice_90cae9446e3cd2ea>
+    397 <__wbindgen_describe___wbg_forEach_d5e16038ed66863b>
+    398 <__wbindgen_describe___wbg_byteLength_f401f031f06712ad>
+    399 <__wbindgen_describe___wbg_set_ac26b6bdc08ba3ab>
+    400 <__wbindgen_describe___wbg_at_62130994d7d93cc0>
+    401 <__wbindgen_describe___wbg_getindex_824ffd51ecb80790>
+    402 <__wbindgen_describe___wbg_setindex_f4f73090b3e0d7e6>
+    403 <__wbindgen_describe___wbg_construct_8bab24d23d9a96ef>
+    404 <__wbindgen_describe___wbg_construct_7f2ea899a572391a>
+    405 <__wbindgen_describe___wbg_defineProperty_4c015afc76e3ff94>
+    406 <__wbindgen_describe___wbg_deleteProperty_c99ace812bf5c8a8>
+    407 <__wbindgen_describe___wbg_get_b996a12be035ef4f>
+    408 <__wbindgen_describe___wbg_get_de76efd6a65feeef>
+    409 <__wbindgen_describe___wbg_get_a3ad02e4fc0cb94c>
+    410 <__wbindgen_describe___wbg_has_bdec43a5ed4cb454>
+    411 <__wbindgen_describe___wbg_set_1b50d2de855a9d50>
+    412 <__wbindgen_describe___wbg_set_70cf1c2a6c25e8b0>
+    413 <__wbindgen_describe___wbg_set_83f86cd836194962>
+    414 <__wbindgen_describe___wbg_set_193ad882413e2c7e>
+    415 <__wbindgen_describe___wbg_compileStreaming_454156f58bd8547e>
+    416 <__wbindgen_describe___wbg_instantiate_303578e371f4871f>
+    417 <__wbindgen_describe___wbg_instantiate_cb223d3fa84fc5d0>
+    418 <__wbindgen_describe___wbg_instantiateStreaming_7f96838ba4ad39ed>
+    419 <__wbindgen_describe___wbg_new_59a1b82b2482371a>
+    420 <__wbindgen_describe___wbg_new_7cf992adc3a68766>
+    421 <__wbindgen_describe___wbg_exports_f510e4afeb55b76a>
+    422 <__wbindgen_describe___wbg_new_03b4c5dbcef200f2>
+    423 <__wbindgen_describe___wbg_new_c2872716d0cc354c>
+    424 <__wbindgen_describe___wbg_new_cb14c6d72298a8c8>
+    425 <__wbindgen_describe___wbg_customSections_bf03a28d320e3986>
+    426 <__wbindgen_describe___wbg_exports_43cd586a0b9a0663>
+    427 <__wbindgen_describe___wbg_new_aa4adaf3cdaf88c2>
+    428 <__wbindgen_describe___wbg_length_c50d4b2a2cd38ed4>
+    429 <__wbindgen_describe___wbg_get_e456338508324d5b>
+    430 <__wbindgen_describe___wbg_grow_5be1165932613853>
+    431 <__wbindgen_describe___wbg_set_89185d4880c5dec8>
+    432 <__wbindgen_describe___wbg_new_0afb3e80bab7a3ab>
+    433 <__wbindgen_describe___wbg_new_185bc87afb7d69fc>
+    434 <__wbindgen_describe___wbg_newwithoptions_ee3965236b34e6d8>
+    435 <__wbindgen_describe___wbg_is_0d0b05a32012bec0>
+    436 <__wbindgen_describe___wbg_getArg_ac63c4e60d9f63fd>
+    437 <__wbindgen_describe___wbg_new_cf5f1f8c5ebda1ac>
+    438 <__wbindgen_describe___wbg_value_2cbd518168a3a1bd>
+    439 <__wbindgen_describe___wbg_setvalue_a5bbd3e57da28810>
+    440 <__wbindgen_describe___wbg_new_e29fad1ece259065>
+    441 <__wbindgen_describe___wbg_buffer_ef9774282e5dab94>
+    442 <__wbindgen_describe___wbg_grow_50f9ec39b43f4230>
+    443 <__wbindgen_describe___wbg_add_b46ccc19cf98f435>
+    444 <__wbindgen_describe___wbg_add_7364bdd42eb149ae>
+    445 <__wbindgen_describe___wbg_compareExchange_9adab989c2d26554>
+    446 <__wbindgen_describe___wbg_compareExchange_fd62ef9dbfbb1e5e>
+    447 <__wbindgen_describe___wbg_isLockFree_ae133af5b74c36a4>
+    448 <__wbindgen_describe___wbg_load_42c709992c748804>
+    449 <__wbindgen_describe___wbg_load_4fcfc1211a268b9c>
+    450 <__wbindgen_describe___wbg_notify_8f3ad17456a7610d>
+    451 <__wbindgen_describe___wbg_notify_5e04389afd710fb7>
+    452 <__wbindgen_describe___wbg_wait_34aa5872739b11f9>
+    453 <__wbindgen_describe___wbg_wait_3f3cbab862397aca>
+    454 <__wbindgen_describe___wbg_wait_1daa5373ee2fbde8>
+    455 <__wbindgen_describe___wbg_wait_2d1436b1ac62273c>
+    456 <__wbindgen_describe___wbg_waitAsync_92aae24675d9be6c>
+    457 <__wbindgen_describe___wbg_waitAsync_363f4ba9f8b25533>
+    458 <__wbindgen_describe___wbg_waitAsync_adec7c585ff6ffdb>
+    459 <__wbindgen_describe___wbg_waitAsync_d1fef023f750a85f>
+    460 <__wbindgen_describe___wbg_abs_38b0e023e0bb2365>
+    461 <__wbindgen_describe___wbg_clz32_7abf2159b393fd8b>
+    462 <__wbindgen_describe___wbg_fround_e93c772678718013>
+    463 <__wbindgen_describe___wbg_imul_650b3b89960a7d4a>
+    464 <js_sys::global::get_global_object::Global::get_self::__wbg_self_cca3ca60d61220f4::h4899de7429fbc907>
+    465 <js_sys::global::get_global_object::Global::get_window::__wbg_window_2aba046d3fc4ad7c::h61843fc1f6e8461c>
+    466 <js_sys::global::get_global_object::Global::get_global_this::__wbg_globalThis_6b4d52a0b6aaeaea::hd145529b38774dfa>
+    467 <js_sys::global::get_global_object::Global::get_global::__wbg_global_49324ce12193de77::he4ce3c40ead384ac>
+    468 <wasm_bindgen::__wbindgen_is_undefined::hc8a5e30dc71a60e7>
+    469 <js_sys::Function::new_no_args::__wbg_newnoargs_a136448eeb7d48ac::h8a2cbe73f57c26d2>
+    470 <js_sys::Function::call0::__wbg_call_0ad083564791763a::h4f3771cba277def5>
+    471 <__wbindgen_describe___wbg_stringify_841980d1bf485619>
+    472 <__wbindgen_describe___wbg_stringify_a1a0290ad3dd8025>
+    473 <__wbindgen_describe___wbg_stringify_7330cbd04ec4c682>
+    474 <__wbindgen_describe___wbg_new_31c5ca773d242da7>
+    475 <__wbindgen_describe___wbg_compare_98b0d6cd20b507e1>
+    476 <__wbindgen_describe___wbg_resolvedOptions_f94335d7d71e908d>
+    477 <__wbindgen_describe___wbg_new_7f6cdb425945ba92>
+    478 <__wbindgen_describe___wbg_format_02a039dcb5e789c9>
+    479 <__wbindgen_describe___wbg_formatToParts_19830a86336f7a50>
+    480 <__wbindgen_describe___wbg_resolvedOptions_73d48ef2e9b809e1>
+    481 <__wbindgen_describe___wbg_new_4df4d23a555db943>
+    482 <__wbindgen_describe___wbg_format_dd85a05737f53b26>
+    483 <__wbindgen_describe___wbg_formatToParts_78000f7db6667d03>
+    484 <__wbindgen_describe___wbg_resolvedOptions_e04b6f8163795067>
+    485 <__wbindgen_describe___wbg_new_6018fa37894d131a>
+    486 <__wbindgen_describe___wbg_resolvedOptions_68c3f52e59a4e88a>
+    487 <__wbindgen_describe___wbg_select_ad49474f520f61ef>
+    488 <__wbindgen_describe___wbg_new_1631f4eb2a0cf7cd>
+    489 <__wbindgen_describe___wbg_format_a9e1239df46545d0>
+    490 <__wbindgen_describe___wbg_formatToParts_7984a871e3e7e0f0>
+    491 <__wbindgen_describe___wbg_resolvedOptions_3d345d8b54a4d098>
+    492 <__wbindgen_describe___wbg_supportedLocalesOf_6f10d64b530d3c4d>
+    493 <wasm_bindgen::__wbindgen_throw::h052e0e9f068f11c7>
+    494 <__externref_table_alloc>
+    495 <wasm_bindgen::externref::__wbindgen_externref_table_grow::h27433384effa9ad1>
+    496 <__externref_table_dealloc>
+    497 <wasm_bindgen::externref::__wbindgen_externref_table_set_null::hae1e33ac6fd625f5>
+    498 <__externref_drop_slice>
+    499 <__externref_heap_live_count>
+    500 <__wbindgen_malloc>
+    501 <__wbindgen_realloc>
+    502 <__wbindgen_free>
+    503 <__wbindgen_exn_store>
+    504 <wasm_bindgen::__wbindgen_object_clone_ref::h68eb17dc94150f6c>
+    505 <wasm_bindgen_futures::queue::Global::hasQueueMicrotask::__wbg_queueMicrotask_6808622725a52272::hcac84557cc01c6e2>
+    506 <wasm_bindgen::__wbindgen_is_function::hae0a2d9d13c7e81e>
+    507 <js_sys::Promise::resolve::__wbg_resolve_267ff08e7e1d2ce4::h5b4cb99153cb366b>
+    508 <wasm_bindgen::__wbindgen_cb_drop::h7aa11839e8f159a2>
+    509 <js_sys::Promise::then::__wbg_then_84907e7a6730461e::ha14a2cfb0f5d940a>
+    510 <wasm_bindgen_futures::queue::queueMicrotask::__wbg_queueMicrotask_ef0e86b0263a71ee::h89b8189926b301d4>
+    511 <__wbindgen_describe___wbg_queueMicrotask_ef0e86b0263a71ee>
+    512 <wasm_bindgen::__wbindgen_describe_closure::h7d02250f8844ec91>
+    513 <__wasm_split_load_callback>
+    770 <wasm_split::ensure_loaded::{{closure}}::ha5d82907191a17ce>
+    771 <std::sync::poison::mutex::Mutex<T>::lock::h21f886f1174a0319>
+    773 <core::ptr::drop_in_place<core::option::Option<alloc::vec::Vec<core::task::wake::Waker>>>::h43156b5ad0e71cfd>
+    774 <alloc::raw_vec::RawVec<T,A>::grow_one::h0755801e3521229c>
+    775 <core::ptr::drop_in_place<async_once_cell::Step>::h0362a8ee02cf7236>
+    776 <async_once_cell::Inner::initialize::h0aaca25c578e4bb3>
+    777 <<async_once_cell::QueueRef as core::ops::drop::Drop>::drop::h8c9b3d106df0bcd6>
+    778 <<wasm_split::SplitLoaderFuture as core::future::future::Future>::poll::h23c6e3099f00b525>
+    779 <alloc::rc::Rc<T,A>::drop_slow::hf01073cf31767f50>
+    780 <core::mem::drop::h7f682309996eac29>
+    781 <.Lanon.850abc7070cad3aaf54fc18349b11383.2>
+    782 <std::thread::local::panic_access_error::h059eb2e433c7ef8d>
+    783 <.Lanon.51aa6f4db30a08e7412a135b574a635e.25>
+    784 <.Lanon.51aa6f4db30a08e7412a135b574a635e.26>
+    785 <core::option::expect_failed::hf548ca1fbf4f5a7d>
+    786 <.Lanon.8353eafc0686ece12291357d89b43616.1>
+    787 <core::panicking::panic_const::panic_const_async_fn_resumed::hb229ab878dda2306>
+    788 <<async_once_cell::QuickInitGuard as core::ops::drop::Drop>::drop::h57d7b78401cc0fea>
+    789 <alloc::rc::Rc<T,A>::drop_slow::hcb71c1ef84379163>
+    790 <wasm_bindgen_futures::future_to_promise::{{closure}}::hbdc5d332ffe341b0>
+    791 <wasm_bindgen_futures::task::singlethread::Task::spawn::h891806e444e79b53>
+    792 <.Lanon.8353eafc0686ece12291357d89b43616.10>
+    793 <wasm_bindgen::throw_str::h79bfa6c54192c470>
+    794 <wasm_bindgen_futures::future_to_promise::{{closure}}::{{closure}}::hf8b48fabfb2e0c9e>
+    795 <.Lanon.8353eafc0686ece12291357d89b43616.19>
+    796 <.Lanon.8353eafc0686ece12291357d89b43616.20>
+    797 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.151>
+    798 <<&T as core::fmt::Display>::fmt::h46f060fbeb711644>
+    799 <alloc::fmt::format::format_inner::h2774eb6c7201fb2a>
+    800 <.Lanon.8353eafc0686ece12291357d89b43616.16>
+    801 <core::ptr::drop_in_place<wasm_split::ensure_loaded::{{closure}}>::h10a687e34f02efe2>
+    802 <.Lanon.8353eafc0686ece12291357d89b43616.17>
+    803 <core::option::unwrap_failed::hd28a1cf38a5f885e>
+    804 <.Lanon.8353eafc0686ece12291357d89b43616.12>
+    805 <.Lanon.8353eafc0686ece12291357d89b43616.14>
+    806 <.Lanon.8353eafc0686ece12291357d89b43616.22>
+    807 <<core::pin::Pin<Ptr> as core::fmt::Display>::fmt::h63013ef8896a2483>
+    808 <alloc::raw_vec::RawVecInner<A>::deallocate::h2246fdcf05d848bb>
+    809 <__rustc[79a240ffca3c5d2f]::__rust_dealloc>
+    810 <<core::pin::Pin<Ptr> as core::fmt::Display>::fmt::h3dfce95afebe7f8f>
+    811 <.Lanon.8353eafc0686ece12291357d89b43616.23>
+    812 <core::ptr::drop_in_place<example::print_lazy_loaded_string::{{closure}}>::h444dafca90da78ee>
+    813 <core::ptr::drop_in_place<example::_::__wasm_bindgen_generated_print_lazy_loaded_string::{{closure}}>::hf4cc1c0c23293209>
+    814 <js_sys::Function::call1::hd57248792da1491f>
+    815 <.Lanon.8353eafc0686ece12291357d89b43616.5>
+    816 <.Lanon.8353eafc0686ece12291357d89b43616.11>
+    817 <std::sys::thread_local::no_threads::LazyStorage<T>::initialize::hbc066741d5c31e32>
+    818 <wasm_split::LazySplitLoader::new::hafb4682f1ef23e95>
+    819 <example::string_from_static::{{closure}}::__wasm_split_loader::{{closure}}::VAL::ha5845909e0ab183a>
+    820 <std::sys::thread_local::no_threads::LazyStorage<T>::initialize::he969f2e31e6b728d>
+    821 <example::static_str::{{closure}}::__wasm_split_loader::{{closure}}::VAL::h6d82a770a0f7e695>
+    822 <<async_once_cell::QueueHead as core::ops::drop::Drop>::drop::h7992b46f9eb4cff0>
+    823 <core::ops::function::FnOnce::call_once{{vtable.shim}}::hdb806480babc8434>
+    824 <core::ops::function::FnOnce::call_once::h20c204fd51280f17>
+    825 <core::ops::function::FnOnce::call_once::h7fd976547ee79da5>
+    826 <core::ptr::drop_in_place<wasm_bindgen_futures::future_to_promise<example::_::__wasm_bindgen_generated_print_lazy_loaded_string::{{closure}}>::{{closure}}::{{closure}}>::h2eb914b4914f937d>
+    827 <core::fmt::Formatter::pad::hd19c0bc035513691>
+    832 <.Lanon.8353eafc0686ece12291357d89b43616.3>
+    833 <dlmalloc::dlmalloc::Dlmalloc<A>::free::h65a3c82591778cf3>
+    834 <.Lanon.34e2a803857b49632d1110a535995711.81>
+    835 <.Lanon.34e2a803857b49632d1110a535995711.82>
+    836 <core::panicking::panic::h7056c16eb2f7d5e2>
+    837 <.Lanon.34e2a803857b49632d1110a535995711.83>
+    838 <.Lanon.34e2a803857b49632d1110a535995711.84>
+    839 <__rustc[79a240ffca3c5d2f]::__rust_realloc>
+    840 <dlmalloc::dlmalloc::Dlmalloc<A>::memalign::h685c55c680405513>
+    843 <dlmalloc::dlmalloc::Dlmalloc<A>::dispose_chunk::h7ad12a696dbfcdb3>
+    844 <alloc::raw_vec::finish_grow::h6095165c77420f23>
+    848 <alloc::raw_vec::RawVecInner<A>::reserve::do_reserve_and_handle::hd3aa1d9f2af0f9c7>
+    849 <.Lanon.79b81406656296db68a0b7034c081fc6.11>
+    850 <.Lanon.79b81406656296db68a0b7034c081fc6.22>
+    851 <.Lanon.79b81406656296db68a0b7034c081fc6.7>
+    852 <core::fmt::write::hb85a3dd9b171f7ca>
+    853 <.Lanon.79b81406656296db68a0b7034c081fc6.42>
+    854 <.Lanon.79b81406656296db68a0b7034c081fc6.41>
+    855 <.Lanon.79b81406656296db68a0b7034c081fc6.44>
+    856 <core::result::unwrap_failed::h83f5069e4f517ac9>
+    857 <<core::fmt::Error as core::fmt::Debug>::fmt::h7dde34acca5f97cb>
+    858 <.Lanon.79b81406656296db68a0b7034c081fc6.2>
+    859 <core::ptr::drop_in_place<alloc::string::String>::h58b386670e9fd7a3>
+    860 <<alloc::string::String as core::fmt::Write>::write_str::h3844d3de31d4d20f>
+    861 <<alloc::string::String as core::fmt::Write>::write_char::hfce5597c22aa7f43>
+    862 <core::fmt::Write::write_fmt::h1cff29b70616e2c6>
+    863 <alloc::raw_vec::RawVecInner<A>::deallocate::he8bc1682703b1be6>
+    864 <.Lanon.51aa6f4db30a08e7412a135b574a635e.1>
+    865 <core::panicking::assert_failed::h38eb03705053ebb7>
+    866 <<&T as core::fmt::Debug>::fmt::h61c41d29e55a25bc>
+    867 <.Lanon.51aa6f4db30a08e7412a135b574a635e.13>
+    868 <.Lanon.51aa6f4db30a08e7412a135b574a635e.15>
+    869 <<bool as core::fmt::Debug>::fmt::h77532519fa8c6cbc>
+    870 <core::fmt::builders::DebugStruct::field::hf5f0e10c0d23e50d>
+    871 <.Lanon.51aa6f4db30a08e7412a135b574a635e.16>
+    872 <.Lanon.51aa6f4db30a08e7412a135b574a635e.18>
+    873 <core::fmt::num::<impl core::fmt::Debug for usize>::fmt::hb041f9c4e8f4ee42>
+    874 <.Lanon.51aa6f4db30a08e7412a135b574a635e.20>
+    875 <<*mut T as core::fmt::Debug>::fmt::h6dc6c3d0c495d6c8>
+    876 <core::fmt::builders::DebugStruct::finish::h111fe3070a9c5829>
+    877 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.294>
+    878 <core::fmt::Formatter::pad_integral::h4ada957bfa3d7062>
+    879 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.297>
+    880 <<bool as core::fmt::Display>::fmt::hbce3ae6568c4572c>
+    881 <<&T as core::fmt::Debug>::fmt::hae39036718d4bbef>
+    882 <alloc::raw_vec::finish_grow::h49c5c8da7f64ab4b>
+    883 <.Lanon.51aa6f4db30a08e7412a135b574a635e.27>
+    884 <async_once_cell::with_lock::hf1ee30519e479ed2>
+    885 <.Lanon.51aa6f4db30a08e7412a135b574a635e.21>
+    886 <.Lanon.51aa6f4db30a08e7412a135b574a635e.10>
+    887 <.Lanon.51aa6f4db30a08e7412a135b574a635e.22>
+    888 <.Lanon.51aa6f4db30a08e7412a135b574a635e.23>
+    889 <.Lanon.51aa6f4db30a08e7412a135b574a635e.24>
+    890 <.Lanon.51aa6f4db30a08e7412a135b574a635e.29>
+    891 <.Lanon.51aa6f4db30a08e7412a135b574a635e.30>
+    892 <core::ptr::drop_in_place<async_once_cell::QuickInitGuard>::h505400b5c5bbd6a2>
+    893 <<async_once_cell::QuickInitGuard as core::fmt::Debug>::fmt::h1035a711cfb7884a>
+    894 <.Lanon.51aa6f4db30a08e7412a135b574a635e.33>
+    895 <.Lanon.51aa6f4db30a08e7412a135b574a635e.34>
+    896 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.268>
+    897 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.267>
+    899 <core::fmt::Formatter::pad_integral::write_prefix::h2ab7eaf03dfcbbed>
+    900 <core::panicking::assert_failed_inner::hbc821832ff9b282b>
+    901 <.Lanon.34e2a803857b49632d1110a535995711.21>
+    902 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.244>
+    903 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.253>
+    904 <<&T as core::fmt::Debug>::fmt::h72573d4c59e2292e>
+    905 <<core::fmt::Arguments as core::fmt::Display>::fmt::h51c4f049cf1ece41>
+    906 <<&T as core::fmt::Display>::fmt::ha386fd404de55b96>
+    907 <.Lanon.51aa6f4db30a08e7412a135b574a635e.4>
+    908 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.250>
+    909 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.212>
+    910 <<core::cell::BorrowError as core::fmt::Display>::fmt::h656ef206c92d3360>
+    911 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.158>
+    912 <<core::cell::BorrowMutError as core::fmt::Display>::fmt::hbb3292f24f1d586f>
+    913 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.159>
+    914 <core::cell::panic_already_borrowed::hd3c5a4edee9609cc>
+    915 <core::cell::panic_already_borrowed::do_panic::runtime::ha87bd3b13c005fcb>
+    916 <core::cell::panic_already_mutably_borrowed::hfb639ac7ed2fea94>
+    917 <core::cell::panic_already_mutably_borrowed::do_panic::runtime::h6d346ff45521a8c2>
+    918 <.Lanon.850abc7070cad3aaf54fc18349b11383.7>
+    919 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.261>
+    920 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.260>
+    921 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.256>
+    922 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.262>
+    923 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.258>
+    924 <<core::fmt::builders::PadAdapter as core::fmt::Write>::write_str::h0e98855b968ab952>
+    925 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.263>
+    926 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.259>
+    927 <<core::fmt::builders::PadAdapter as core::fmt::Write>::write_char::hd1e2df70e1b29341>
+    928 <core::fmt::Write::write_fmt::h2f95486555028088>
+    929 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.257>
+    930 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.313>
+    931 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.314>
+    932 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.454>
+    933 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Boolean>::describe::h2064fadd8163e108>
+    934 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Map>::describe::h01462276180c3fbc>
+    935 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Uint32Array>::describe::hdda951999b1f0fa1>
+    936 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Int16Array>::describe::h54617eb34fac3ea3>
+    937 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::DataView>::describe::h219e57be239ed6ed>
+    938 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WeakSet>::describe::h405df4b3c92ce712>
+    939 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::JsString>::describe::h0252b3e65ecd3c2b>
+    940 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Function>::describe::h176163b0053c953b>
+    941 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Object>::describe::h006a8f786a620f52>
+    942 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::RegExp>::describe::hde05a895aea04d19>
+    943 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::BigInt64Array>::describe::h17927091ca540579>
+    944 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Symbol>::describe::h3f7e2db7d2ff90d9>
+    945 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Int32Array>::describe::h8dce926c2110bec0>
+    946 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Array>::describe::h5b652081b809a4ce>
+    947 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Error>::describe::h3e1fd4493bb9edb8>
+    948 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::BigUint64Array>::describe::h4281269b2d16b376>
+    949 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::BigInt>::describe::h9ff06527da9ce73d>
+    950 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Float64Array>::describe::hc92575a6d6daca5c>
+    951 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Promise>::describe::h587a42d7bb135588>
+    952 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Uint8Array>::describe::h62372fe0ed9649e5>
+    953 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Iterator>::describe::h18ebcc4d46eb5f2b>
+    954 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Set>::describe::h5c4799d116ebc31a>
+    955 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Number>::describe::h23c3e4b73d476648>
+    956 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::SharedArrayBuffer>::describe::h814e7665a0dedd47>
+    957 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Generator>::describe::h05489b55255d2e60>
+    958 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::ArrayBuffer>::describe::h209f184c14349e7a>
+    959 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Int8Array>::describe::ha09797af2c222da2>
+    960 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WeakMap>::describe::ha3d1ff80799c5e14>
+    961 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Uint8ClampedArray>::describe::h571b8e501e6f74ef>
+    962 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Float32Array>::describe::hb6143431889a8336>
+    963 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Date>::describe::h41f62a6a4237a88e>
+    964 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Uint16Array>::describe::h989917fac986fd5e>
+    965 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::IteratorNext>::describe::hb4d229bc920cbc5a>
+    966 <<&mut T as wasm_bindgen::describe::WasmDescribe>::describe::h564e1d7e3b1b99aa>
+    967 <wasm_bindgen::convert::closures::invoke3_mut::h0072925685958a8b>
+    968 <wasm_bindgen::convert::closures::invoke3_mut::h246e5313dcbfdd5c>
+    969 <wasm_bindgen::convert::closures::invoke3_mut::hf59559632ae23775>
+    970 <<&mut T as wasm_bindgen::describe::WasmDescribe>::describe::h0fb2cb23d65c1991>
+    971 <wasm_bindgen::convert::closures::invoke1_mut::hcd57c69cff56432c>
+    972 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::EvalError>::describe::h7eac6d18bd8974ad>
+    973 <wasm_bindgen::__rt::GLOBAL_EXNDATA::h0d1201b0e0d41664.0>
+    974 <wasm_bindgen::convert::closures::invoke2_mut::h2556a9672893fdf5>
+    975 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Proxy>::describe::h4884736b9c1808bb>
+    976 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::RangeError>::describe::hc0dadf085d6c04a4>
+    977 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::ReferenceError>::describe::he4a8821f567d116b>
+    978 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::SyntaxError>::describe::hc86431822c0c2ad0>
+    979 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::TypeError>::describe::h72e78e5101c0ab8e>
+    980 <js_sys::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::UriError>::describe::h875a6359c44e5898>
+    981 <<core::option::Option<T> as wasm_bindgen::describe::WasmDescribe>::describe::ha4dcff4cbdbc4703>
+    982 <wasm_bindgen::convert::closures::invoke3_mut::h2df57963bdcedcbf>
+    983 <wasm_bindgen::convert::closures::invoke3_mut::h71078c96f517ee56>
+    984 <wasm_bindgen::convert::closures::invoke3_mut::h43c2837aea1a4e10>
+    985 <wasm_bindgen::convert::closures::invoke3_mut::h0cc55e509ddaa622>
+    986 <wasm_bindgen::convert::closures::invoke3_mut::h1e4386a3091e9cde>
+    987 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::Instance>::describe::h0c95d16e2ac32ea9>
+    988 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::Module>::describe::hf3eff2ad744579c9>
+    989 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::Memory>::describe::h6f3331129386085f>
+    990 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::Exception>::describe::h92cf37a2a58138d7>
+    991 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::Tag>::describe::he19bb4dc072cd6c2>
+    992 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::Global>::describe::h25e9cfcd17ed99d2>
+    993 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::Table>::describe::h23213be06655bdb6>
+    994 <wasm_bindgen::convert::closures::invoke4_mut::he154e46fbe25eb66>
+    995 <wasm_bindgen::convert::closures::invoke3_mut::h4b953e2c292f0a45>
+    996 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::CompileError>::describe::hc327e89eff035b7f>
+    997 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::LinkError>::describe::h1cba664235e0467c>
+    998 <js_sys::WebAssembly::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::WebAssembly::RuntimeError>::describe::h5185d734e3dc7561>
+    999 <.Lanon.d8aea96bde7621720d8eebb0a9215221.0>
+    1000 <alloc::raw_vec::RawVecInner<A>::shrink_unchecked::h8b10e7b3bd461540>
+    1001 <.Lanon.1ff6891908093a1fe44a9c9d4c56e10b.1>
+    1002 <std::sys::thread_local::no_threads::LazyStorage<T>::initialize::h4f7002aa5f3f7bb7>
+    1003 <.Lanon.85092bb9fbf5ee025382520e06e7646d.5>
+    1004 <js_sys::global::GLOBAL::{{closure}}::VAL::h7aff4bbc5d5000e6.0>
+    1005 <js_sys::global::GLOBAL::{{closure}}::VAL::h7aff4bbc5d5000e6.1>
+    1006 <js_sys::Intl::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Intl::PluralRules>::describe::h1fad8a1d04da1dac>
+    1007 <js_sys::Intl::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Intl::RelativeTimeFormat>::describe::h9375986111de3857>
+    1008 <js_sys::Intl::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Intl::Collator>::describe::h8715297502656ea8>
+    1009 <js_sys::Intl::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Intl::DateTimeFormat>::describe::he92f991da590c047>
+    1010 <js_sys::Intl::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Intl::NumberFormat>::describe::h7bff8cfa032c3ee2>
+    1018 <.Lanon.51aa6f4db30a08e7412a135b574a635e.2>
+    1019 <<&T as core::fmt::Debug>::fmt::h8667e4ebc2e9bb0f>
+    1020 <<std::thread::local::AccessError as core::fmt::Debug>::fmt::h61557c28914c1fe4>
+    1021 <.Lanon.34e2a803857b49632d1110a535995711.103>
+    1022 <.Lanon.34e2a803857b49632d1110a535995711.106>
+    1027 <<once_cell::unsync::Lazy<T,F> as core::ops::deref::Deref>::deref::h6644cb9f239593f5>
+    1028 <wasm_bindgen::externref::HEAP_SLAB::h4a3669ba03799398>
+    1029 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.5>
+    1030 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.7>
+    1031 <core::ptr::drop_in_place<core::result::Result<(),core::cell::Cell<wasm_bindgen::externref::Slab>>>::hc6123c2479069e5d>
+    1032 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.9>
+    1033 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.10>
+    1034 <core::ops::function::FnOnce::call_once::he06989340d67e146>
+    1035 <wasm_bindgen::convert::closures::invoke1_mut::hd1a74001708cb998>
+    1036 <std::sys::thread_local::no_threads::LazyStorage<T>::initialize::hb198e292a1c7ee78>
+    1037 <.Lanon.d8aea96bde7621720d8eebb0a9215221.1>
+    1038 <wasm_bindgen::closure::Closure<T>::wrap::breaks_if_inlined::hf765e3b8d1548179>
+    1039 <wasm_bindgen_futures::queue::QUEUE::{{closure}}::VAL::h19d1a02ba2c8bb6e>
+    1040 <alloc::rc::Rc<T,A>::drop_slow::hfd96c1a6e646f832>
+    1041 <core::ptr::drop_in_place<alloc::boxed::Box<dyn core::ops::function::FnMut<(wasm_bindgen::JsValue,)>+Output = ()>>::h3c782d2769856525>
+    1042 <wasm_bindgen_futures::queue::Queue::schedule_task::hc185ccc7bc638d99>
+    1043 <alloc::collections::vec_deque::VecDeque<T,A>::grow::hbd4faf4ccfc469db>
+    1044 <.Lanon.850abc7070cad3aaf54fc18349b11383.9>
+    1045 <alloc::raw_vec::RawVec<T,A>::grow_one::h37b4949660ee5fd6>
+    1046 <.Lanon.850abc7070cad3aaf54fc18349b11383.10>
+    1047 <std::thread::local::LocalKey<T>::with::h70380e77c15d8ec8>
+    1048 <wasm_bindgen_futures::queue::QueueState::run_all::h47ad66020c546356>
+    1049 <core::ptr::drop_in_place<core::option::Option<wasm_bindgen_futures::task::singlethread::Inner>>::hec3ee511ca1e37e7>
+    1050 <alloc::rc::Rc<T,A>::drop_slow::hd5c55890b614016e>
+    1051 <.Lanon.850abc7070cad3aaf54fc18349b11383.8>
+    1052 <.Lanon.d8aea96bde7621720d8eebb0a9215221.5>
+    1053 <wasm_bindgen::closure::Closure<T>::wrap::describe::h1f5765ee711a6b80>
+    1054 <<dyn core::ops::function::FnMut<(A,)>+Output = R as wasm_bindgen::closure::WasmClosure>::describe::invoke::h8666a9951175ca27>
+    1055 <<dyn core::ops::function::FnMut<(A,)>+Output = R as wasm_bindgen::closure::WasmClosure>::describe::destroy::h943753811d8fd634>
+    1056 <core::ptr::drop_in_place<wasm_bindgen_futures::queue::Queue::new::{{closure}}>::h87b75f0bd09882df>
+    1057 <core::ops::function::FnOnce::call_once{{vtable.shim}}::hb52c86bf2b4e7114>
+    1058 <wasm_bindgen_futures::queue::Queue::new::{{closure}}::h6e606b30beb033e3>
+    1059 <wasm_bindgen_futures::task::singlethread::Task::into_raw_waker::VTABLE::hc9ed02da2e959ee4>
+    1060 <.Lanon.8353eafc0686ece12291357d89b43616.2>
+    1061 <wasm_bindgen_futures::task::singlethread::Task::into_raw_waker::raw_clone::hc6044330046b47f4>
+    1062 <wasm_bindgen_futures::task::singlethread::Task::into_raw_waker::raw_wake::h87e9f28a4a8db9ed>
+    1063 <wasm_bindgen_futures::task::singlethread::Task::into_raw_waker::raw_wake_by_ref::ha3eafc320e69e53d>
+    1064 <wasm_bindgen_futures::task::singlethread::Task::into_raw_waker::raw_drop::h62df557cca4cd3fd>
+    1065 <.Lanon.6543075fd68f4d6599bf6aebcc45076e.0>
+    1066 <.Lanon.8353eafc0686ece12291357d89b43616.0>
+    1067 <.Lanon.8353eafc0686ece12291357d89b43616.4>
+    1069 <.Lanon.8353eafc0686ece12291357d89b43616.13>
+    1071 <.Lanon.79b81406656296db68a0b7034c081fc6.10>
+    1072 <.Lanon.79b81406656296db68a0b7034c081fc6.21>
+    1073 <.Lanon.79b81406656296db68a0b7034c081fc6.43>
+    1074 <.Lanon.51aa6f4db30a08e7412a135b574a635e.0>
+    1075 <.Lanon.51aa6f4db30a08e7412a135b574a635e.3>
+    1076 <.Lanon.51aa6f4db30a08e7412a135b574a635e.12>
+    1077 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.247>
+    1078 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.248>
+    1079 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.249>
+    1080 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.251>
+    1081 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.252>
+    1082 <.Lanon.7eca65ef36bb00ab9406ec06b65577ca.453>
+    1083 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.16>
+    1084 <.Lanon.34e2a803857b49632d1110a535995711.80>
+    1085 <.Lanon.34e2a803857b49632d1110a535995711.105>
+    1086 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.4>
+    1087 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.6>
+    1088 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.8>
+    1089 <.Lanon.850abc7070cad3aaf54fc18349b11383.1>
+    1090 <.Lanon.850abc7070cad3aaf54fc18349b11383.6>
+    1091 <.Lanon.d8aea96bde7621720d8eebb0a9215221.2>
+  Imports: 7
+    772 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
+    831 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
+    841 <std::sys::alloc::wasm::DLMALLOC::h6f413374bf53daef>
+    842 <dlmalloc::dlmalloc::Dlmalloc<A>::unlink_chunk::hab175a273edf7115>
+    845 <alloc::raw_vec::capacity_overflow::h186860d558d1cdb1>
+    847 <core::panicking::panic_fmt::h95bef13e22b90182>
+    1026 <dlmalloc::dlmalloc::Dlmalloc<A>::insert_large_chunk::h99529485956a12a6>
+
+Module #1: Single(Split("static_str"))
+  Defined symbols: 2
+    9 <__wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str>
+    828 <.Lanon.8353eafc0686ece12291357d89b43616.15>
+  Imports: 1
+    772 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
+  Split points: 1
+    "776d8e51aac0782b17e57d45872c52d7_static_str"
+
+Module #2: Single(Split("string_from_static"))
+  Defined symbols: 4
+    10 <__wasm_split_00string_from_static00_export_17997317cc392c52ed3bea15880aab65_string_from_static>
+    829 <.Lanon.8353eafc0686ece12291357d89b43616.18>
+    830 <.Lanon.8353eafc0686ece12291357d89b43616.9>
+    1068 <.Lanon.8353eafc0686ece12291357d89b43616.8>
+  Imports: 2
+    772 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
+    831 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
+  Split points: 1
+    "17997317cc392c52ed3bea15880aab65_string_from_static"
+
+Module #3: Shared(SharedModuleIdentifier([Main, Split("static_str"), Split("string_from_static")]))
+  Defined symbols: 4
+    772 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
+    841 <std::sys::alloc::wasm::DLMALLOC::h6f413374bf53daef>
+    842 <dlmalloc::dlmalloc::Dlmalloc<A>::unlink_chunk::hab175a273edf7115>
+    1026 <dlmalloc::dlmalloc::Dlmalloc<A>::insert_large_chunk::h99529485956a12a6>
+  Exports: 4
+    772 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
+    841 <std::sys::alloc::wasm::DLMALLOC::h6f413374bf53daef>
+    842 <dlmalloc::dlmalloc::Dlmalloc<A>::unlink_chunk::hab175a273edf7115>
+    1026 <dlmalloc::dlmalloc::Dlmalloc<A>::insert_large_chunk::h99529485956a12a6>
+
+Module #4: Shared(SharedModuleIdentifier([Main, Split("string_from_static")]))
+  Defined symbols: 16
+    831 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
+    845 <alloc::raw_vec::capacity_overflow::h186860d558d1cdb1>
+    846 <.Lanon.79b81406656296db68a0b7034c081fc6.9>
+    847 <core::panicking::panic_fmt::h95bef13e22b90182>
+    898 <__rustc[79a240ffca3c5d2f]::rust_begin_unwind>
+    1011 <core::panic::PanicPayload::as_str::h389694c361f86e8b>
+    1012 <std::panicking::rust_panic_with_hook::h040aa1598efd68d7>
+    1013 <std::panicking::panic_count::GLOBAL_PANIC_COUNT::h8ac90f3d55706855>
+    1014 <std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.1>
+    1015 <std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.0>
+    1016 <std::panicking::HOOK::h6335f857b7f93101.0>
+    1017 <__rustc[79a240ffca3c5d2f]::rust_panic>
+    1023 <std::sys::backtrace::__rust_end_short_backtrace::h5e5c59d3dbd07730>
+    1024 <std::panicking::begin_panic_handler::{{closure}}::h60949c76d832880a>
+    1025 <<std::panicking::begin_panic_handler::StaticStrPayload as core::panic::PanicPayload>::as_str::hcbeda6b3a1c34a85>
+    1070 <.Lanon.79b81406656296db68a0b7034c081fc6.8>
+  Exports: 3
+    831 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
+    845 <alloc::raw_vec::capacity_overflow::h186860d558d1cdb1>
+    847 <core::panicking::panic_fmt::h95bef13e22b90182>

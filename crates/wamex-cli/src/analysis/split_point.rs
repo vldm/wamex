@@ -327,4 +327,43 @@ mod tests {
         ]));
         assert!(ab.is_part_of(&shared));
     }
+
+    #[test]
+    fn test_snapshot_split_structure() {
+        let _ = env_logger::Builder::new()
+            .filter(None, log::LevelFilter::Debug)
+            .parse_env("RUST_LOG")
+            .try_init();
+
+        // Test with example.wasm
+        let wasm_bytes = include_bytes!("../../test-data/example.wasm");
+        test_snapshot_split_structure_for_file("example.wasm", wasm_bytes);
+
+        // Test with simple_graph.wasm
+        let wasm_bytes = include_bytes!("../../test-data/simple_graph.wasm");
+        test_snapshot_split_structure_for_file("simple_graph.wasm", wasm_bytes);
+    }
+
+    fn test_snapshot_split_structure_for_file(name: &str, wasm_bytes: &[u8]) {
+        let info = InputObject::from_wasm_bytes(wasm_bytes).expect("Failed to parse wasm file");
+
+        let dep_graph =
+            super::super::dep_graph::get_dependencies(&info).expect("Failed to get dependencies");
+
+        let split_points = find_split_points(&info, SplitPointExtractor::Legacy)
+            .expect("Failed to find split points");
+
+        let wbg_descriptors = wbg_closures(&info, &dep_graph);
+
+        // Snapshot the dependency graph
+        let dep_graph_output = super::super::debug::format_dep_graph(&dep_graph, &info);
+        insta::assert_snapshot!(format!("{} - dep_graph", name), dep_graph_output);
+
+        // Compute and snapshot the split program info
+        let split_info = compute_split_modules(&info, &dep_graph, &split_points, &wbg_descriptors)
+            .expect("Failed to compute split modules");
+
+        let split_info_output = super::super::debug::format_split_program_info(&split_info, &info);
+        insta::assert_snapshot!(format!("{} - split_program_info", name), split_info_output);
+    }
 }

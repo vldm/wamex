@@ -83,3 +83,122 @@ pub(crate) fn print_deps_inner(
     }
     println!("SPLIT: ============== {module_name} : total size: {total_size}");
 }
+
+/// Format a DepGraph into a human-readable string for snapshot testing
+pub fn format_dep_graph(graph: &DepGraph, info: &InputObject) -> String {
+    use std::fmt::Write;
+
+    let mut output = String::new();
+
+    let format_symbol = |id: SymbolId| -> String {
+        let symbol = info.symbols.get(id).expect("symbol should exist");
+        let name = crate::helpers::demangle_full(&symbol.name);
+        match symbol.kind {
+            SymbolKind::Func { input_id } => {
+                format!("{id:?} func[{input_id}] <{name}>")
+            }
+            SymbolKind::DataDefined {
+                segment_id,
+                offset,
+                length,
+            } => {
+                format!("{id:?} data[{segment_id}:{offset}+{length}] <{name}>")
+            }
+            _ => format!("{id:?} <{name}>"),
+        }
+    };
+
+    let mut nodes: Vec<_> = graph.iter_childs().map(|(id, _)| id).collect();
+    nodes.sort();
+
+    for node in nodes {
+        if let Some(children) = graph.get_children(node) {
+            writeln!(&mut output, "{}", format_symbol(node)).unwrap();
+
+            if let Some(parents) = graph.get_parents(node) {
+                let mut parent_list: Vec<_> = parents.iter().copied().collect();
+                parent_list.sort();
+                for parent in parent_list {
+                    writeln!(&mut output, "  <- {}", format_symbol(parent)).unwrap();
+                }
+            }
+
+            let mut child_list: Vec<_> = children.iter().copied().collect();
+            child_list.sort();
+            for child in child_list {
+                writeln!(&mut output, "  -> {}", format_symbol(child)).unwrap();
+            }
+            writeln!(&mut output).unwrap();
+        }
+    }
+
+    output
+}
+
+/// Format a SplitProgramInfo into a human-readable string for snapshot testing
+pub fn format_split_program_info(
+    split_info: &wamex_object::emit::split::SplitProgramInfo,
+    info: &InputObject,
+) -> String {
+    use std::fmt::Write;
+
+    let mut output = String::new();
+
+    let format_symbol = |id: SymbolId| -> String {
+        let symbol = info.symbols.get(id).expect("symbol should exist");
+        let name = crate::helpers::demangle_full(&symbol.name);
+        format!("{id:?} <{name}>")
+    };
+
+    writeln!(&mut output, "=== Split Program Structure ===\n").unwrap();
+
+    for (idx, (module_id, module_info)) in split_info.output_modules.iter().enumerate() {
+        writeln!(&mut output, "Module #{idx}: {module_id:?}").unwrap();
+        writeln!(
+            &mut output,
+            "  Defined symbols: {}",
+            module_info.defined_symbols.len()
+        )
+        .unwrap();
+
+        let mut symbols: Vec<_> = module_info.defined_symbols.iter().copied().collect();
+        symbols.sort();
+        for symbol_id in symbols {
+            writeln!(&mut output, "    {}", format_symbol(symbol_id)).unwrap();
+        }
+
+        if !module_info.imports.is_empty() {
+            writeln!(&mut output, "  Imports: {}", module_info.imports.len()).unwrap();
+            let mut imports: Vec<_> = module_info.imports.iter().copied().collect();
+            imports.sort();
+            for import_id in imports {
+                writeln!(&mut output, "    {}", format_symbol(import_id)).unwrap();
+            }
+        }
+
+        if !module_info.exports.is_empty() {
+            writeln!(&mut output, "  Exports: {}", module_info.exports.len()).unwrap();
+            let mut exports: Vec<_> = module_info.exports.iter().copied().collect();
+            exports.sort();
+            for export_id in exports {
+                writeln!(&mut output, "    {}", format_symbol(export_id)).unwrap();
+            }
+        }
+
+        if !module_info.split_points.is_empty() {
+            writeln!(
+                &mut output,
+                "  Split points: {}",
+                module_info.split_points.len()
+            )
+            .unwrap();
+            for sp in &module_info.split_points {
+                writeln!(&mut output, "    {:?}", sp.unique_id).unwrap();
+            }
+        }
+
+        writeln!(&mut output).unwrap();
+    }
+
+    output
+}

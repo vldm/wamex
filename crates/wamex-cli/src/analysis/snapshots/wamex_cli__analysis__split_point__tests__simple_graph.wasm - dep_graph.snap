@@ -1,0 +1,47 @@
+---
+source: crates/wamex-cli/src/analysis/split_point.rs
+expression: dep_graph_output
+---
+1 func[0] <hello_world>
+  <- 6 func[4] <no_inline_fn>
+  <- 10 data[0:28+12] <.Lswitch.table.indirect_fn>
+  -> 7 data[0:0+13] <.Lanon.40cffdd5158028b640e87266bd095959.0>
+
+2 func[1] <version>
+  <- 6 func[4] <no_inline_fn>
+  <- 10 data[0:28+12] <.Lswitch.table.indirect_fn>
+  -> 8 data[0:13+5] <.Lanon.40cffdd5158028b640e87266bd095959.1>
+
+3 func[2] <constant>
+  <- 6 func[4] <no_inline_fn>
+  <- 10 data[0:28+12] <.Lswitch.table.indirect_fn>
+  -> 9 data[0:18+8] <.Lanon.40cffdd5158028b640e87266bd095959.2>
+
+4 func[3] <indirect_fn>
+  -> 10 data[0:28+12] <.Lswitch.table.indirect_fn>
+
+6 func[4] <no_inline_fn>
+  -> 1 func[0] <hello_world>
+  -> 2 func[1] <version>
+  -> 3 func[2] <constant>
+  -> 7 data[0:0+13] <.Lanon.40cffdd5158028b640e87266bd095959.0>
+  -> 8 data[0:13+5] <.Lanon.40cffdd5158028b640e87266bd095959.1>
+  -> 9 data[0:18+8] <.Lanon.40cffdd5158028b640e87266bd095959.2>
+
+7 data[0:0+13] <.Lanon.40cffdd5158028b640e87266bd095959.0>
+  <- 1 func[0] <hello_world>
+  <- 6 func[4] <no_inline_fn>
+
+8 data[0:13+5] <.Lanon.40cffdd5158028b640e87266bd095959.1>
+  <- 2 func[1] <version>
+  <- 6 func[4] <no_inline_fn>
+
+9 data[0:18+8] <.Lanon.40cffdd5158028b640e87266bd095959.2>
+  <- 3 func[2] <constant>
+  <- 6 func[4] <no_inline_fn>
+
+10 data[0:28+12] <.Lswitch.table.indirect_fn>
+  <- 4 func[3] <indirect_fn>
+  -> 1 func[0] <hello_world>
+  -> 2 func[1] <version>
+  -> 3 func[2] <constant>
