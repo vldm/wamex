@@ -10,7 +10,7 @@ use crate::{
     emit::{
         ComputedModules, GotBase, ModuleEmitState, index_safety::OutputGlobalId, modify::SymbolOp,
     },
-    index::{DataSegmentId, Id, InputFuncId, InputGlobalId, SymbolId},
+    index::{DataSegmentId, InputFuncId, InputGlobalId, SymbolId},
     symbols::SymbolKind,
 };
 

@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, ensure};
+use cranelift_entity::packed_option::ReservedValue;
 pub use diff::{DiffEntry, DiffResult, Differ, StaticModuleInfo};
 use smallvec::SmallVec;
 
@@ -12,8 +13,8 @@ use crate::{
     InputObject, ObjectReader,
     helpers::{RangeComp, RangeExt},
     index::{
-        DataSegmentId, DefinedFuncId, Id, IdMap, IdMap2, IdVec, IdVec2, InputFuncId, InputGlobalId,
-        InvalidValue, SymbolId, TableId,
+        DataSegmentId, DefinedFuncId, GappedMap, IdVec, InputFuncId, InputGlobalId, SymbolId,
+        TableId,
     },
 };
 mod diff;
@@ -121,16 +122,16 @@ struct DataSymbolKey {
 
 #[derive(Clone, Default, Debug)]
 pub struct SymbolMap<'src> {
-    symbols: IdVec2<SymbolRecord<'src>>,
-    funcs_ids: IdMap2<InputFuncId, SymbolId>,
+    symbols: IdVec<SymbolRecord<'src>>,
+    funcs_ids: GappedMap<InputFuncId, SymbolId>,
     datas_ids: BTreeSet<DataSymbolKey>,
 }
 
 impl<'src> SymbolMap<'src> {
     pub fn empty() -> Self {
         Self {
-            symbols: IdVec2::new(),
-            funcs_ids: IdMap2::new(),
+            symbols: IdVec::new(),
+            funcs_ids: GappedMap::new(),
             datas_ids: BTreeSet::new(),
         }
     }
@@ -151,28 +152,28 @@ impl<'src> SymbolMap<'src> {
 
         #[derive(Clone)]
         struct DupForRange(SymbolRange, DupIds);
-        impl InvalidValue for DupForRange {
-            fn invalid_value() -> Self {
+        impl ReservedValue for DupForRange {
+            fn reserved_value() -> Self {
                 Self(
                     SymbolRange {
-                        id: SymbolId::invalid_value(),
+                        id: SymbolId::reserved_value(),
                         range: 0..0,
                     },
                     SmallVec::new(),
                 )
             }
-            fn is_invalid_value(&self) -> bool {
-                self.0.id.as_u32() == u32::MAX
+            fn is_reserved_value(&self) -> bool {
+                self.0.id.is_reserved_value()
             }
         }
 
         let (code_relocs, data_relocs) = Self::collect_ordered_relocs(wasm)?;
         type DupIds = SmallVec<[SymbolId; 4]>;
-        let mut func_ids = IdMap2::<InputFuncId, DupForRange>::new();
+        let mut func_ids = GappedMap::<InputFuncId, DupForRange>::new();
         // TODO: Handle symbols that overlap in data segments.
         let mut data_ids = BTreeMap::<DataSymbolKey, SymbolRange>::new();
 
-        let mut symbols = IdVec2::default();
+        let mut symbols = IdVec::default();
 
         let data_section_start = wasm.data.starting_offset;
 
@@ -201,15 +202,14 @@ impl<'src> SymbolMap<'src> {
                     };
 
                     // TODO: Handle weak symbols.
-                    let input_fn = &mut func_ids[input_function_id];
-
-                    if input_fn.0.id.as_raw_index() != usize::MAX {
-                        input_fn.0 = SymbolRange {
+                    let dup_funcs = func_ids.entry(input_function_id).or_insert(DupForRange(
+                        SymbolRange {
                             id: symbol_id,
                             range: fn_range,
-                        };
-                    }
-                    input_fn.1.push(symbol_id);
+                        },
+                        SmallVec::new(),
+                    ));
+                    dup_funcs.1.push(symbol_id);
 
                     SymIm {
                         flags,
@@ -320,7 +320,7 @@ impl<'src> SymbolMap<'src> {
         }
 
         fn move_relocs<'a, U: 'a>(
-            symbols: &mut IdVec2<SymbolRecord>,
+            symbols: &mut IdVec<SymbolRecord>,
             iterator: impl IntoIterator<Item = (U, &'a SymbolRange)>,
             mut relocations: VecDeque<wasmparser::RelocationEntry>,
         ) {
@@ -344,8 +344,8 @@ impl<'src> SymbolMap<'src> {
         }
         // Move relocs from duplicate symbols to main symbol, and mark duplicates.
         fn move_dup_symbols(
-            symbols: &mut IdVec2<SymbolRecord>,
-            func_ids: &IdMap2<InputFuncId, DupForRange>,
+            symbols: &mut IdVec<SymbolRecord>,
+            func_ids: &GappedMap<InputFuncId, DupForRange>,
         ) {
             for (_input_id, DupForRange(sym_range, dup_ids)) in func_ids.iter() {
                 if dup_ids.len() <= 1 {

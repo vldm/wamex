@@ -1,11 +1,10 @@
 use anyhow::{Result, bail};
-use cranelift_entity::EntityRef;
 use vec_map::VecMap;
 
 use super::CustomSectionReader;
 use crate::index::{
-    DataSegmentId, ElementId, FuncTypeId, IdMap, InputFuncId, InputGlobalId, MemoryId,
-    SecondaryMap, TableId, TagId,
+    DataSegmentId, ElementId, FuncTypeId, InputFuncId, InputGlobalId, MemoryId, SecondaryMap,
+    TableId, TagId,
 };
 
 // Custom sections
@@ -26,8 +25,7 @@ pub struct Names<'a> {
 
 impl<'a> CustomSectionReader<'a> for Names<'a> {
     type Reader = wasmparser::NameSectionReader<'a>;
-    // fn new(data: &'a [u8], original_offset: usize) -> Result<Self> {
-    //     let mut names: Self = Default::default();
+
     fn read(reader: Self::Reader) -> Result<Self> {
         let mut names: Self = Default::default();
         for part in reader {
@@ -37,7 +35,7 @@ impl<'a> CustomSectionReader<'a> for Names<'a> {
                     names.module = Some(name);
                 }
                 Name::Function(name_map) => {
-                    names.functions = convert_name_map_cf(name_map)?;
+                    names.functions = convert_name_map(name_map)?;
                 }
                 Name::Local(indirect_name_map) => {
                     names.locals = convert_indirect_name_map(indirect_name_map)?;
@@ -46,25 +44,25 @@ impl<'a> CustomSectionReader<'a> for Names<'a> {
                     names.labels = convert_indirect_name_map(indirect_name_map)?;
                 }
                 Name::Type(name_map) => {
-                    names.types = convert_name_map_cf(name_map)?;
+                    names.types = convert_name_map(name_map)?;
                 }
                 Name::Table(name_map) => {
-                    names.tables = convert_name_map_cf(name_map)?;
+                    names.tables = convert_name_map(name_map)?;
                 }
                 Name::Memory(name_map) => {
-                    names.memories = convert_name_map_cf(name_map)?;
+                    names.memories = convert_name_map(name_map)?;
                 }
                 Name::Global(name_map) => {
-                    names.globals = convert_name_map_cf(name_map)?;
+                    names.globals = convert_name_map(name_map)?;
                 }
                 Name::Data(name_map) => {
-                    names.data_segments = convert_name_map_cf(name_map)?;
+                    names.data_segments = convert_name_map(name_map)?;
                 }
                 Name::Element(name_map) => {
-                    names.elements = convert_name_map_cf(name_map)?;
+                    names.elements = convert_name_map(name_map)?;
                 }
                 Name::Tag(name_map) => {
-                    names.tags = convert_name_map_cf(name_map)?;
+                    names.tags = convert_name_map(name_map)?;
                 }
                 Name::Field(_name_map) => {
                     bail!("Field names not supported");
@@ -90,7 +88,7 @@ fn convert_indirect_name_map<'a>(
         .collect::<Result<VecMap<_>, _>>()
 }
 
-fn convert_name_map_cf<'a, Idx>(
+fn convert_name_map<'a, Idx>(
     name_map: wasmparser::NameMap<'a>,
 ) -> Result<SecondaryMap<Idx, &'a str>>
 where

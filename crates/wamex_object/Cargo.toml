@@ -15,5 +15,7 @@ smallvec = "1.15"
 vec_map = "0.8.2"
 wasm-encoder = { version = "0.238.0", features = ["wasmparser"] }
 wasmparser = "0.238.0"
-wamex_types = { version = "0.1.0", path = "../wamex_types", features = ["full"] }
+wamex_types = { version = "0.1.0", path = "../wamex_types", features = [
+    "full",
+] }
 cranelift-entity = "0.126.1"

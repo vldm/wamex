@@ -7,13 +7,14 @@ use wamex_object::{
         ModuleIdentifier, OutputModuleInfo, SharedModuleIdentifier, SplitModuleIdentifier,
         SplitPoint, SplitProgramInfo,
     },
+    index::SecondaryMap,
 };
 use wamex_types::map_vec::MiniSet;
 
 use super::dep_graph::{DepGraph, DepMiniSet, DepSet, NamedGraph, find_reachable_deps};
 use crate::{
-    SplitPointExtractor, analysis,
-    index::{ExportId, IdMap, ImportId, InputFuncId, SymbolId},
+    SplitPointExtractor,
+    index::{ExportId, ImportId, InputFuncId, SymbolId},
 };
 
 pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {
@@ -291,7 +292,7 @@ pub fn compute_split_modules(
                 .iter()
                 .map(move |symbol| (*symbol, output_index))
         })
-        .collect::<IdMap<SymbolId, usize>>();
+        .collect::<SecondaryMap<SymbolId, usize>>();
 
     let output_modules = split_module_contents.into_iter().collect::<Vec<_>>();
 

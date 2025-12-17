@@ -11,7 +11,7 @@ use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
     helpers::{RangeComp, RangeExt},
-    index::{DataSegmentId, Id, IdMap2, IdVec, IdVec2, Indexed, InvalidValue, SymbolId},
+    index::{DataSegmentId, GappedMap, IdVec, ReservedValue, SymbolId},
     symbols::{self, SymbolKind},
 };
 mod hexdump;
@@ -73,8 +73,8 @@ pub struct SegmentLayout<'a> {
     mem_offset: usize,
 }
 
-impl InvalidValue for SegmentLayout<'_> {
-    fn invalid_value() -> Self {
+impl ReservedValue for SegmentLayout<'_> {
+    fn reserved_value() -> Self {
         Self {
             alignment: 1,
             data_parts: Vec::new(),
@@ -82,7 +82,7 @@ impl InvalidValue for SegmentLayout<'_> {
             mem_offset: 0,
         }
     }
-    fn is_invalid_value(&self) -> bool {
+    fn is_reserved_value(&self) -> bool {
         self.data_parts.is_empty() && matches!(self.kind, DataKind::Passive) && self.mem_offset == 0
     }
 }
@@ -230,7 +230,7 @@ impl<'src> SegmentLayout<'src> {
     pub fn debug_layout(
         symbol_table: &symbols::SymbolMap,
         module_name: String,
-        data_segments: &IdMap2<DataSegmentId, SegmentLayout<'_>>,
+        data_segments: &GappedMap<DataSegmentId, SegmentLayout<'_>>,
     ) {
         use std::fmt::Write;
         let mut print_data_format = String::new();
@@ -499,8 +499,8 @@ pub struct DataSegmentOutput {
     data: Vec<u8>,
     data_symbols: BTreeMap<SymbolId, DataSymbolRefs>,
 }
-impl InvalidValue for DataSegmentOutput {
-    fn invalid_value() -> Self {
+impl ReservedValue for DataSegmentOutput {
+    fn reserved_value() -> Self {
         Self {
             data_init: wasm_encoder::ConstExpr::empty(),
             memory_offset: usize::MAX,
@@ -508,7 +508,7 @@ impl InvalidValue for DataSegmentOutput {
             data_symbols: BTreeMap::new(),
         }
     }
-    fn is_invalid_value(&self) -> bool {
+    fn is_reserved_value(&self) -> bool {
         self.memory_offset == usize::MAX && self.data.is_empty() && self.data_symbols.is_empty()
     }
 }
@@ -533,14 +533,4 @@ impl DataSegmentOutput {
     pub fn symbols(&self) -> &BTreeMap<SymbolId, DataSymbolRefs> {
         &self.data_symbols
     }
-}
-
-impl<'a> Indexed for crate::emit::SegmentLayout<'a> {
-    type StaticTypeTagForIndex = Data<'static>;
-    type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
-}
-
-impl Indexed for crate::emit::DataSegmentOutput {
-    type StaticTypeTagForIndex = Data<'static>;
-    type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
 }

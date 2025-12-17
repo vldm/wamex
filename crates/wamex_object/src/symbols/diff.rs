@@ -10,11 +10,11 @@ use std::{collections::BTreeMap, mem, ops::Deref};
 use cranelift_entity::SecondaryMap;
 
 use super::SymbolMap;
-use crate::index::{IdMap, IdMap2, SymbolId};
+use crate::index::{GappedMap, SymbolId};
 
 pub struct SymbolMapping {
     // Most of symbols are mapped.
-    left_to_right: IdMap2<SymbolId, SymbolId>,
+    left_to_right: GappedMap<SymbolId, SymbolId>,
     left_non_matched: Vec<SymbolId>,
     right_non_matched: Vec<SymbolId>,
 }
@@ -88,7 +88,7 @@ where
         }
 
         //2. Match left symbols to the right.
-        let mut mapping = IdMap2::<SymbolId, SymbolId>::new();
+        let mut mapping = GappedMap::<SymbolId, SymbolId>::new();
 
         let mut non_matched_right_symbols: Vec<SymbolId> = Vec::new();
         let mut dups: SVec<_, 16> = SVec::new();

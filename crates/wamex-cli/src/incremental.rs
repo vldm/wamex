@@ -11,7 +11,7 @@ use crate::{
     ModuleIdentifier, SplitModuleIdentifier, SplitPointExtractor,
     analysis::{self, StaticModuleInfo, symbols::DiffEntry},
     emit::split::{OutputModuleInfo, SharedModuleIdentifier},
-    index::{IdMap, SymbolId},
+    index::SymbolId,
 };
 
 pub type ModuleDeps = BTreeMap<ModuleId, Vec<ModuleId>>;

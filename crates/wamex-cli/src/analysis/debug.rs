@@ -2,7 +2,6 @@ use wamex_object::InputObject;
 
 use crate::{
     analysis::{
-        self,
         dep_graph::{DepGraph, DepSet},
         symbols::{SymbolKind, SymbolRecord},
     },
@@ -33,7 +32,8 @@ pub(crate) fn print_deps_inner(
             SymbolKind::Func { input_id } => {
                 format!(
                     "{dep} func[{input_id}] <{name:?}> (size={})",
-                    size_fn(symbol)
+                    size_fn(symbol),
+                    input_id = input_id.as_u32()
                 )
             }
             SymbolKind::DataDefined {
@@ -53,6 +53,7 @@ pub(crate) fn print_deps_inner(
                     "{dep} data[{segment_name}({segment_id}):{start}..{end}]  <{name:?}> (size={})",
                     size_fn(symbol),
                     start = offset,
+                    segment_id = segment_id.as_u32(),
                     end = offset + length
                 )
             }
@@ -95,14 +96,20 @@ pub fn format_dep_graph(graph: &DepGraph, info: &InputObject) -> String {
         let name = crate::helpers::demangle_full(&symbol.name);
         match symbol.kind {
             SymbolKind::Func { input_id } => {
-                format!("{id:?} func[{input_id}] <{name}>")
+                format!(
+                    "{id:?} func[{input_id}] <{name}>",
+                    input_id = input_id.as_u32()
+                )
             }
             SymbolKind::DataDefined {
                 segment_id,
                 offset,
                 length,
             } => {
-                format!("{id:?} data[{segment_id}:{offset}+{length}] <{name}>")
+                format!(
+                    "{id:?} data[{segment_id}:{offset}+{length}] <{name}>",
+                    segment_id = segment_id.as_u32()
+                )
             }
             _ => format!("{id:?} <{name}>"),
         }
@@ -116,15 +123,13 @@ pub fn format_dep_graph(graph: &DepGraph, info: &InputObject) -> String {
             writeln!(&mut output, "{}", format_symbol(node)).unwrap();
 
             if let Some(parents) = graph.get_parents(node) {
-                let mut parent_list: Vec<_> = parents.iter().copied().collect();
-                parent_list.sort();
+                let parent_list: Vec<_> = parents.iter().copied().collect();
                 for parent in parent_list {
                     writeln!(&mut output, "  <- {}", format_symbol(parent)).unwrap();
                 }
             }
 
-            let mut child_list: Vec<_> = children.iter().copied().collect();
-            child_list.sort();
+            let child_list: Vec<_> = children.iter().copied().collect();
             for child in child_list {
                 writeln!(&mut output, "  -> {}", format_symbol(child)).unwrap();
             }
@@ -224,7 +229,12 @@ pub fn format_symbol_map(info: &InputObject) -> String {
                 } else {
                     0
                 };
-                writeln!(&mut output, "{id:?} func[{input_id}] <{name}> size={size}").unwrap();
+                writeln!(
+                    &mut output,
+                    "{id:?} func[{input_id}] <{name}> size={size}",
+                    input_id = input_id.as_u32()
+                )
+                .unwrap();
             }
             SymbolKind::DataDefined {
                 segment_id,
@@ -240,15 +250,26 @@ pub fn format_symbol_map(info: &InputObject) -> String {
                     .unwrap_or("unknown");
                 writeln!(
                     &mut output,
-                    "{id:?} data[{segment_name}({segment_id}):{offset}+{length}] <{name}>"
+                    "{id:?} data[{segment_name}({segment_id}):{offset}+{length}] <{name}>",
+                    segment_id = segment_id.as_u32()
                 )
                 .unwrap();
             }
             SymbolKind::Global(global_id) => {
-                writeln!(&mut output, "{id:?} global[{global_id}] <{name}>").unwrap();
+                writeln!(
+                    &mut output,
+                    "{id:?} global[{global_id}] <{name}>",
+                    global_id = global_id.as_u32()
+                )
+                .unwrap();
             }
             SymbolKind::Table(table_id) => {
-                writeln!(&mut output, "{id:?} table[{table_id}] <{name}>").unwrap();
+                writeln!(
+                    &mut output,
+                    "{id:?} table[{table_id}] <{name}>",
+                    table_id = table_id.as_u32()
+                )
+                .unwrap();
             }
             SymbolKind::Duplicate(original_id) => {
                 writeln!(&mut output, "{id:?} duplicate -> {original_id:?} <{name}>").unwrap();
@@ -258,7 +279,9 @@ pub fn format_symbol_map(info: &InputObject) -> String {
         if !symbol.relocs.is_empty() {
             writeln!(&mut output, "  Relocations: {}", symbol.relocs.len()).unwrap();
             for reloc in &symbol.relocs {
-                let target_symbol = info.symbols.get(crate::index::Id::from_index(reloc.index));
+                let target_symbol = info
+                    .symbols
+                    .get(crate::index::SymbolId::from_index(reloc.index));
                 let target_name = target_symbol
                     .map(|s| crate::helpers::demangle_full(&s.name))
                     .unwrap_or_else(|| format!("unknown_{}", reloc.index));

@@ -1,13 +1,11 @@
 use std::{
     fmt::Debug,
     hash::Hash,
-    marker::PhantomData,
-    ops::{Deref, DerefMut, Index, IndexMut},
-    str::FromStr,
+    ops::{Deref, DerefMut},
 };
 
-pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
-use vec_map::VecMap;
+use cranelift_entity::packed_option::PackedOption;
+pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
 use crate::{
@@ -28,18 +26,10 @@ macro_rules! impl_entity_index {
                     $ty(value)
                 }
             }
-            // Default is invalid_value (U32::max) for easier debugging
-            impl $crate::index::InvalidValue for $ty {
-                fn invalid_value() -> Self {
-                    $ty(u32::MAX)
-                }
-                fn is_invalid_value(&self) -> bool {
-                    self.0 == u32::MAX
-                }
-            }
+            // Default is reserved_value (U32::max) for easier debugging
             impl Default for $ty {
                 fn default() -> Self {
-                    $crate::index::InvalidValue::invalid_value()
+                    $crate::index::ReservedValue::reserved_value()
                 }
             }
             // Compatibility methods for migration from Id<T>
@@ -83,41 +73,26 @@ macro_rules! impl_entity_index {
     };
 }
 
-///
-/// Allows creating `IdVec` of some entity type with default index type.
-///
-pub trait PrimaryKey {
-    type EntityType: EntityRef;
-}
-
-pub trait InvalidValue: Clone {
-    fn invalid_value() -> Self;
-    fn is_invalid_value(&self) -> bool;
-}
-impl<T: Clone> InvalidValue for Vec<T> {
-    fn invalid_value() -> Self {
-        Vec::new()
-    }
-    fn is_invalid_value(&self) -> bool {
-        self.is_empty()
-    }
-}
-
-// A wrapper around `SecondaryMap` that handles gaps as `None`.
+// A wrapper around `SecondaryMap` that handles small amount of gaps.
+// And track length of valid items.
+//
+// Usefull for maps where some items are not set, but unlike `cranelift_entity::SparseMap`
+// the amount of gaps, is small, therefore no need to store array of keys separately.
+// As a penalty for that, iterating over all items is more expensive, and memory is reserved for invalid items.
 #[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
-pub struct IdMap2<K: EntityRef, V: InvalidValue> {
-    map: SecondaryMap<K, V>,
+pub struct GappedMap<K: EntityRef, V: ReservedValue + Clone> {
+    map: SecondaryMap<K, PackedOption<V>>,
     // tracked length of inserted non-default items
     length: usize,
 }
 
-impl<K: EntityRef, V> IdMap2<K, V>
+impl<K: EntityRef, V> GappedMap<K, V>
 where
-    V: Clone + InvalidValue,
+    V: Clone + ReservedValue,
 {
     pub fn new() -> Self {
-        IdMap2 {
-            map: SecondaryMap::with_default(V::invalid_value()),
+        GappedMap {
+            map: SecondaryMap::with_default(PackedOption::default()),
             length: 0,
         }
     }
@@ -125,14 +100,14 @@ where
     ///
     /// Not expecting default value to be inserted.
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        debug_assert!(!value.is_invalid_value(), "Cannot insert default value");
-        let prev = self.map.get(key).filter(|v| !v.is_invalid_value()).cloned();
-        self.map[key] = value;
+        debug_assert!(!value.is_reserved_value(), "Cannot insert default value");
+        let prev = self.map.get(key).filter(|v| !v.is_none()).cloned();
+        self.map[key] = value.into();
 
         if prev.is_none() {
             self.length += 1;
         }
-        prev
+        prev.and_then(PackedOption::expand)
     }
     pub fn push(&mut self, value: V) -> K {
         let last = self
@@ -140,66 +115,64 @@ where
             .iter()
             .rev()
             .next()
-            .map(|(k, _)| k)
+            .map(|(k, _)| K::new(k.index() + 1))
             .unwrap_or(K::new(0));
         self.insert(last, value);
         last
     }
 
     pub fn remove(&mut self, key: K) -> Option<V> {
-        let prev = self.map.get(key).filter(|v| !v.is_invalid_value()).cloned();
-        self.map[key] = V::invalid_value();
+        let prev = self.map.get(key).filter(|v| !v.is_none()).cloned();
+        self.map[key] = PackedOption::default();
         if prev.is_some() {
             self.length -= 1;
         }
-        prev
+        prev.and_then(PackedOption::expand)
     }
     pub fn get(&self, key: K) -> Option<&V> {
-        let v = &self.map[key];
-        if v.is_invalid_value() { None } else { Some(v) }
+        self.map[key].expand_ref()
     }
     pub fn iter(&self) -> impl Iterator<Item = (K, &V)> {
-        self.map.iter().filter_map(|(k, v)| {
-            if v.is_invalid_value() {
-                None
-            } else {
-                Some((k, v))
-            }
-        })
+        self.map
+            .iter()
+            .filter_map(|(k, v)| v.expand_ref().map(|v| (k, v)))
     }
     pub fn len(&self) -> usize {
         self.length
     }
-}
-
-impl<K, V> Index<K> for IdMap2<K, V>
-where
-    K: EntityRef,
-    V: Clone + InvalidValue,
-{
-    type Output = V;
-
-    fn index(&self, key: K) -> &V {
-        self.map.index(key)
-    }
-}
-impl<K, V> IndexMut<K> for IdMap2<K, V>
-where
-    K: EntityRef,
-    V: Clone + InvalidValue,
-{
-    fn index_mut(&mut self, key: K) -> &mut V {
-        self.map.index_mut(key)
+    pub fn entry(&mut self, key: K) -> IdMapEntry<'_, V> {
+        IdMapEntry {
+            reserved: &mut self.map[key],
+        }
     }
 }
 
-impl<K, V> FromIterator<(K, V)> for IdMap2<K, V>
+/// Reference to an entry in `IdMap`
+pub struct IdMapEntry<'a, V: ReservedValue + Clone> {
+    reserved: &'a mut PackedOption<V>,
+}
+
+impl<'a, V: ReservedValue + Clone> IdMapEntry<'a, V> {
+    pub fn or_insert(self, value: V) -> &'a mut V {
+        self.or_insert_with(|| value)
+    }
+    pub fn or_insert_with<F: FnOnce() -> V>(self, f: F) -> &'a mut V {
+        if self.reserved.is_none() {
+            let value = f();
+            debug_assert!(!value.is_reserved_value(), "Cannot insert reserved value");
+            *self.reserved = value.into();
+        }
+        self.reserved.expand_mut().unwrap()
+    }
+}
+
+impl<K, V> FromIterator<(K, V)> for GappedMap<K, V>
 where
     K: EntityRef,
-    V: Clone + InvalidValue,
+    V: Clone + ReservedValue,
 {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        let mut map = IdMap2::new();
+        let mut map = GappedMap::new();
         for (k, v) in iter {
             map.insert(k, v);
         }
@@ -207,16 +180,23 @@ where
     }
 }
 
+///
+/// Allows creating `IdVec` of some entity type with default index type.
+///
+pub trait PrimaryKey {
+    type EntityType: EntityRef;
+}
+
 // A wrapper around `PrimaryMap` that allows only entities with defined `PrimaryKey`.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct IdVec2<T: PrimaryKey>(PrimaryMap<T::EntityType, T>);
-impl<T: PrimaryKey> IdVec2<T> {
+pub struct IdVec<T: PrimaryKey>(PrimaryMap<T::EntityType, T>);
+impl<T: PrimaryKey> IdVec<T> {
     pub fn new() -> Self {
-        IdVec2(PrimaryMap::new())
+        IdVec(PrimaryMap::new())
     }
 }
 
-impl<T> Deref for IdVec2<T>
+impl<T> Deref for IdVec<T>
 where
     T: PrimaryKey,
 {
@@ -226,7 +206,7 @@ where
         &self.0
     }
 }
-impl<T> DerefMut for IdVec2<T>
+impl<T> DerefMut for IdVec<T>
 where
     T: PrimaryKey,
 {
@@ -235,23 +215,23 @@ where
     }
 }
 
-impl<T: PrimaryKey> Default for IdVec2<T> {
+impl<T: PrimaryKey> Default for IdVec<T> {
     fn default() -> Self {
-        IdVec2(PrimaryMap::new())
+        IdVec(PrimaryMap::new())
     }
 }
 
-impl<T: PrimaryKey> FromIterator<T> for IdVec2<T> {
+impl<T: PrimaryKey> FromIterator<T> for IdVec<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let mut map = PrimaryMap::new();
         for item in iter {
             map.push(item);
         }
-        IdVec2(map)
+        IdVec(map)
     }
 }
 
-impl<T: PrimaryKey + Debug> Debug for IdVec2<T>
+impl<T: PrimaryKey + Debug> Debug for IdVec<T>
 where
     T::EntityType: Debug,
 {
@@ -300,75 +280,6 @@ pub type SectionId = usize;
 // TODO: Maybe replace Vecs with id_arena?
 // Currently the only difference is that we also use
 
-type PhantomCovariant<T> = PhantomData<fn() -> T>;
-pub struct Id<TypeTag> {
-    id: usize,
-    _ty: PhantomCovariant<TypeTag>,
-}
-// TODO: Remove this functions later
-impl<TypeTag> Id<TypeTag> {
-    pub fn from_index<T>(id: T) -> Self
-    where
-        T: TryInto<usize>,
-    {
-        Id {
-            id: id.try_into().ok().expect("Invalid ID"),
-            _ty: PhantomData,
-        }
-    }
-    pub fn as_raw_index(&self) -> usize {
-        self.id
-    }
-    pub fn next(&self) -> Self {
-        Id {
-            id: self.id + 1,
-            _ty: PhantomData,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub struct IdMap<Idx, Res> {
-    vecmap: VecMap<Res>,
-    _res: PhantomCovariant<Idx>,
-}
-impl<Idx, Res> Debug for IdMap<Idx, Res>
-where
-    Res: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.vecmap.fmt(f)
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub struct IdVec<Type: Indexed> {
-    types: Vec<Type>,
-    _idx: PhantomCovariant<<Type as Indexed>::IndexType>,
-}
-impl<Type> Debug for IdVec<Type>
-where
-    Type: Debug + Indexed,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.types.fmt(f)
-    }
-}
-
-impl<T: Indexed> From<Vec<T>> for IdVec<T> {
-    fn from(vec: Vec<T>) -> Self {
-        IdVec {
-            types: vec,
-            _idx: PhantomData,
-        }
-    }
-}
-
-pub trait Indexed {
-    type StaticTypeTagForIndex: 'static;
-    type IndexType: 'static;
-}
-
 /// Store additional information about section, to apply relocation
 #[derive(Debug)]
 pub struct IndexedSection<T> {
@@ -393,299 +304,6 @@ impl<T: Default> Default for IndexedSection<T> {
         }
     }
 }
-
-impl<Type: Indexed> Default for IdVec<Type> {
-    fn default() -> Self {
-        IdVec {
-            types: Vec::new(),
-            _idx: PhantomData,
-        }
-    }
-}
-
-impl<Type, Result> Default for IdMap<Id<Type>, Result> {
-    fn default() -> Self {
-        IdMap {
-            vecmap: VecMap::new(),
-            _res: PhantomData,
-        }
-    }
-}
-
-impl<Type: Indexed> FromIterator<Type> for IdVec<Type> {
-    fn from_iter<T: IntoIterator<Item = Type>>(iter: T) -> Self {
-        let vec = Vec::from_iter(iter);
-        IdVec {
-            types: vec,
-            _idx: PhantomData,
-        }
-    }
-}
-impl<Type, Res> FromIterator<(Id<Type>, Res)> for IdMap<Id<Type>, Res> {
-    fn from_iter<T: IntoIterator<Item = (Id<Type>, Res)>>(iter: T) -> Self {
-        let vecmap = VecMap::from_iter(iter.into_iter().map(|(id, res)| (id.id, res)));
-        IdMap {
-            vecmap,
-            _res: PhantomData,
-        }
-    }
-}
-
-impl<T: Indexed> IdVec<T> {
-    pub const fn new() -> Self {
-        IdVec {
-            types: Vec::new(),
-            _idx: PhantomData,
-        }
-    }
-    pub fn from_vec(vec: Vec<T>) -> Self {
-        IdVec {
-            types: vec,
-            _idx: PhantomData,
-        }
-    }
-
-    pub fn push(&mut self, item: T) -> Id<<T as Indexed>::StaticTypeTagForIndex> {
-        let id = self.types.len();
-        self.types.push(item);
-        Id {
-            id,
-            _ty: PhantomData,
-        }
-    }
-
-    pub fn get(&self, id: Id<<T as Indexed>::StaticTypeTagForIndex>) -> Option<&T> {
-        self.types.get(id.id)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (Id<<T as Indexed>::StaticTypeTagForIndex>, &T)> {
-        self.types.iter().enumerate().map(|(id, ty)| {
-            (
-                Id {
-                    id,
-                    _ty: PhantomData,
-                },
-                ty,
-            )
-        })
-    }
-    pub fn as_slice(&self) -> &[T] {
-        &self.types
-    }
-    pub fn len(&self) -> usize {
-        self.types.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.types.is_empty()
-    }
-}
-
-impl<Type, Res> IdMap<Id<Type>, Res> {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self {
-            vecmap: VecMap::new(),
-            _res: PhantomData,
-        }
-    }
-    pub fn len(&self) -> usize {
-        self.vecmap.len()
-    }
-    pub fn insert(&mut self, id: Id<Type>, res: Res) -> Option<Res> {
-        self.vecmap.insert(id.id, res)
-    }
-    pub fn remove(&mut self, id: Id<Type>) -> Option<Res> {
-        self.vecmap.remove(id.id)
-    }
-    pub fn get(&self, id: Id<Type>) -> Option<&Res> {
-        self.vecmap.get(id.id)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (Id<Type>, &Res)> {
-        self.vecmap.iter().map(|(id, res)| {
-            (
-                Id {
-                    id,
-                    _ty: PhantomData,
-                },
-                res,
-            )
-        })
-    }
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Id<Type>, &mut Res)> {
-        self.vecmap.iter_mut().map(|(id, res)| {
-            (
-                Id {
-                    id,
-                    _ty: PhantomData,
-                },
-                res,
-            )
-        })
-    }
-    pub fn into_iter(self) -> impl Iterator<Item = (Id<Type>, Res)> {
-        self.vecmap.into_iter().map(|(id, res)| {
-            (
-                Id {
-                    id,
-                    _ty: PhantomData,
-                },
-                res,
-            )
-        })
-    }
-
-    pub fn entry(&mut self, id: Id<Type>) -> vec_map::Entry<'_, Res> {
-        self.vecmap.entry(id.id)
-    }
-}
-
-// Support for EntityRef types in IdMap
-impl<E: EntityRef + Default, Res> Default for IdMap<E, Res> {
-    fn default() -> Self {
-        IdMap {
-            vecmap: VecMap::new(),
-            _res: PhantomData,
-        }
-    }
-}
-
-impl<E: EntityRef + From<u32>, Res> FromIterator<(E, Res)> for IdMap<E, Res> {
-    fn from_iter<I: IntoIterator<Item = (E, Res)>>(iter: I) -> Self {
-        let vecmap = VecMap::from_iter(iter.into_iter().map(|(entity, res)| (entity.index(), res)));
-        IdMap {
-            vecmap,
-            _res: PhantomData,
-        }
-    }
-}
-
-impl<E: EntityRef, Res> IdMap<E, Res> {
-    pub fn get(&self, entity: E) -> Option<&Res> {
-        self.vecmap.get(entity.index())
-    }
-
-    pub fn insert(&mut self, entity: E, res: Res) -> Option<Res> {
-        self.vecmap.insert(entity.index(), res)
-    }
-
-    pub fn remove(&mut self, entity: E) -> Option<Res> {
-        self.vecmap.remove(entity.index())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (E, &Res)>
-    where
-        E: From<u32>,
-    {
-        self.vecmap
-            .iter()
-            .map(|(idx, res)| (E::from(idx as u32), res))
-    }
-
-    pub fn entry(&mut self, entity: E) -> vec_map::Entry<'_, Res> {
-        self.vecmap.entry(entity.index())
-    }
-}
-
-impl<T: Indexed> Index<Id<T::StaticTypeTagForIndex>> for IdVec<T> {
-    type Output = T;
-
-    fn index(&self, id: Id<T::StaticTypeTagForIndex>) -> &Self::Output {
-        &self.types[id.id]
-    }
-}
-impl<T: Indexed> IndexMut<Id<T::StaticTypeTagForIndex>> for IdVec<T> {
-    fn index_mut(&mut self, id: Id<T::StaticTypeTagForIndex>) -> &mut Self::Output {
-        &mut self.types[id.id]
-    }
-}
-impl<T: Indexed, Res> Index<Id<T::StaticTypeTagForIndex>> for IdMap<Id<T>, Res> {
-    type Output = Res;
-
-    fn index(&self, id: Id<T::StaticTypeTagForIndex>) -> &Self::Output {
-        self.vecmap.index(id.id)
-    }
-}
-impl<T: Indexed, Res> IndexMut<Id<T::StaticTypeTagForIndex>> for IdMap<Id<T>, Res> {
-    fn index_mut(&mut self, id: Id<T::StaticTypeTagForIndex>) -> &mut Self::Output {
-        self.vecmap.index_mut(id.id)
-    }
-}
-
-impl<Type> Hash for Id<Type> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl<Type> PartialEq for Id<Type> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-impl<Type> Eq for Id<Type> {}
-
-impl<Type> Clone for Id<Type> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Type> FromStr for Id<Type> {
-    type Err = std::num::ParseIntError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let id = s.parse::<usize>()?;
-        Ok(Id {
-            id,
-            _ty: PhantomData,
-        })
-    }
-}
-
-impl<Type> PartialOrd for Id<Type> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl<Type> Ord for Id<Type> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
-    }
-}
-impl<Type> Copy for Id<Type> {}
-impl<Type> std::fmt::Debug for Id<Type> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.id)
-    }
-}
-impl<Type> std::fmt::Display for Id<Type> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.id)
-    }
-}
-macro_rules! impl_indexed_type {
-    (@lf $($ty:ident),*) => {
-        $(
-            impl<'a> Indexed for $ty<'a> {
-                type StaticTypeTagForIndex = $ty<'static>;
-                type IndexType = crate::index::Id<$ty<'static>>;
-            }
-        )*
-    };
-    ($($ty:ident),*) => {
-        $(
-            impl Indexed for $ty {
-                type StaticTypeTagForIndex = $ty;
-                type IndexType = crate::index::Id<$ty>;
-            }
-        )*
-    };
-}
-
-impl_indexed_type!(@lf InputFunction, FunctionWithBody, Import, Export, Table, Global, Element, Data, SymbolRecord);
-
-impl_indexed_type!(MemoryType, FuncType, TagType);
 
 // TODO: replace with macro_metavar_expr_concat
 // Currently need explicitly define private type for each index
@@ -780,7 +398,7 @@ impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
     where
         D: OutputType<'src>,
         D::Import: OutputType<'src, InputType = D::InputType>,
-        <D as PrimaryKey>::EntityType: InvalidValue,
+        <D as PrimaryKey>::EntityType: ReservedValue,
     {
         WithOriginalIndex::new(self)
     }
@@ -790,19 +408,19 @@ impl<'src, D: Defined<'src>> ImportsOrDefined<'src, D> {
 pub struct WithOriginalIndex<'src, T>
 where
     T: OutputType<'src> + Defined<'src>,
-    <T as PrimaryKey>::EntityType: InvalidValue,
+    <T as PrimaryKey>::EntityType: ReservedValue,
 {
     collection: ImportsOrDefined<'src, T>,
-    map: IdMap2<<T::InputType as PrimaryKey>::EntityType, <T as PrimaryKey>::EntityType>,
+    map: GappedMap<<T::InputType as PrimaryKey>::EntityType, <T as PrimaryKey>::EntityType>,
 }
 
 impl<'src, T: Debug> Debug for WithOriginalIndex<'src, T>
 where
     T: OutputType<'src> + Defined<'src>,
     T::Import: Debug,
-    <T as PrimaryKey>::EntityType: InvalidValue,
+    <T as PrimaryKey>::EntityType: ReservedValue,
     // TODO: better clause
-    IdMap2<<T::InputType as PrimaryKey>::EntityType, <T as PrimaryKey>::EntityType>: Debug,
+    GappedMap<<T::InputType as PrimaryKey>::EntityType, <T as PrimaryKey>::EntityType>: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WithOriginalIndex")
@@ -817,7 +435,7 @@ impl<'src, T> WithOriginalIndex<'src, T>
 where
     T: OutputType<'src> + Defined<'src>,
     T::Import: OutputType<'src, InputType = T::InputType>,
-    <T as PrimaryKey>::EntityType: InvalidValue,
+    <T as PrimaryKey>::EntityType: ReservedValue,
 {
     pub fn new(collection: ImportsOrDefined<'src, T>) -> Self {
         let imports = collection.imports().iter().map(OutputType::get_input_index);
@@ -915,5 +533,54 @@ where
     }
     pub fn len(&self) -> usize {
         self.collection.imports().len() + self.collection.defined().len()
+    }
+}
+
+trait PackedOptionExt<T> {
+    fn expand_ref(&self) -> Option<&T>;
+    fn expand_mut(&mut self) -> Option<&mut T>;
+}
+
+impl<T: ReservedValue> PackedOptionExt<T> for PackedOption<T> {
+    fn expand_ref(&self) -> Option<&T> {
+        if self.is_none() {
+            None
+        } else {
+            //SAFETY: cast ref to inner type of repr(transparent) type
+            Some(unsafe { std::mem::transmute(self) })
+        }
+    }
+    fn expand_mut(&mut self) -> Option<&mut T> {
+        if self.is_none() {
+            None
+        } else {
+            //SAFETY: cast ref to inner type of repr(transparent) type
+            Some(unsafe { std::mem::transmute(self) })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    struct WithReserved(u32);
+    impl crate::index::ReservedValue for WithReserved {
+        fn is_reserved_value(&self) -> bool {
+            self.0 == u32::MAX
+        }
+        fn reserved_value() -> Self {
+            WithReserved(u32::MAX)
+        }
+    }
+    #[test]
+    fn test_packed_ext() {
+        use cranelift_entity::packed_option::PackedOption;
+
+        use crate::index::PackedOptionExt;
+
+        let v: PackedOption<WithReserved> = WithReserved(10).into();
+        assert!(v.expand_ref().is_some());
+        let v: PackedOption<WithReserved> = PackedOption::default();
+        assert!(v.expand_ref().is_none());
     }
 }

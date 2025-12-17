@@ -1,4 +1,4 @@
-use super::{DefinedFunction, Indexed};
+use super::DefinedFunction;
 use crate::{
     emit::{
         DefinedFunctionKind, ImportedFunction,

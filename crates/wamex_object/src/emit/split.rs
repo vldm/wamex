@@ -4,6 +4,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
+use cranelift_entity::SecondaryMap;
 use wamex_types::{BumpVersion, map_vec::MiniSet};
 use wasm_encoder::{GlobalType, reencode::Reencode};
 
@@ -18,7 +19,7 @@ use crate::{
         index_safety::OutputGlobalId,
         modify::{self, init_each_store_var},
     },
-    index::{ExportId, Id, IdMap, ImportId, InputFuncId, InputGlobalId, SymbolId},
+    index::{ExportId, ImportId, InputFuncId, InputGlobalId, SymbolId},
     symbols::SymbolKind,
 };
 
@@ -275,7 +276,7 @@ impl SplitModuleIdentifier {
 #[derive(Debug, Default)]
 pub struct SplitProgramInfo {
     pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
-    pub symbol_output_module: IdMap<SymbolId, usize>,
+    pub symbol_output_module: SecondaryMap<SymbolId, usize>,
 }
 
 /// Helpers used by `wamex-cli` diff/incremental logic.

@@ -10,6 +10,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::Result;
+use cranelift_entity::SecondaryMap;
 
 use crate::{
     InputObject,
@@ -18,10 +19,7 @@ use crate::{
         globals::{DefinedGlobal, GlobalImport},
         memory_layout, modify,
     },
-    index::{
-        DataSegmentId, Id, IdMap, IdMap2, IdVec, IdVec2, ImportsOrDefined, PrimaryKey, SymbolId,
-        WithOriginalIndex,
-    },
+    index::{DataSegmentId, GappedMap, ImportsOrDefined, PrimaryKey, SymbolId, WithOriginalIndex},
 };
 
 ///
@@ -35,7 +33,7 @@ use crate::{
 pub struct ObjectBuilder<'src> {
     pub globals: ImportsOrDefined<'src, DefinedGlobal<'src>>,
     pub functions: ImportsOrDefined<'src, DefinedFunction>,
-    pub data: IdMap2<DataSegmentId, SegmentLayout<'src>>,
+    pub data: GappedMap<DataSegmentId, SegmentLayout<'src>>,
 }
 
 impl<'src> ObjectBuilder<'src> {
@@ -43,7 +41,7 @@ impl<'src> ObjectBuilder<'src> {
         Self {
             globals: ImportsOrDefined::new(Vec::new(), Vec::new()),
             functions: ImportsOrDefined::new(Vec::new(), Vec::new()),
-            data: IdMap2::new(),
+            data: GappedMap::new(),
         }
     }
 
@@ -88,7 +86,7 @@ impl<'src> ObjectBuilder<'src> {
         // TO remove this context data segment filling should change.
         ctx: BuilderContextToBeRemoved<'_, 'src>,
     ) -> Object<'src> {
-        let mut data_segment_outputs = IdMap2::new();
+        let mut data_segment_outputs = GappedMap::new();
 
         let data_segments = &self.data;
         let mem_start = if ctx.is_main() {
@@ -119,7 +117,7 @@ impl<'src> ObjectBuilder<'src> {
             data_segment_outputs.insert(id, out);
         }
         // collect all relocations
-        let mut data_relocations = IdMap2::<_, Vec<modify::DataModifyEntry>>::new();
+        let mut data_relocations = SecondaryMap::<_, Vec<modify::DataModifyEntry>>::new();
 
         // TODO: move shift in previous (segment_id, segment) in data_segments.iter()
         for (segment_id, data_segment) in data_segment_outputs.iter() {
@@ -188,8 +186,8 @@ pub struct Object<'src> {
 
     pub functions: WithOriginalIndex<'src, DefinedFunction>,
 
-    pub data: IdMap2<DataSegmentId, memory_layout::DataSegmentOutput>,
+    pub data: GappedMap<DataSegmentId, memory_layout::DataSegmentOutput>,
     //TODO: Remove data_relocations, instead of DataSegmentOutput use SegmentLayout
-    pub data_relocations: IdMap2<DataSegmentId, Vec<modify::DataModifyEntry>>,
+    pub data_relocations: SecondaryMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
     // custom_sections: Vec<CustomSection>,
 }

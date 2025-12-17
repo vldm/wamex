@@ -24,8 +24,8 @@ use crate::{
     },
     helpers::encoding_size,
     index::{
-        DataSegmentId, FuncTypeId, IdMap, IdMap2, IdVec, IdVec2, Indexed, InputFuncId,
-        InputGlobalId, MemoryId, SymbolId, WithOriginalIndex,
+        DataSegmentId, FuncTypeId, GappedMap, InputFuncId, InputGlobalId, MemoryId, SecondaryMap,
+        SymbolId, WithOriginalIndex,
     },
 };
 
@@ -198,9 +198,9 @@ pub struct ModuleEmitState<'any, 'src> {
     sub_module_extra: Option<SubModuleExtra>,
 
     // Data Section
-    data: IdMap2<DataSegmentId, memory_layout::DataSegmentOutput>,
+    data: GappedMap<DataSegmentId, memory_layout::DataSegmentOutput>,
     //TODO: Remove data_relocations, instead of DataSegmentOutput use SegmentLayout
-    data_relocations: IdMap2<DataSegmentId, Vec<modify::DataModifyEntry>>,
+    data_relocations: SecondaryMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
 
     // src module
     pub src: &'any InputObject<'src>,
@@ -1118,7 +1118,7 @@ pub struct ModuleDecl {
 
 #[derive(Debug)]
 pub struct CommonEmitInfo<'src> {
-    pub src_data_segments: IdMap2<DataSegmentId, SegmentLayout<'src>>,
+    pub src_data_segments: GappedMap<DataSegmentId, SegmentLayout<'src>>,
 
     // Imports (corresponding to split points) to exclude from all modules.
     pub split_point_imports: BTreeSet<InputFuncId>,
@@ -1192,7 +1192,7 @@ impl<'src> CommonEmitInfo<'src> {
             module.symbols.iter_data_symbols(),
             |(left_segment, ..), (right_segment, ..)| left_segment == right_segment,
         );
-        let data_segments: IdMap2<DataSegmentId, SegmentLayout<'src>> = module
+        let data_segments: GappedMap<DataSegmentId, SegmentLayout<'src>> = module
             .wasm
             .data
             .section_payload
@@ -1212,7 +1212,7 @@ impl<'src> CommonEmitInfo<'src> {
                 );
                 layout.map(|l| (data_segment, l))
             })
-            .collect::<Result<IdMap2<DataSegmentId, SegmentLayout<'src>>>>()?;
+            .collect::<Result<GappedMap<DataSegmentId, SegmentLayout<'src>>>>()?;
 
         if verbose {
             SegmentLayout::debug_layout(&module.symbols, String::from("input"), &data_segments);

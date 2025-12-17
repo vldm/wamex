@@ -5,13 +5,10 @@ use std::{
 
 use wamex_object::{
     InputObject,
-    index::{IdMap2, InvalidValue},
+    index::{GappedMap, ReservedValue},
 };
 
-use crate::{
-    analysis::{self},
-    index::{Id, SecondaryMap, SymbolId},
-};
+use crate::index::SymbolId;
 
 pub type DepSet<T = SymbolId> = BTreeSet<T>;
 pub type DepMiniSet<T = SymbolId> = wamex_types::map_vec::MiniSet<T>;
@@ -24,15 +21,15 @@ struct SymbolStructure {
     // (Global, Type, Table, Memory)
     pub invalid: bool,
 }
-impl InvalidValue for SymbolStructure {
-    fn invalid_value() -> Self {
+impl ReservedValue for SymbolStructure {
+    fn reserved_value() -> Self {
         Self {
             parents: DepMiniSet::new(),
             childs: DepMiniSet::new(),
             invalid: true,
         }
     }
-    fn is_invalid_value(&self) -> bool {
+    fn is_reserved_value(&self) -> bool {
         self.parents.is_empty() && self.childs.is_empty() && self.invalid
     }
 }
@@ -40,21 +37,28 @@ impl InvalidValue for SymbolStructure {
 #[derive(Clone, Default)]
 pub struct DepGraph {
     // TODO: use VecMap kind of structure for better performance
-    nodes: IdMap2<SymbolId, SymbolStructure>,
+    nodes: GappedMap<SymbolId, SymbolStructure>,
 }
 impl DepGraph {
     pub fn new() -> Self {
         Self {
-            nodes: IdMap2::new(),
+            nodes: GappedMap::new(),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn insert_child(&mut self, parent: SymbolId, child: SymbolId) {
-        let parent_struct = &mut self.nodes[parent];
+        let parent_struct = self
+            .nodes
+            .entry(parent)
+            .or_insert_with(SymbolStructure::default);
+
         parent_struct.childs.insert(child);
 
-        let child_struct = &mut self.nodes[child];
+        let child_struct = self
+            .nodes
+            .entry(child)
+            .or_insert_with(SymbolStructure::default);
         child_struct.parents.insert(parent);
     }
 
@@ -146,13 +150,17 @@ pub fn get_dependencies(info: &InputObject) -> anyhow::Result<DepGraph> {
         );
 
         for child_id in &childs {
-            let child_struct = &mut deps.nodes[*child_id];
+            let child_struct = deps
+                .nodes
+                .entry(*child_id)
+                .or_insert_with(SymbolStructure::default);
             child_struct.parents.insert(id);
-            child_struct.invalid = false;
         }
 
-        deps.nodes[id].childs = childs;
-        deps.nodes[id].invalid = false;
+        deps.nodes
+            .entry(id)
+            .or_insert_with(SymbolStructure::default)
+            .childs = childs;
     }
 
     Ok(deps)
@@ -307,13 +315,12 @@ mod tests {
 
     use crate::{
         analysis::{
-            self,
             debug::print_deps_inner,
             dep_graph::{DepGraph, DepSet},
             symbols::SymbolKind,
             testing,
         },
-        index::{Id, SymbolId},
+        index::SymbolId,
     };
 
     trait DepListExt {

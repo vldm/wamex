@@ -10,8 +10,8 @@ use wasmparser::{ElementItems, ElementKind, TypeRef};
 
 use crate::{
     index::{
-        AnySymbolId, DefinedFuncId, ElementId, ExportId, FuncTypeId, IdMap, ImportId, InputFuncId,
-        InputGlobalId, TableId,
+        AnySymbolId, DefinedFuncId, ElementId, ExportId, FuncTypeId, GappedMap, ImportId,
+        InputFuncId, InputGlobalId, TableId,
     },
     read,
     symbols::SymbolMap,
@@ -21,10 +21,10 @@ use crate::{
 pub struct ImportInfo {
     // List of imported functions
     pub imported_funcs: Vec<ImportId>,
-    pub imported_func_map: IdMap<ImportId, InputFuncId>,
+    pub imported_func_map: GappedMap<ImportId, InputFuncId>,
 
     pub imported_globals: Vec<ImportId>,
-    pub imported_global_map: IdMap<ImportId, InputGlobalId>,
+    pub imported_global_map: GappedMap<ImportId, InputGlobalId>,
 }
 
 /// Partially parsed wasm object.

@@ -9,11 +9,8 @@ use wamex_object::InputObject;
 use wasmparser::{Data, Global};
 
 use crate::{
-    analysis::{
-        self,
-        symbols::{DiffEntry, DiffResult},
-    },
-    index::{Id, IdVec, IdVec2, Indexed, PrimaryKey},
+    analysis::symbols::{DiffEntry, DiffResult},
+    index::{IdVec, PrimaryKey},
     read::code::FunctionWithBody,
 };
 pub struct Compare<'any, 'src> {
@@ -64,7 +61,6 @@ impl<'any, 'src> Compare<'any, 'src> {
             };
         }
         macro_rules! print_compare_section {
-
             ($($path:ident).+) => {
                 print_compare_section!(print_elements, $($path).+);
             };
@@ -88,40 +84,16 @@ impl<'any, 'src> Compare<'any, 'src> {
                 }
             };
         }
-        macro_rules! print_compare_section2 {
-            ($($path:ident).+) => {
-                print_compare_section2!(print_elements, $($path).+);
-            };
-            ($v: ident, $($path:ident).+) => {
-                let res = Self::compare_vec2(&self.left.wasm.$($path).+, &self.right.wasm.$($path).+);
-                if res.is_empty() {
-                    log::info!("No differences in {} found", stringify!($($path).+));
-                }
-                for (id, err) in res {
-                    let left = self.left.wasm.$($path).+.get(id);
-                    let right = self.right.wasm.$($path).+.get(id);
-
-                    log::error!(
-                        "Section {} differ at index: {} - {}",
-                        stringify!($($path).+),
-                        id,
-                        err
-                    );
-
-                    $v!(id, left, right);
-                }
-            };
-        }
         // TODO: Handle exports/imports index changes
 
-        print_compare_section2!(types);
-        print_compare_section2!(imports);
-        print_compare_section2!(exports);
-        print_compare_section2!(tables);
-        print_compare_section2!(elements);
-        print_compare_section2!(tags);
-        print_compare_section2!(globals);
-        print_compare_section2!(memories);
+        print_compare_section!(types);
+        print_compare_section!(imports);
+        print_compare_section!(exports);
+        print_compare_section!(tables);
+        print_compare_section!(elements);
+        print_compare_section!(tags);
+        print_compare_section!(globals);
+        print_compare_section!(memories);
 
         if self.structural {
             let differ = crate::analysis::symbols::Differ::new(self.left, self.right);
@@ -142,7 +114,7 @@ impl<'any, 'src> Compare<'any, 'src> {
             self.print_compare_data();
 
             // self.left.code.defined_funcs.get(0).unwrap().
-            print_compare_section2!(print_hex_diff, code.defined_funcs);
+            print_compare_section!(print_hex_diff, code.defined_funcs);
         }
 
         // data
@@ -407,37 +379,6 @@ impl<'any, 'src> Compare<'any, 'src> {
     fn compare_vec<Type>(
         left: &IdVec<Type>,
         right: &IdVec<Type>,
-    ) -> Vec<(Id<<Type as Indexed>::StaticTypeTagForIndex>, anyhow::Error)>
-    where
-        Type: Indexed + DiffExt,
-    {
-        let mut errors = Vec::new();
-        let mut left_iter = left.iter();
-        let mut right_iter = right.iter();
-        for ((left_id, left), (_, right)) in (&mut left_iter).zip(&mut right_iter) {
-            if let Err(e) = left.compare(right).map_err(|err| (left_id, err)) {
-                errors.push(e);
-            };
-        }
-        // If one of the iterators is longer, we have extra items in one of the sections.
-        for (right_id, right) in right_iter {
-            errors.push((
-                right_id,
-                anyhow::anyhow!("Extra item in right: {:?}", right.debug()),
-            ));
-        }
-        for (left_id, left) in left_iter {
-            errors.push((
-                left_id,
-                anyhow::anyhow!("Extra item in left: {:?}", left.debug()),
-            ));
-        }
-        errors
-    }
-
-    fn compare_vec2<Type>(
-        left: &IdVec2<Type>,
-        right: &IdVec2<Type>,
     ) -> Vec<(<Type as PrimaryKey>::EntityType, anyhow::Error)>
     where
         Type: PrimaryKey + DiffExt,
