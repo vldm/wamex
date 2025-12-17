@@ -202,3 +202,75 @@ pub fn format_split_program_info(
 
     output
 }
+
+/// Format a SymbolMap into a human-readable string for snapshot testing
+pub fn format_symbol_map(info: &InputObject) -> String {
+    use std::fmt::Write;
+
+    let mut output = String::new();
+
+    writeln!(&mut output, "=== Symbol Map ===\n").unwrap();
+
+    let mut symbols: Vec<_> = info.symbols.iter().collect();
+    symbols.sort_by_key(|(id, _)| *id);
+
+    for (id, symbol) in symbols {
+        let name = crate::helpers::demangle_full(&symbol.name);
+
+        match symbol.kind {
+            SymbolKind::Func { input_id } => {
+                let size = if let Some(defined_id) = info.as_defined_function_id(input_id) {
+                    info.wasm.code.defined_funcs[defined_id].body.range().len()
+                } else {
+                    0
+                };
+                writeln!(&mut output, "{id:?} func[{input_id}] <{name}> size={size}").unwrap();
+            }
+            SymbolKind::DataDefined {
+                segment_id,
+                offset,
+                length,
+            } => {
+                let segment_name = info
+                    .wasm
+                    .names
+                    .data_segments
+                    .get(segment_id)
+                    .map(|s| s.as_ref())
+                    .unwrap_or("unknown");
+                writeln!(
+                    &mut output,
+                    "{id:?} data[{segment_name}({segment_id}):{offset}+{length}] <{name}>"
+                )
+                .unwrap();
+            }
+            SymbolKind::Global(global_id) => {
+                writeln!(&mut output, "{id:?} global[{global_id}] <{name}>").unwrap();
+            }
+            SymbolKind::Table(table_id) => {
+                writeln!(&mut output, "{id:?} table[{table_id}] <{name}>").unwrap();
+            }
+            SymbolKind::Duplicate(original_id) => {
+                writeln!(&mut output, "{id:?} duplicate -> {original_id:?} <{name}>").unwrap();
+            }
+        }
+
+        if !symbol.relocs.is_empty() {
+            writeln!(&mut output, "  Relocations: {}", symbol.relocs.len()).unwrap();
+            for reloc in &symbol.relocs {
+                let target_symbol = info.symbols.get(crate::index::Id::from_index(reloc.index));
+                let target_name = target_symbol
+                    .map(|s| crate::helpers::demangle_full(&s.name))
+                    .unwrap_or_else(|| format!("unknown_{}", reloc.index));
+                writeln!(
+                    &mut output,
+                    "    {:?} @ offset {} -> {target_name}",
+                    reloc.ty, reloc.offset
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    output
+}

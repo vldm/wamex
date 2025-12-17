@@ -347,6 +347,10 @@ mod tests {
     fn test_snapshot_split_structure_for_file(name: &str, wasm_bytes: &[u8]) {
         let info = InputObject::from_wasm_bytes(wasm_bytes).expect("Failed to parse wasm file");
 
+        // Snapshot the symbol map
+        let symbol_map_output = super::super::debug::format_symbol_map(&info);
+        insta::assert_snapshot!(format!("{} - symbol_map", name), symbol_map_output);
+
         let dep_graph =
             super::super::dep_graph::get_dependencies(&info).expect("Failed to get dependencies");
 
