@@ -1,12 +1,15 @@
 //!
-//! Wasm object representation useful for future analysis.
+//! Wasm high-level API for simplification of structured reading.
+//! The root is `InputObject` struct which gives access to wasm entities in structured way.
+//!
+//! 1. `ElementTable` provides a way to access wasm table with elements corresponding to this table.
 //!
 //!
 
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Range};
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use wasmparser::{ElementItems, ElementKind, TypeRef};
+use anyhow::{Context, Result, bail};
+use wasmparser::{ElementItems, TypeRef};
 
 use crate::{
     index::{
@@ -27,6 +30,7 @@ pub struct ImportInfo {
     pub imported_global_map: GappedMap<ImportId, InputGlobalId>,
 }
 
+mod elements;
 /// Partially parsed wasm object.
 /// It expects that module has valid structure and contains additional custom sections:
 /// - name section with function and global names
@@ -43,8 +47,7 @@ pub struct InputObject<'src> {
     pub export_map: HashMap<(isize, AnySymbolId), (ExportId, &'src str)>,
     pub symbols: SymbolMap<'src>,
 
-    pub indirect_function_table_id: (TableId, ElementId),
-    pub indirect_function_list: Vec<InputFuncId>,
+    pub indirect_function_table: elements::IndirectFunctionTable,
 }
 
 impl<'src> InputObject<'src> {
@@ -113,45 +116,8 @@ impl<'src> InputObject<'src> {
                 )
             });
 
-        let mut indirect_element = None;
-        for (id, element) in module.elements.iter() {
-            let ElementKind::Active {
-                table_index,
-                offset_expr,
-            } = &element.kind
-            else {
-                continue;
-            };
-
-            if !table_index.is_none()  // None for first index.
-               && table_index.unwrap() == table_id.as_raw_index() as u32
-            {
-                continue;
-            }
-
-            let offset = Self::read_const_expr(offset_expr)
-                .with_context(|| format!("Failed to read offset expression for element {id:?}"))?;
-
-            ensure!(
-                offset == 1,
-                "Element segment {id:?} should be inited with 1 offset, but got {offset}, which is not supported"
-            );
-
-            let ElementItems::Functions(functions) = &element.items else {
-                bail!("Only function elements are supported, but got constant instead");
-            };
-
-            let mut function_list = Vec::with_capacity(functions.count() as usize);
-            for function_id in functions.clone().into_iter() {
-                let raw_function_id = function_id
-                    .with_context(|| format!("Failed to read function ID from element {id:?}"))?;
-                function_list.push(InputFuncId::from_index(raw_function_id));
-            }
-            indirect_element = Some((id, function_list));
-            break;
-        }
-        let (indirect_element_id, indirect_function_list) = indirect_element
-            .ok_or_else(|| anyhow!("No element segment with __indirect_function_table found"))?;
+        let indirect_function_table =
+            elements::IndirectFunctionTable::from_reader(&module, table_id, true)?;
 
         let symbols_map = SymbolMap::new(&module, import_funcs_info.imported_funcs.len())?;
 
@@ -160,8 +126,7 @@ impl<'src> InputObject<'src> {
             symbols: symbols_map,
             wasm: module,
             export_map,
-            indirect_function_list,
-            indirect_function_table_id: (table_id, indirect_element_id),
+            indirect_function_table,
         })
     }
 

@@ -37,8 +37,6 @@ impl SymbolMapping {
     }
 }
 
-type SVec<T, const SIZE: usize = 4> = smallvec::SmallVec<[T; SIZE]>;
-
 pub struct Differ<L, R> {
     left: L,
     right: R,
@@ -720,7 +718,7 @@ impl SymbolMapping {
     }
 }
 
-use crate::InputObject;
+use crate::{InputObject, SVec};
 
 pub trait SymbolMapWithContent<'src> {
     fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>>;

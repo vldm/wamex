@@ -699,16 +699,17 @@ impl Split<()> {
             state: builder.state.lock(ctx),
         };
         let indirect_function_table: Vec<_> = module_info
-            .indirect_function_list
+            .indirect_function_table
+            .items
             .iter()
-            .filter(|indirect_func_id| {
+            .filter(|(_, indirect_func_id)| {
                 builder
                     .state
                     .functions
                     .get_output_id(**indirect_func_id)
                     .is_some()
             })
-            .copied()
+            .map(|(_, &indirect_func_id)| indirect_func_id)
             .collect();
 
         let indirect_functions = IndirectFunctionEmitInfo::new(

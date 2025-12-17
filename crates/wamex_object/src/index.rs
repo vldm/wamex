@@ -305,22 +305,6 @@ impl<T: Default> Default for IndexedSection<T> {
     }
 }
 
-// TODO: replace with macro_metavar_expr_concat
-// Currently need explicitly define private type for each index
-#[macro_export]
-macro_rules! impl_standalone_index {
-    ( $($ty:ident($priv:ident)),* ) => {
-        $(
-            pub enum $priv {}
-            pub type $ty = $crate::index::Id<$priv>;
-            impl $crate::index::Indexed for $priv {
-                type StaticTypeTagForIndex = $priv;
-                type IndexType = Id<$priv>;
-            }
-        )*
-    };
-}
-
 // Type that maybe defined or imported.
 // In WASM a lot of objects can be either defined or imported,
 // and all imports are stored before defined, so index for defined is always shifted by imports count.
