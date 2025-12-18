@@ -6,12 +6,11 @@ use std::{
 };
 
 use anyhow::Result;
-use wasm_encoder::Encode;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
     helpers::{RangeComp, RangeExt},
-    index::{DataSegmentId, GappedMap, IdVec, ReservedValue, SymbolId},
+    index::{DataSegmentId, GappedMap, ReservedValue, SymbolId},
     symbols::{self, SymbolKind},
 };
 mod hexdump;
@@ -255,7 +254,7 @@ impl<'src> SegmentLayout<'src> {
                             .iter()
                             .map(|reloc| {
                                 let reloc_symbol =
-                                    symbol_table.get(SymbolId::from_index(reloc.index)).unwrap();
+                                    symbol_table.get(SymbolId::from_u32(reloc.index)).unwrap();
                                 hexdump::Ref {
                                     range: reloc.relocation_range(),
                                     name: &reloc_symbol.name,

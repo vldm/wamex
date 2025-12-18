@@ -1,5 +1,5 @@
 use anyhow::{Context, bail, ensure};
-use cranelift_entity::PrimaryMap;
+use cranelift_entity::{EntityRef, PrimaryMap};
 use wasmparser::ElementKind;
 
 use super::{ElementId, ElementItems, Result, TableId};
@@ -85,7 +85,7 @@ impl<'a, T: ElementType<'a>> ElementTable<T> {
 
             match table_index {
                 // if table_id matched
-                Some(idx) if *idx == table_id.as_raw_index() as u32 => {}
+                Some(idx) if *idx == table_id.index() as u32 => {}
                 // or we processing default table on Wasm MVP spec
                 None if default_table => {}
                 _ => {
@@ -108,7 +108,7 @@ impl<'a, T: ElementType<'a>> ElementTable<T> {
                 ElementItemId::from_u32(offset.try_into().expect("Negative offset checked above"));
 
             if let Some(size) = T::hint_size(&element.items) {
-                let max_elem = item_id.as_raw_index() + size as usize;
+                let max_elem = item_id.index() + size as usize;
                 let extra = max_elem.saturating_sub(table.items.len());
 
                 log::debug!(

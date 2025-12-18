@@ -8,6 +8,7 @@
 use std::ops::Range;
 
 use anyhow::{Result, bail, ensure};
+use cranelift_entity::EntityRef;
 use wasm_encoder::{Encode, Instruction};
 use wasmparser::{Operator, RelocationType};
 
@@ -53,7 +54,7 @@ impl ConstantExtractionEntry {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Offset is too large to fit in usize"))?;
 
-        let result_ix = Instruction::GlobalGet(got_global_index.as_raw_index() as u32);
+        let result_ix = Instruction::GlobalGet(got_global_index.index() as u32);
         log::trace!(
             "Replacing func[{name}:{range:?}] {src_ix:?} with {result_ix:?}, addend {addend}",
             addend = self.entry.addend,
@@ -172,16 +173,16 @@ impl ConstantExtractionEntry {
 
         // TODO: Replace with local?
         let save_value = store.as_ref().map(|store_type| {
-            Instruction::GlobalSet(ctx.global_tmps.get(store_type).unwrap().as_raw_index() as u32)
+            Instruction::GlobalSet(ctx.global_tmps.get(store_type).unwrap().as_u32())
         });
         let restore_value = store.as_ref().map(|store_type| {
-            Instruction::GlobalGet(ctx.global_tmps.get(store_type).unwrap().as_raw_index() as u32)
+            Instruction::GlobalGet(ctx.global_tmps.get(store_type).unwrap().as_u32())
         });
 
         if let Some(v) = save_value {
             v.encode(ctx.writer)
         } // Get <value> from stack to temp storage
-        Instruction::GlobalGet(got_global_index.as_raw_index() as u32).encode(ctx.writer);
+        Instruction::GlobalGet(got_global_index.as_u32()).encode(ctx.writer);
         Instruction::I32Add.encode(ctx.writer); // add offset from global_index variable to the dyn_offset part of instruction
         if let Some(v) = restore_value {
             v.encode(ctx.writer)

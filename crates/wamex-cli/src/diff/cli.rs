@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use colored::Colorize;
 use similar::{ChangeTag, TextDiff};
-use wamex_object::InputObject;
+use wamex_object::{InputObject, index::EntityRef};
 use wasmparser::{Data, Global};
 
 use crate::{
@@ -36,9 +36,9 @@ impl<'any, 'src> Compare<'any, 'src> {
     pub fn print_diff(&self) -> Result<(), anyhow::Error> {
         macro_rules! print_hex_diff {
             ($id:expr, $left: expr, $right: expr) => {
-                let num_imports = 27;
-                let raw_id = $id.as_raw_index() + num_imports;
-                let id = crate::index::InputFuncId::from_index(raw_id);
+                let num_imports: usize = todo!();
+                let raw_id = $id.index() + num_imports;
+                let id = crate::index::InputFuncId::new(raw_id);
                 log::info!("name: {}", self.left.wasm_reader.names.functions[id]);
                 match ($left, $right) {
                     (Some(left), Some(right)) => {

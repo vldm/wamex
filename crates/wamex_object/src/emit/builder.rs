@@ -105,10 +105,7 @@ impl<'src> ObjectBuilder<'src> {
         let mut segment_mem_offset = 0;
         log::trace!("Data segments for module: {:#?}", data_segments);
         for (id, segment) in data_segments.iter() {
-            let lib_base_global_id = ctx
-                .lib_base_import()
-                .as_ref()
-                .map(|id| id.as_raw_index() as u32);
+            let lib_base_global_id = ctx.lib_base_import().as_ref().map(|id| id.as_u32());
 
             let (new_segment_offset, out) =
                 segment.to_segment_output(lib_base_global_id, mem_start, segment_mem_offset);
@@ -133,7 +130,7 @@ impl<'src> ObjectBuilder<'src> {
                     .map(|reloc| {
                         let relocation_context = modify::RelocationContext {
                             dyn_base: !ctx.is_main()
-                                && !ctx.is_static_symbol(SymbolId::from_index(reloc.index)),
+                                && !ctx.is_static_symbol(SymbolId::from_u32(reloc.index)),
                             containing_symbol: Some(modify::DataSymbolWithOffset {
                                 storage_segment_id: segment_id,
                                 storage_symbol_id: *symbol_index,

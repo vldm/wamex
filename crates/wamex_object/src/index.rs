@@ -52,19 +52,12 @@ macro_rules! impl_entity_index {
         }
         // Compatibility methods for migration from Id<T>
         impl $entity {
-            pub fn as_raw_index(&self) -> usize {
-                cranelift_entity::EntityRef::index(*self)
-            }
-
-            pub fn from_index<T>(id: T) -> Self
-            where
-                T: TryInto<u32> + std::fmt::Debug + Copy,
-            {
-                Self::from_u32(id.try_into().ok().unwrap_or_else(|| panic!("Invalid ID: {:?}", id)))
-            }
+            #[allow(dead_code, reason = "macro-generated code")]
+            #[inline]
             pub fn next(&self) -> Self {
-                debug_assert!(self.0 != u32::MAX);
-                Self::from_u32(self.0 + 1)
+                let next = Self::from_u32(self.0 + 1);
+                debug_assert!(next != $crate::index::ReservedValue::reserved_value());
+                next
             }
         }
         // Impl primary key if needed

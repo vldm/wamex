@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, ensure};
-use cranelift_entity::packed_option::ReservedValue;
+use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 pub use diff::{DiffEntry, DiffResult, Differ, StaticModuleInfo};
 use smallvec::SmallVec;
 
@@ -108,7 +108,7 @@ impl SymbolRecord<'_> {
         self.relocs
             .iter()
             .filter(filter_non_types)
-            .map(|reloc| SymbolId::from_index(reloc.index))
+            .map(|reloc| SymbolId::from_u32(reloc.index))
             .chain(duplicate_iter)
     }
 }
@@ -178,23 +178,23 @@ impl<'src> SymbolMap<'src> {
         let data_section_start = wasm.data.starting_offset;
 
         for (symbol_id, symbol) in wasm.linking.linking_symbols.symbols.iter().enumerate() {
-            let symbol_id = SymbolId::from_index(symbol_id);
+            let symbol_id = SymbolId::new(symbol_id);
 
             let sym = match *symbol {
                 SymbolInfo::Func { index, flags, name } => {
-                    let input_function_id = InputFuncId::from_index(index);
+                    let input_function_id = InputFuncId::from_u32(index);
                     let fn_name = Self::get_or_create_name(
                         name,
                         wasm.names.functions.get(input_function_id).map(|n| *n),
                         || panic!("function {index} does not have a name"),
                     );
 
-                    let fn_range = if input_function_id.as_raw_index() >= num_imports_fn {
-                        let defined_index = input_function_id.as_raw_index() - num_imports_fn;
+                    let fn_range = if input_function_id.index() >= num_imports_fn {
+                        let defined_index = input_function_id.index() - num_imports_fn;
                         let func = wasm
                             .code
                             .defined_funcs
-                            .get(DefinedFuncId::from_index(defined_index))
+                            .get(DefinedFuncId::new(defined_index))
                             .expect("defined function id should be valid");
                         func.body.range().shift_left(wasm.code.starting_offset)
                     } else {
@@ -233,7 +233,7 @@ impl<'src> SymbolMap<'src> {
                         continue;
                     };
 
-                    let segment_id = DataSegmentId::from_index(defined.index);
+                    let segment_id = DataSegmentId::from_u32(defined.index);
                     let segment = &wasm.data.data_segments[segment_id];
 
                     // Remove header size from segment range.
@@ -276,7 +276,7 @@ impl<'src> SymbolMap<'src> {
                     }
                 }
                 SymbolInfo::Global { flags, name, index } => {
-                    let global_id = InputGlobalId::from_index(index);
+                    let global_id = InputGlobalId::from_u32(index);
                     let global_name = Self::get_or_create_name(
                         name,
                         wasm.names.globals.get(global_id).map(|n| *n),
@@ -290,7 +290,7 @@ impl<'src> SymbolMap<'src> {
                     }
                 }
                 SymbolInfo::Table { index, name, flags } => {
-                    let table_id = TableId::from_index(index);
+                    let table_id = TableId::from_u32(index);
                     let table_name = Self::get_or_create_name(
                         name,
                         wasm.names.tables.get(table_id).map(|n| *n),
@@ -517,7 +517,7 @@ impl<'src> SymbolMap<'src> {
             println!("---{id} <{name}>", name = &symbol.name);
             println!("    record: {:?}", symbol);
             for reloc in &symbol.relocs {
-                let id = SymbolId::from_index(reloc.index);
+                let id = SymbolId::from_u32(reloc.index);
                 println!(
                     "-->{id} <{name}> reloc{:?}",
                     reloc,

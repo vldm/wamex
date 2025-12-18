@@ -144,7 +144,7 @@ pub fn get_dependencies(info: &InputObject) -> anyhow::Result<DepGraph> {
                 .relocs
                 .iter()
                 .filter(non_type_index)
-                .map(|entry| SymbolId::from_index(entry.index))
+                .map(|entry| SymbolId::from_u32(entry.index))
                 .filter_map(|index| info.symbols.as_duplicate_mapped(index).or(Some(index)))
                 .filter(is_fn_or_data),
         );
@@ -640,7 +640,7 @@ mod tests {
         let shared_entries = super::NamedGraph::calculate_shared_modules(&mut modules, &graph);
 
         dbg!(&shared_entries);
-        let node = SymbolId::from_index(1417);
+        let node = SymbolId::from_u32(1417);
 
         assert!(modules[1].reachable.contains(&node));
 
@@ -701,7 +701,7 @@ mod tests {
 
         let _shared_entries = super::NamedGraph::calculate_shared_modules(&mut modules, &graph);
 
-        let node = SymbolId::from_index(1417);
+        let node = SymbolId::from_u32(1417);
 
         if !modules[2].reachable.contains(&node) {
             return true;
@@ -767,9 +767,9 @@ mod tests {
         );
 
         // 101 exported, but 101 and 102 are both defined
-        assert!(first.exports.contains(&SymbolId::from_index(101)));
-        assert!(first.shared_deps.contains(&SymbolId::from_index(101)));
-        assert!(first.shared_deps.contains(&SymbolId::from_index(102)));
+        assert!(first.exports.contains(&SymbolId::from_u32(101)));
+        assert!(first.shared_deps.contains(&SymbolId::from_u32(101)));
+        assert!(first.shared_deps.contains(&SymbolId::from_u32(102)));
 
         let second = &shared_entries[1];
         assert_eq!(
@@ -779,13 +779,13 @@ mod tests {
 
         dbg!(&second);
         // 100 are exported and defined (201 also defined, but not interesting here)
-        assert!(!second.imports.contains(&SymbolId::from_index(100)));
-        assert!(second.exports.contains(&SymbolId::from_index(100)));
-        assert!(second.shared_deps.contains(&SymbolId::from_index(100)));
+        assert!(!second.imports.contains(&SymbolId::from_u32(100)));
+        assert!(second.exports.contains(&SymbolId::from_u32(100)));
+        assert!(second.shared_deps.contains(&SymbolId::from_u32(100)));
         // 101 are imported only
-        assert!(second.imports.contains(&SymbolId::from_index(101)));
-        assert!(!second.exports.contains(&SymbolId::from_index(101)));
-        assert!(!second.shared_deps.contains(&SymbolId::from_index(101)));
+        assert!(second.imports.contains(&SymbolId::from_u32(101)));
+        assert!(!second.exports.contains(&SymbolId::from_u32(101)));
+        assert!(!second.shared_deps.contains(&SymbolId::from_u32(101)));
     }
 
     fn reduce(source: &str, test: impl Fn(&str) -> bool) {

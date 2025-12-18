@@ -14,6 +14,7 @@ use std::{collections::BTreeMap, ops::Range};
 
 use anyhow::{Result, bail};
 use constant_extracton::ConstantExtractionEntry;
+use cranelift_entity::EntityRef;
 pub(crate) use relocation::RelocateState;
 pub use start_fn_gen::{DataSymbolWithOffset, StartFnGen, StartFnModifyContext};
 use wasm_encoder::reencode::Reencode;
@@ -88,12 +89,15 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         };
 
         let (function_name, src_body) = {
-            let func_id = InputFuncId::from_index(
-                defined_function_id.as_raw_index()
-                    + module_emit.src.import_info.imported_funcs.len(),
+            let func_id = InputFuncId::new(
+                defined_function_id.index() + module_emit.src.import_info.imported_funcs.len(),
             );
-            let defined_func =
-                &module_emit.src.wasm_reader.code.section_payload.defined_funcs[defined_function_id];
+            let defined_func = &module_emit
+                .src
+                .wasm_reader
+                .code
+                .section_payload
+                .defined_funcs[defined_function_id];
             let name = module_emit
                 .src
                 .wasm_reader
@@ -284,12 +288,15 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
             global_id_mapper: &global_id_mapper,
         };
         let (function_name, src_body) = {
-            let func_id = InputFuncId::from_index(
-                defined_function_id.as_raw_index()
-                    + module_emit.src.import_info.imported_funcs.len(),
+            let func_id = InputFuncId::new(
+                defined_function_id.index() + module_emit.src.import_info.imported_funcs.len(),
             );
-            let defined_func =
-                &module_emit.src.wasm_reader.code.section_payload.defined_funcs[defined_function_id];
+            let defined_func = &module_emit
+                .src
+                .wasm_reader
+                .code
+                .section_payload
+                .defined_funcs[defined_function_id];
             let name = module_emit
                 .src
                 .wasm_reader

@@ -7,7 +7,7 @@ use wamex_object::{
         ModuleIdentifier, OutputModuleInfo, SharedModuleIdentifier, SplitModuleIdentifier,
         SplitPoint, SplitProgramInfo,
     },
-    index::SecondaryMap,
+    index::{EntityRef, SecondaryMap},
 };
 use wamex_types::map_vec::MiniSet;
 
@@ -89,7 +89,7 @@ fn find_split_points_with_prefix(
                 import: import_id,
                 import_func,
                 export: export_id,
-                export_func: InputFuncId::from_index(index),
+                export_func: InputFuncId::from_u32(index),
             })
         })
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
@@ -191,7 +191,7 @@ pub fn compute_split_modules(
         };
         roots.insert(
             info.symbols
-                .get_function_symbol(InputFuncId::from_index(*index))
+                .get_function_symbol(InputFuncId::from_u32(*index))
                 .unwrap(),
         );
     }
@@ -206,7 +206,7 @@ pub fn compute_split_modules(
         };
         roots.insert(
             info.symbols
-                .get_function_symbol(InputFuncId::from_index(index))
+                .get_function_symbol(InputFuncId::new(index))
                 .unwrap(),
         );
     }

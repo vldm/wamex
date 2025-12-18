@@ -24,7 +24,7 @@ use crate::index::SymbolId;
 
 fn parse_symbol_id(input: &str) -> IResult<&str, SymbolId> {
     let (input, val) = map_res(take_while(|c: char| c.is_digit(10)), |s: &str| {
-        s.parse::<u32>().map(|id| SymbolId::from_index(id))
+        s.parse::<u32>().map(|id| SymbolId::from_u32(id))
     })
     .parse(input)?;
 
@@ -166,7 +166,7 @@ pub mod tests {
     use crate::index::SymbolId;
 
     pub fn symbol(id: u32) -> super::SymbolId {
-        SymbolId::from_index(id)
+        SymbolId::from_u32(id)
     }
 
     #[test]

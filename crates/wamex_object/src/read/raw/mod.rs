@@ -112,7 +112,7 @@ impl<'a> ObjectReader<'a> {
                     module.exports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::StartSection { func, .. } => {
-                    code_start = Some(crate::index::InputFuncId::from_index(func));
+                    code_start = Some(crate::index::InputFuncId::from_u32(func));
                 }
                 Payload::DataCountSection { count, .. } => {
                     data_count = Some(count as usize);

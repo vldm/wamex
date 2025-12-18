@@ -3,6 +3,7 @@ pub mod encode;
 use std::fmt::Debug;
 
 use anyhow::{Result, anyhow, bail};
+use cranelift_entity::EntityRef;
 use wasmparser::RelocationEntry;
 
 use crate::{
@@ -155,7 +156,7 @@ impl RelocateState<'_, '_> {
     {
         self._get_symbol_op::<T, _>(
             |module| {
-                T::get_mapped_value(self.input_module, module, SymbolId::from_index(relocation.index))
+                T::get_mapped_value(self.input_module, module, SymbolId::from_u32(relocation.index))
             },
             || {
                 anyhow!(
@@ -196,7 +197,7 @@ impl RelocateState<'_, '_> {
         Self::ensure_empty_addend(relocation)?;
         let Some(input_func_id) = FunctionIndexTag::get_input_function_id(
             self.input_module,
-            SymbolId::from_index(relocation.index),
+            SymbolId::from_u32(relocation.index),
         ) else {
             bail!("Relocation {relocation:?} does not refer to a valid function")
         };
@@ -205,7 +206,7 @@ impl RelocateState<'_, '_> {
                 "Cannot find output function for input function {input_func_id} referenced by relocation {relocation:?}"
             )
         };
-        Ok(output_func_id.as_raw_index())
+        Ok(output_func_id.index())
     }
 
     fn get_relocated_function_table_index(&self, relocation: &RelocationEntry) -> Result<usize> {
@@ -229,7 +230,7 @@ impl RelocateState<'_, '_> {
         let symbol = self
             .input_module
             .symbols
-            .get(SymbolId::from_index(relocation.index))
+            .get(SymbolId::from_u32(relocation.index))
             .ok_or_else(|| {
                 anyhow!(
                     "Relocation {relocation:?} refers to invalid symbol id {}",
@@ -248,7 +249,7 @@ impl RelocateState<'_, '_> {
                     "Dependency analysis error: No output global for input global {original_global_id} referenced by relocation {relocation:?}"
                 )
             })?;
-        Ok(global_id.as_raw_index())
+        Ok(global_id.index())
     }
 
     pub fn apply_relocation(&self, data: &mut [u8], relocation: &RelocationEntry) -> Result<()> {

@@ -121,7 +121,7 @@ impl StartFnGen {
         else {
             panic!("Data relocation storage should always be in GOT")
         };
-        instr.global_get(dst_got.as_raw_index() as u32);
+        instr.global_get(dst_got.as_u32());
         instr.i32_const(dst_offset.try_into().unwrap());
         instr.i32_add();
 
@@ -130,7 +130,7 @@ impl StartFnGen {
                 got: src_got,
                 value: src_offset,
             } => {
-                instr.global_get(src_got.as_raw_index() as u32);
+                instr.global_get(src_got.as_u32());
                 instr.i32_const(src_offset.try_into().unwrap());
                 instr.i32_add();
             }

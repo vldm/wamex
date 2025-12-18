@@ -9,6 +9,7 @@
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Range};
 
 use anyhow::{Context, Result, bail};
+use cranelift_entity::EntityRef;
 pub use wasm_entities::{Defined, ImportsOrDefined, OutputMapType, OutputType, WithOriginalIndex};
 use wasmparser::{ElementItems, TypeRef};
 
@@ -78,12 +79,12 @@ impl<'src> InputObject<'src> {
         let imported_func_map = imported_funcs
             .iter()
             .enumerate()
-            .map(|(func_id, &import_id)| (import_id, InputFuncId::from_index(func_id)))
+            .map(|(func_id, &import_id)| (import_id, InputFuncId::new(func_id)))
             .collect();
         let imported_global_map = imported_globals
             .iter()
             .enumerate()
-            .map(|(global_id, &import_id)| (import_id, InputGlobalId::from_index(global_id)))
+            .map(|(global_id, &import_id)| (import_id, InputGlobalId::new(global_id)))
             .collect();
 
         let import_funcs_info = ImportInfo {
@@ -150,7 +151,7 @@ impl<'src> InputObject<'src> {
         &'any self,
     ) -> impl Iterator<Item = InputFuncId> + use<'any, 'src> {
         (0..self.import_info.imported_funcs.len())
-            .map(InputFuncId::from_index)
+            .map(InputFuncId::new)
             .chain(
                 self.wasm_reader
                     .code
@@ -159,24 +160,24 @@ impl<'src> InputObject<'src> {
                     .iter()
                     .enumerate()
                     .map(|(index, _)| {
-                        InputFuncId::from_index(index + self.import_info.imported_funcs.len())
+                        InputFuncId::new(index + self.import_info.imported_funcs.len())
                     }),
             )
     }
 
     pub fn is_imported_function(&self, func_id: InputFuncId) -> bool {
-        func_id.as_raw_index() < self.import_info.imported_funcs.len()
+        func_id.index() < self.import_info.imported_funcs.len()
     }
 
     pub fn as_defined_function_id(&self, func_id: InputFuncId) -> Option<DefinedFuncId> {
         if self.is_imported_function(func_id) {
             None
         } else {
-            Some(DefinedFuncId::from_index(
+            Some(DefinedFuncId::new(
                 func_id
-                    .as_raw_index()
+                    .index()
                     .checked_sub(self.import_info.imported_funcs.len())
-                    .expect("Function ID is out of bounds") as u32,
+                    .expect("Function ID is out of bounds"),
             ))
         }
     }
@@ -184,11 +185,11 @@ impl<'src> InputObject<'src> {
     pub fn get_function_type_id(&self, func_id: InputFuncId) -> FuncTypeId {
         let Some(defined_index) = self.as_defined_function_id(func_id) else {
             // It's import function - recover from import id.
-            let import_id = self.import_info.imported_funcs[func_id.as_raw_index()];
+            let import_id = self.import_info.imported_funcs[func_id.index()];
             let TypeRef::Func(ty) = self.wasm_reader.imports[import_id].ty else {
                 panic!("Expected function type")
             };
-            return FuncTypeId::from_index(ty);
+            return FuncTypeId::from_u32(ty);
         };
         // It's a defined function.
         self.wasm_reader.defined_func_type_id(defined_index)
@@ -197,13 +198,13 @@ impl<'src> InputObject<'src> {
     pub fn get_function_import_id(&self, func_id: InputFuncId) -> Option<ImportId> {
         self.import_info
             .imported_funcs
-            .get(func_id.as_raw_index())
+            .get(func_id.index())
             .copied()
     }
     pub fn get_global_import_id(&self, global_id: InputGlobalId) -> Option<ImportId> {
         self.import_info
             .imported_globals
-            .get(global_id.as_raw_index())
+            .get(global_id.index())
             .copied()
     }
 
@@ -238,7 +239,7 @@ impl<'src> InputObject<'src> {
             |defined_func| defined_func.body.range(),
         )
         .with_context(|| format!("No match for function relocation range {range:?}"))?;
-        Ok(InputFuncId::from_index(
+        Ok(InputFuncId::new(
             func_index + self.import_info.imported_funcs.len(),
         ))
     }

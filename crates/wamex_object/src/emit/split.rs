@@ -4,7 +4,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use cranelift_entity::SecondaryMap;
+use cranelift_entity::{EntityRef, SecondaryMap};
 use wamex_types::{BumpVersion, map_vec::MiniSet};
 use wasm_encoder::{GlobalType, reencode::Reencode};
 
@@ -386,8 +386,8 @@ impl<'src> Split<ObjectBuilder<'src>> {
             let modification_list = func_relocs
                 .iter()
                 .map(|entry| {
-                    let dyn_base = !ctx.main_module
-                        && !ctx.is_static_symbol(SymbolId::from_index(entry.index));
+                    let dyn_base =
+                        !ctx.main_module && !ctx.is_static_symbol(SymbolId::from_u32(entry.index));
                     let relocation_context = modify::RelocationContext {
                         dyn_base,
                         containing_symbol: None,
@@ -422,7 +422,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
 
     fn copy_src_globals(&mut self, ctx: &SplitContext<'_, 'src>) {
         debug_assert!(ctx.main_module);
-        let mut input_global_id = InputGlobalId::from_index(0);
+        let mut input_global_id = InputGlobalId::from_u32(0);
         for (_id, import) in ctx.module_info.wasm_reader.imports.iter() {
             let wasmparser::TypeRef::Global(global_type) = &import.ty else {
                 continue;
@@ -677,7 +677,7 @@ impl Split<()> {
             for (store_type, val_type) in init_each_store_var() {
                 let global_id =
                     builder.state.globals.imports.len() + builder.state.globals.defined.len();
-                global_tmp_store.insert(store_type, OutputGlobalId::from_index(global_id));
+                global_tmp_store.insert(store_type, OutputGlobalId::new(global_id));
 
                 builder
                     .state

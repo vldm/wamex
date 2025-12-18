@@ -18,7 +18,10 @@ pub(crate) fn print_deps_inner(
         SymbolKind::DataDefined { length, .. } => length,
         SymbolKind::Func { input_id } => {
             if let Some(defined_id) = info.as_defined_function_id(input_id) {
-                info.wasm_reader.code.defined_funcs[defined_id].body.range().len()
+                info.wasm_reader.code.defined_funcs[defined_id]
+                    .body
+                    .range()
+                    .len()
             } else {
                 0
             }
@@ -225,7 +228,10 @@ pub fn format_symbol_map(info: &InputObject) -> String {
         match symbol.kind {
             SymbolKind::Func { input_id } => {
                 let size = if let Some(defined_id) = info.as_defined_function_id(input_id) {
-                    info.wasm_reader.code.defined_funcs[defined_id].body.range().len()
+                    info.wasm_reader.code.defined_funcs[defined_id]
+                        .body
+                        .range()
+                        .len()
                 } else {
                     0
                 };
@@ -281,7 +287,7 @@ pub fn format_symbol_map(info: &InputObject) -> String {
             for reloc in &symbol.relocs {
                 let target_symbol = info
                     .symbols
-                    .get(crate::index::SymbolId::from_index(reloc.index));
+                    .get(crate::index::SymbolId::from_u32(reloc.index));
                 let target_name = target_symbol
                     .map(|s| crate::helpers::demangle_full(&s.name))
                     .unwrap_or_else(|| format!("unknown_{}", reloc.index));

@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use cranelift_entity::EntityRef;
 use index_safety::OutputFuncId;
 pub use memory_layout::{DataChunk, DataSegmentOutput, SegmentLayout, SymbolRelation};
 use modify::{ModifyContext, StoreType};
@@ -332,9 +333,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let mut section = wasm_encoder::ImportSection::new();
 
         for (index, import_fn) in self.functions.imports() {
-            let ty = wasm_encoder::EntityType::Function(
-                self.get_function_type(index).as_raw_index() as u32,
-            );
+            let ty =
+                wasm_encoder::EntityType::Function(self.get_function_type(index).index() as u32);
             let fn_name = import_fn.import_name();
             let module_name = import_fn.module_name();
             section.import(&module_name, &fn_name, ty);
@@ -444,7 +444,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     .export_map
                     .get(&(
                         wasmparser::ExternalKind::Global as isize,
-                        index.as_raw_index(), // TODO: convert indexes?
+                        index.index(), // TODO: convert indexes?
                     ))
                     .map(|(_, name)| (*name).into())
             })
@@ -463,7 +463,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     .export_map
                     .get(&(
                         wasmparser::ExternalKind::Memory as isize,
-                        index.as_raw_index(), // TODO: convert indexes?
+                        index.index(), // TODO: convert indexes?
                     ))
                     .map(|(_, name)| name.to_string())
             })
@@ -477,11 +477,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             for (_id, export) in self.src.wasm_reader.exports.iter() {
                 let mut index = export.index;
                 if export.kind == wasmparser::ExternalKind::Func {
-                    let Some(func_id) = self._get_output_func_id(InputFuncId::from_index(index))
+                    let Some(func_id) = self._get_output_func_id(InputFuncId::from_u32(index))
                     else {
                         continue;
                     };
-                    index = func_id.as_raw_index() as u32;
+                    index = func_id.index() as u32;
                 }
                 section.export(export.name, export.kind.into(), index);
                 existing_exports.insert(export.name.into());
@@ -500,7 +500,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             section.export(
                 &name,
                 wasm_encoder::ExportKind::Func,
-                func_id.as_raw_index() as u32,
+                func_id.index() as u32,
             );
         }
 
@@ -520,12 +520,12 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     section.export(
                         &lib_base_name,
                         wasm_encoder::ExportKind::Global,
-                        extra.self_base.lib_base_id.as_raw_index() as u32,
+                        extra.self_base.lib_base_id.index() as u32,
                     );
                     section.export(
                         &table_base_name,
                         wasm_encoder::ExportKind::Global,
-                        extra.self_base.table_base_id.as_raw_index() as u32,
+                        extra.self_base.table_base_id.index() as u32,
                     );
                     existing_exports.insert(lib_base_name.into());
                     existing_exports.insert(table_base_name.into());
@@ -546,7 +546,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     section.export(
                         &name,
                         wasm_encoder::ExportKind::Global,
-                        global_index.as_raw_index() as u32,
+                        global_index.index() as u32,
                     );
                     existing_exports.insert(name);
                 }
@@ -584,11 +584,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let mut section: wasm_encoder::FunctionSection = wasm_encoder::FunctionSection::new();
         for (index, _func) in self.functions.defined() {
             let func_type = self.get_function_type(index);
-            section.function(func_type.as_raw_index() as u32);
+            section.function(func_type.index() as u32);
         }
         // add start function
         if !self.is_main() {
-            section.function(self.find_void_type().as_raw_index() as u32);
+            section.function(self.find_void_type().index() as u32);
         }
 
         output_module.section(&section);
@@ -630,7 +630,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 let output_func_id = self._get_output_func_id(*input_func_id).ok_or_else(|| {
                     anyhow!("No output function corresponding to input function {input_func_id:?}")
                 })?;
-                Ok(output_func_id.as_raw_index() as u32)
+                Ok(output_func_id.index() as u32)
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(func_ids)
@@ -657,7 +657,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
         let element_start = if let Some(sub_module_extra) = &self.sub_module_extra {
             wasm_encoder::ConstExpr::global_get(
-                sub_module_extra.self_base.table_base_id.as_raw_index() as u32,
+                sub_module_extra.self_base.table_base_id.index() as u32
             )
         } else {
             wasm_encoder::ConstExpr::i32_const(1_i32) // skip empty entry at index 0 for main module
@@ -674,7 +674,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     .defined()
                     .next()
                     .expect("we need any defined function in main module");
-                let id = defined_id.as_raw_index() + self.functions.imports().len();
+                let id = defined_id.index() + self.functions.imports().len();
 
                 let abort_fn_id = id as u32; // TODO: Place real abort function
                 let num_lazy_entries = self.indirect_functions.num_extra_stubs;
@@ -695,7 +695,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                             let output_func_id = self
                                 ._get_output_func_id(*input_func_id)
                                 .expect("Function should be defined");
-                            output_func_id.as_raw_index() as u32
+                            output_func_id.index() as u32
                         })
                         .collect::<Vec<_>>();
                     let element_start = wasm_encoder::ConstExpr::i32_const(entry_point_offset);
@@ -783,7 +783,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         }
         func.instruction(&wasm_encoder::Instruction::I32Const(table_index as i32));
         func.instruction(&wasm_encoder::Instruction::CallIndirect {
-            type_index: func_type_id.as_raw_index() as u32,
+            type_index: func_type_id.index() as u32,
             table_index: 0, // __indirect_function_table // TODO: support multiple tables
         });
         func.instruction(&wasm_encoder::Instruction::End);
@@ -817,9 +817,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         for (param_i, _param_type) in func_type.params().iter().enumerate() {
             func.instruction(&wasm_encoder::Instruction::LocalGet(param_i as u32));
         }
-        func.instruction(&wasm_encoder::Instruction::Call(
-            import_fn.as_raw_index() as u32
-        ));
+        func.instruction(&wasm_encoder::Instruction::Call(import_fn.index() as u32));
         func.instruction(&wasm_encoder::Instruction::End);
         section.function(&func);
         // TODO: Add relocations for call/type_ids
@@ -1029,7 +1027,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         for output_id in self.functions.iter_all_ids() {
             let name = self.get_function_name(output_id, false);
 
-            functions.append(output_id.as_raw_index() as u32, &name);
+            functions.append(output_id.index() as u32, &name);
         }
 
         let mut names = wasm_encoder::NameSection::new();
@@ -1201,11 +1199,10 @@ impl<'src> CommonEmitInfo<'src> {
             .iter()
             .map(|(data_segment, data)| {
                 let data_symbols = data_segments_symbols
-                    .get(data_segment.as_raw_index())
+                    .get(data_segment.index())
                     .cloned()
                     .expect("Symbols for data segment not found");
-                let segment_info =
-                    &module.wasm_reader.linking.segments_info[data_segment.as_raw_index()];
+                let segment_info = &module.wasm_reader.linking.segments_info[data_segment.index()];
 
                 let layout = SegmentLayout::new_inner(
                     data,
