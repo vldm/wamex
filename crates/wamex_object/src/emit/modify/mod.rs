@@ -93,10 +93,10 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                     + module_emit.src.import_info.imported_funcs.len(),
             );
             let defined_func =
-                &module_emit.src.wasm.code.section_payload.defined_funcs[defined_function_id];
+                &module_emit.src.wasm_reader.code.section_payload.defined_funcs[defined_function_id];
             let name = module_emit
                 .src
-                .wasm
+                .wasm_reader
                 .names
                 .functions
                 .get(func_id)
@@ -289,10 +289,10 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                     + module_emit.src.import_info.imported_funcs.len(),
             );
             let defined_func =
-                &module_emit.src.wasm.code.section_payload.defined_funcs[defined_function_id];
+                &module_emit.src.wasm_reader.code.section_payload.defined_funcs[defined_function_id];
             let name = module_emit
                 .src
-                .wasm
+                .wasm_reader
                 .names
                 .functions
                 .get(func_id)

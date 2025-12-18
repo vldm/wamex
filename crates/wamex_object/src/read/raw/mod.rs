@@ -1,5 +1,4 @@
 use anyhow::{Result, anyhow, bail};
-use target_features::TargetFeatures;
 use vec_map::VecMap;
 use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
@@ -14,11 +13,12 @@ pub mod names;
 pub mod relocs;
 mod target_features;
 
-use code::CodeSection;
-use data::DataSection;
-use linking::LinkingInfo;
-use names::Names;
-use relocs::Relocation;
+pub use code::{CodeSection, FunctionWithBody};
+pub use data::DataSection;
+pub use linking::LinkingInfo;
+pub use names::Names;
+pub use relocs::Relocation;
+pub use target_features::TargetFeatures;
 
 type Ind<T> = IndexedSection<T>;
 

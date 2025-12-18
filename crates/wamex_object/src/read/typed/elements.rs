@@ -6,7 +6,7 @@ use super::{ElementId, ElementItems, Result, TableId};
 use crate::{InputObject, SVec, index::InputFuncId, read::raw};
 
 impl_entity_index! {
-    ElementItemId;
+    pub struct ElementItemId;
 }
 pub trait ElementType<'a> {
     fn hint_size(items: &ElementItems<'a>) -> Option<u32>;

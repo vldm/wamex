@@ -359,7 +359,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
         // Currently only possible in main module
         } else if let Some(import_id) = ctx.module_info.get_function_import_id(input_func_id) {
             debug_assert!(ctx.main_module);
-            let import_info = ctx.module_info.wasm.imports[import_id];
+            let import_info = ctx.module_info.wasm_reader.imports[import_id];
 
             self.state.add_imported_function(ImportedFunction {
                 input_func_id,
@@ -423,7 +423,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
     fn copy_src_globals(&mut self, ctx: &SplitContext<'_, 'src>) {
         debug_assert!(ctx.main_module);
         let mut input_global_id = InputGlobalId::from_index(0);
-        for (_id, import) in ctx.module_info.wasm.imports.iter() {
+        for (_id, import) in ctx.module_info.wasm_reader.imports.iter() {
             let wasmparser::TypeRef::Global(global_type) = &import.ty else {
                 continue;
             };
@@ -440,7 +440,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
             self.state.add_imported_global(global);
             input_global_id = input_global_id.next();
         }
-        for (id, global) in ctx.module_info.wasm.globals.iter() {
+        for (id, global) in ctx.module_info.wasm_reader.globals.iter() {
             let global = DefinedGlobal::PlainCopy {
                 global: global.clone(),
                 // TODO: This is probably incorrect so i left panic in case if some global is imported - for now, and will fix with test
@@ -451,7 +451,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
             {
                 let imports_globals = ctx
                     .module_info
-                    .wasm
+                    .wasm_reader
                     .imports
                     .iter()
                     .filter_map(|(_, import)| match &import.ty {
@@ -569,7 +569,7 @@ impl Split<()> {
                         link_module: 0,
                         output_function_index: 0,
                         mangled_function_name: module_info
-                            .wasm
+                            .wasm_reader
                             .names
                             .functions
                             .get(input_func_id)

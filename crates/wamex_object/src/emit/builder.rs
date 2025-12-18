@@ -19,7 +19,8 @@ use crate::{
         globals::{DefinedGlobal, GlobalImport},
         memory_layout, modify,
     },
-    index::{DataSegmentId, GappedMap, ImportsOrDefined, PrimaryKey, SymbolId, WithOriginalIndex},
+    index::{DataSegmentId, GappedMap, PrimaryKey, SymbolId},
+    read::{ImportsOrDefined, WithOriginalIndex},
 };
 
 ///

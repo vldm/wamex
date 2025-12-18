@@ -72,7 +72,7 @@ impl SymbolRecord<'_> {
                     return None;
                 };
 
-                let func = &input.wasm.code.defined_funcs[defined_id];
+                let func = &input.wasm_reader.code.defined_funcs[defined_id];
                 let mut body = func.body.as_bytes().to_vec();
                 Self::apply_empty_relocs(&mut body, &self.relocs);
                 Some(body)
@@ -82,7 +82,7 @@ impl SymbolRecord<'_> {
                 offset,
                 length,
             } => {
-                let segment = &input.wasm.data.data_segments[segment_id];
+                let segment = &input.wasm_reader.data.data_segments[segment_id];
                 let start = offset;
                 let end = start + length;
                 let mut data = segment.data[start..end].to_vec();

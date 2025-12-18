@@ -25,8 +25,9 @@ use crate::{
     helpers::encoding_size,
     index::{
         DataSegmentId, FuncTypeId, GappedMap, InputFuncId, InputGlobalId, MemoryId, SecondaryMap,
-        SymbolId, WithOriginalIndex,
+        SymbolId,
     },
+    read::WithOriginalIndex,
 };
 
 mod builder;
@@ -307,7 +308,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         // Simply copy all types.  Unneeded types may be pruned by `wasm-opt`.
         let mut section = wasm_encoder::TypeSection::new();
         // Only use func_types from OutputFunctions
-        for (_id, input_func_type) in self.src.wasm.types.iter() {
+        for (_id, input_func_type) in self.src.wasm_reader.types.iter() {
             let output_func_type: wasm_encoder::FuncType =
                 input_func_type.clone().try_into().unwrap();
             section.ty().function(
@@ -342,7 +343,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         match &self.sub_module_extra {
             None => {
                 // Copy all non-function imports from input.
-                for (_id, import) in self.src.wasm.imports.iter() {
+                for (_id, import) in self.src.wasm_reader.imports.iter() {
                     if matches!(
                         import.ty,
                         wasmparser::TypeRef::Func(_) | wasmparser::TypeRef::Global(_)
@@ -374,7 +375,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 );
 
                 // Import all memories defined by the input module.
-                for (memory_index, memory) in self.src.wasm.memories.iter() {
+                for (memory_index, memory) in self.src.wasm_reader.memories.iter() {
                     let ty: wasm_encoder::MemoryType = (*memory).into();
                     section.import("__wamex", self.get_memory_name(memory_index).as_str(), ty);
                 }
@@ -408,7 +409,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let input_func_id = self._get_input_func_id(index);
         let mut name = self
             .src
-            .wasm
+            .wasm_reader
             .names
             .functions
             .get(input_func_id)
@@ -433,7 +434,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
     fn get_global_name(&self, index: InputGlobalId) -> Cow<'src, str> {
         self.src
-            .wasm
+            .wasm_reader
             .names
             .globals
             .get(index)
@@ -452,7 +453,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
     fn get_memory_name(&self, index: MemoryId) -> String {
         self.src
-            .wasm
+            .wasm_reader
             .names
             .memories
             .get(index)
@@ -473,7 +474,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let mut existing_exports = HashSet::<borrow::Cow<'_, str>>::new();
         // left original exports as is (because this module should be drop-in replacement)
         if self.is_main() {
-            for (_id, export) in self.src.wasm.exports.iter() {
+            for (_id, export) in self.src.wasm_reader.exports.iter() {
                 let mut index = export.index;
                 if export.kind == wasmparser::ExternalKind::Func {
                     let Some(func_id) = self._get_output_func_id(InputFuncId::from_index(index))
@@ -533,7 +534,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             None => {
                 // Export globals.
                 let white_list = SubModuleExtra::MAIN_GLOBAL_EXPORTS;
-                for (global_index, _) in self.src.wasm.globals.iter() {
+                for (global_index, _) in self.src.wasm_reader.globals.iter() {
                     let name = self.get_global_name(global_index);
                     if existing_exports.contains(&name) {
                         continue;
@@ -571,7 +572,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     }
 
     fn find_void_type(&self) -> FuncTypeId {
-        for (fn_id, fn_type) in self.src.wasm.types.iter() {
+        for (fn_id, fn_type) in self.src.wasm_reader.types.iter() {
             if fn_type.params().is_empty() && fn_type.results().is_empty() {
                 return fn_id;
             }
@@ -712,11 +713,11 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     }
 
     fn generate_memory_section(&self, output_module: &mut wasm_encoder::Module) {
-        if self.src.wasm.memories.is_empty() {
+        if self.src.wasm_reader.memories.is_empty() {
             return;
         }
         let mut section = wasm_encoder::MemorySection::new();
-        for (_idx, memory) in self.src.wasm.memories.iter() {
+        for (_idx, memory) in self.src.wasm_reader.memories.iter() {
             section.memory((*memory).into());
         }
         output_module.section(&section);
@@ -774,7 +775,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         table_index: u32,
     ) -> Result<Vec<RelocationEntry>> {
         let func_type_id = &self.src.get_function_type_id(input_func_id);
-        let func_type = &self.src.wasm.types[*func_type_id];
+        let func_type = &self.src.wasm_reader.types[*func_type_id];
 
         let mut func = wasm_encoder::Function::new([]);
         for (param_i, _param_type) in func_type.params().iter().enumerate() {
@@ -806,7 +807,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         input_func_id: InputFuncId,
     ) -> Result<Vec<RelocationEntry>> {
         let func_type_id = &self.src.get_function_type_id(input_func_id);
-        let func_type = &self.src.wasm.types[*func_type_id];
+        let func_type = &self.src.wasm_reader.types[*func_type_id];
 
         let import_fn = self
             ._get_output_func_id(input_func_id)
@@ -971,7 +972,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         &self,
         output_module: &mut wasm_encoder::Module,
     ) -> Result<()> {
-        let mut features = self.src.wasm.target_features.clone();
+        let mut features = self.src.wasm_reader.target_features.clone();
         features.features.extended_const = true;
         output_module.section(&features.encode_custom_section());
         Ok(())
@@ -1046,7 +1047,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     // wasm-bindgen
     // other whitelisted
     fn generate_custom_sections(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
-        for (_, custom) in &self.src.wasm.custom_sections {
+        for (_, custom) in &self.src.wasm_reader.custom_sections {
             match &*custom.name {
                 "__wasm_bindgen_unstable" => {
                     if !self.is_main() {
@@ -1193,7 +1194,7 @@ impl<'src> CommonEmitInfo<'src> {
             |(left_segment, ..), (right_segment, ..)| left_segment == right_segment,
         );
         let data_segments: GappedMap<DataSegmentId, SegmentLayout<'src>> = module
-            .wasm
+            .wasm_reader
             .data
             .section_payload
             .data_segments
@@ -1203,7 +1204,8 @@ impl<'src> CommonEmitInfo<'src> {
                     .get(data_segment.as_raw_index())
                     .cloned()
                     .expect("Symbols for data segment not found");
-                let segment_info = &module.wasm.linking.segments_info[data_segment.as_raw_index()];
+                let segment_info =
+                    &module.wasm_reader.linking.segments_info[data_segment.as_raw_index()];
 
                 let layout = SegmentLayout::new_inner(
                     data,

@@ -39,7 +39,7 @@ impl<'any, 'src> Compare<'any, 'src> {
                 let num_imports = 27;
                 let raw_id = $id.as_raw_index() + num_imports;
                 let id = crate::index::InputFuncId::from_index(raw_id);
-                log::info!("name: {}", self.left.wasm.names.functions[id]);
+                log::info!("name: {}", self.left.wasm_reader.names.functions[id]);
                 match ($left, $right) {
                     (Some(left), Some(right)) => {
                         let left = hex::encode(left.body.as_bytes());
@@ -65,13 +65,13 @@ impl<'any, 'src> Compare<'any, 'src> {
                 print_compare_section!(print_elements, $($path).+);
             };
             ($v: ident, $($path:ident).+) => {
-                let res = Self::compare_vec(&self.left.wasm.$($path).+, &self.right.wasm.$($path).+);
+                let res = Self::compare_vec(&self.left.wasm_reader.$($path).+, &self.right.wasm_reader.$($path).+);
                 if res.is_empty() {
                     log::info!("No differences in {} found", stringify!($($path).+));
                 }
                 for (id, err) in res {
-                    let left = self.left.wasm.$($path).+.get(id);
-                    let right = self.right.wasm.$($path).+.get(id);
+                    let left = self.left.wasm_reader.$($path).+.get(id);
+                    let right = self.right.wasm_reader.$($path).+.get(id);
 
                     log::error!(
                         "Section {} differ at index: {} - {}",
@@ -328,8 +328,8 @@ impl<'any, 'src> Compare<'any, 'src> {
     // }
     fn print_compare_data(&self) {
         let mut errors = Vec::new();
-        let left = &self.left.wasm.data.data_segments;
-        let right = &self.right.wasm.data.data_segments;
+        let left = &self.left.wasm_reader.data.data_segments;
+        let right = &self.right.wasm_reader.data.data_segments;
         let mut left_iter = left.iter();
         let mut right_iter = right.iter();
         for ((left_id, left), (_, right)) in (&mut left_iter).zip(&mut right_iter) {
@@ -363,8 +363,8 @@ impl<'any, 'src> Compare<'any, 'src> {
             log::info!("No differences in {} found", stringify!(data.data_segments));
         }
         for (id, err) in res {
-            let left = self.left.wasm.data.data_segments.get(id);
-            let right = self.right.wasm.data.data_segments.get(id);
+            let left = self.left.wasm_reader.data.data_segments.get(id);
+            let right = self.right.wasm_reader.data.data_segments.get(id);
 
             process(left, right);
             log::error!(

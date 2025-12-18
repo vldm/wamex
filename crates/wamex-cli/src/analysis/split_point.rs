@@ -39,7 +39,7 @@ fn find_split_points_with_prefix(
     macro_rules! process_imports_or_exports {
         ($postfix: expr, $map:ident, $member:ident, $id_ty:ty) => {
             let $map = info
-                .wasm
+                .wasm_reader
                 .$member
                 .iter()
                 .filter_map(|(id, item)| {
@@ -63,7 +63,7 @@ fn find_split_points_with_prefix(
             let export_id = export_map
                 .remove(&key)
                 .with_context(|| format!("No corresponding export for split import {key:?}"))?;
-            let export = info.wasm.exports[export_id];
+            let export = info.wasm_reader.exports[export_id];
             let wasmparser::Export {
                 kind: wasmparser::ExternalKind::Func,
                 index,
@@ -79,7 +79,7 @@ fn find_split_points_with_prefix(
                 .with_context(|| {
                     format!(
                         "Expected imported function but received: {:?}",
-                        &info.wasm.imports[import_id]
+                        &info.wasm_reader.imports[import_id]
                     )
                 })?;
 
@@ -176,11 +176,11 @@ pub fn compute_split_modules(
     let split_points_by_module = merge_split_points_by_name(split_points);
 
     let mut roots: DepSet = DepSet::new();
-    if let Some(id) = info.wasm.code.section_payload.start_func {
+    if let Some(id) = info.wasm_reader.code.section_payload.start_func {
         roots.insert(info.symbols.get_function_symbol(id).unwrap());
     }
 
-    for (_id, export) in info.wasm.exports.iter() {
+    for (_id, export) in info.wasm_reader.exports.iter() {
         let wasmparser::Export {
             index,
             kind: wasmparser::ExternalKind::Func,
@@ -196,7 +196,7 @@ pub fn compute_split_modules(
         );
     }
 
-    for (index, (_, import)) in info.wasm.imports.iter().enumerate() {
+    for (index, (_, import)) in info.wasm_reader.imports.iter().enumerate() {
         let wasmparser::Import {
             ty: wasmparser::TypeRef::Func(_),
             ..

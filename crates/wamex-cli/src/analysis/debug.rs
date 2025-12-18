@@ -18,7 +18,7 @@ pub(crate) fn print_deps_inner(
         SymbolKind::DataDefined { length, .. } => length,
         SymbolKind::Func { input_id } => {
             if let Some(defined_id) = info.as_defined_function_id(input_id) {
-                info.wasm.code.defined_funcs[defined_id].body.range().len()
+                info.wasm_reader.code.defined_funcs[defined_id].body.range().len()
             } else {
                 0
             }
@@ -43,7 +43,7 @@ pub(crate) fn print_deps_inner(
                 ..
             } => {
                 let segment_name = info
-                    .wasm
+                    .wasm_reader
                     .names
                     .data_segments
                     .get(segment_id)
@@ -225,7 +225,7 @@ pub fn format_symbol_map(info: &InputObject) -> String {
         match symbol.kind {
             SymbolKind::Func { input_id } => {
                 let size = if let Some(defined_id) = info.as_defined_function_id(input_id) {
-                    info.wasm.code.defined_funcs[defined_id].body.range().len()
+                    info.wasm_reader.code.defined_funcs[defined_id].body.range().len()
                 } else {
                     0
                 };
@@ -242,7 +242,7 @@ pub fn format_symbol_map(info: &InputObject) -> String {
                 length,
             } => {
                 let segment_name = info
-                    .wasm
+                    .wasm_reader
                     .names
                     .data_segments
                     .get(segment_id)

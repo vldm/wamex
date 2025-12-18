@@ -4,29 +4,23 @@ use crate::{
         DefinedFunctionKind, ImportedFunction,
         globals::{DefinedGlobal, GlobalImport},
     },
-    index::{OutputMapType, PrimaryKey},
-    read::code::InputFunction,
+    index::PrimaryKey,
+    read::{Defined, OutputMapType, OutputType, code::InputFunction},
 };
 
-// impl Indexed for DefinedFunction {
-//     type StaticTypeTagForIndex = Self;
-//     type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
-// }
-// impl Indexed for ImportedFunction<'_> {
-//     type StaticTypeTagForIndex = ImportedFunction<'static>;
-//     type IndexType = crate::index::Id<Self::StaticTypeTagForIndex>;
-// }
 impl_entity_index! {
-    OutputFuncId(DefinedFunction) => "output_function";
-    ImportFnId(for<'a> ImportedFunction<'a>);
-    OutputGlobalId(for<'a> DefinedGlobal<'a>) => "output_global";
-    GlobalImportId(for<'a> GlobalImport<'a>);
+    #[display = "output_function"]
+    pub struct OutputFuncId(DefinedFunction);
+    pub struct ImportFnId(for<'a> ImportedFunction<'a>);
+    #[display = "output_global"]
+    pub struct OutputGlobalId(for<'a> DefinedGlobal<'a>);
+    pub struct GlobalImportId(for<'a> GlobalImport<'a>);
 }
 
-impl<'src> crate::index::Defined<'src> for DefinedFunction {
+impl<'src> Defined<'src> for DefinedFunction {
     type Import = ImportedFunction<'src>;
 }
-impl<'src> crate::index::OutputType<'src> for DefinedFunction {
+impl<'src> OutputType<'src> for DefinedFunction {
     type InputType = InputFunction<'src>;
     fn get_input_index(&self) -> OutputMapType<<Self::InputType as PrimaryKey>::EntityType> {
         if matches!(self.kind, DefinedFunctionKind::Trampoline { .. }) {
@@ -37,17 +31,17 @@ impl<'src> crate::index::OutputType<'src> for DefinedFunction {
     }
 }
 
-impl<'src> crate::index::OutputType<'src> for ImportedFunction<'src> {
+impl<'src> OutputType<'src> for ImportedFunction<'src> {
     type InputType = InputFunction<'src>;
     fn get_input_index(&self) -> OutputMapType<<Self::InputType as PrimaryKey>::EntityType> {
         OutputMapType::BidirectionalMap(self.input_func_id())
     }
 }
 
-impl<'src> crate::index::Defined<'src> for DefinedGlobal<'src> {
-    type Import = crate::emit::globals::GlobalImport<'src>;
+impl<'src> Defined<'src> for DefinedGlobal<'src> {
+    type Import = GlobalImport<'src>;
 }
-impl<'src> crate::index::OutputType<'src> for DefinedGlobal<'src> {
+impl<'src> OutputType<'src> for DefinedGlobal<'src> {
     type InputType = wasmparser::Global<'src>;
 
     fn get_input_index(&self) -> OutputMapType<<Self::InputType as PrimaryKey>::EntityType> {
@@ -60,7 +54,7 @@ impl<'src> crate::index::OutputType<'src> for DefinedGlobal<'src> {
     }
 }
 
-impl<'src> crate::index::OutputType<'src> for GlobalImport<'src> {
+impl<'src> OutputType<'src> for GlobalImport<'src> {
     type InputType = wasmparser::Global<'src>;
     fn get_input_index(&self) -> OutputMapType<<Self::InputType as PrimaryKey>::EntityType> {
         match self {
