@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{emit::ImportedEntity, index::InputGlobalId};
+use crate::{emit::ImportedEntity, read::raw::InputGlobalId};
 
 #[derive(Debug)]
 pub enum DefinedGlobal<'a> {

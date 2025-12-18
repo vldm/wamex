@@ -9,8 +9,8 @@ use std::{collections::BTreeMap, mem, ops::Deref};
 
 use cranelift_entity::SecondaryMap;
 
-use super::SymbolMap;
-use crate::index::{GappedMap, SymbolId};
+use super::{SymbolId, SymbolMap};
+use crate::index::GappedMap;
 
 pub struct SymbolMapping {
     // Most of symbols are mapped.

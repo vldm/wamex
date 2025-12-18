@@ -24,11 +24,13 @@ use crate::{
         },
     },
     helpers::encoding_size,
-    index::{
-        DataSegmentId, FuncTypeId, GappedMap, InputFuncId, InputGlobalId, MemoryId, SecondaryMap,
-        SymbolId,
+    index::{GappedMap, SecondaryMap},
+    read::{
+        EntitiesFromInput, MemoryRef,
+        raw::{DataSegmentId, FuncTypeId, InputFuncId, InputGlobalId},
+        typed::GlobalRef,
     },
-    read::WithOriginalIndex,
+    symbols::SymbolId,
 };
 
 mod builder;
@@ -186,14 +188,14 @@ impl SubModuleExtra {
 
 // 'any are used because associated types are invariant, and used in default impls for Indexed Vec/Map impls.
 pub struct ModuleEmitState<'any, 'src> {
-    functions: WithOriginalIndex<'src, DefinedFunction>,
+    functions: EntitiesFromInput<'src, OutputFuncId>,
 
     // Global variables:
     // - lib_base_id for library base address (import)
     // - existing globals from src module
     // - "store" globals for `modify::constant_extractions`
     // - globals for data segments (lib_base_id + offset)
-    globals: WithOriginalIndex<'src, DefinedGlobal<'src>>,
+    globals: EntitiesFromInput<'src, OutputGlobalId>,
     pub global_tmp_store: BTreeMap<StoreType, OutputGlobalId>,
     // extra imports that should be emitted for lib
     // Not available for main module.
@@ -375,7 +377,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 );
 
                 // Import all memories defined by the input module.
-                for (memory_index, memory) in self.src.wasm_reader.memories.iter() {
+                for (memory_index, memory) in self.src.memories.defined_iter() {
                     let ty: wasm_encoder::MemoryType = (*memory).into();
                     section.import("__wamex", self.get_memory_name(memory_index).as_str(), ty);
                 }
@@ -409,11 +411,10 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         let input_func_id = self._get_input_func_id(index);
         let mut name = self
             .src
-            .wasm_reader
-            .names
             .functions
+            .names
             .get(input_func_id)
-            .map(|name| (*name).into())
+            .map(|name| (*name).into_inner().into())
             .unwrap_or_else(|| format!("func_{index}").into());
 
         let namespace = exported
@@ -432,42 +433,22 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         name
     }
 
-    fn get_global_name(&self, index: InputGlobalId) -> Cow<'src, str> {
+    fn get_global_name(&self, index: GlobalRef) -> Cow<'src, str> {
         self.src
-            .wasm_reader
-            .names
             .globals
+            .names
             .get(index)
-            .map(|name| (*name).into())
-            .or_else(|| {
-                self.src
-                    .export_map
-                    .get(&(
-                        wasmparser::ExternalKind::Global as isize,
-                        index.index(), // TODO: convert indexes?
-                    ))
-                    .map(|(_, name)| (*name).into())
-            })
-            .unwrap_or_else(|| format!("__global_{index}").into())
+            .map(|name| (*name).into_inner().into())
+            .unwrap_or_else(|| format!("__{index}",).into())
     }
 
-    fn get_memory_name(&self, index: MemoryId) -> String {
+    fn get_memory_name(&self, index: MemoryRef) -> String {
         self.src
-            .wasm_reader
-            .names
             .memories
+            .names
             .get(index)
-            .map(|name| name.to_string())
-            .or_else(|| {
-                self.src
-                    .export_map
-                    .get(&(
-                        wasmparser::ExternalKind::Memory as isize,
-                        index.index(), // TODO: convert indexes?
-                    ))
-                    .map(|(_, name)| name.to_string())
-            })
-            .unwrap_or_else(|| format!("__memory_{index}"))
+            .map(|name| (*name).into_inner().to_owned())
+            .unwrap_or_else(|| format!("__{index}"))
     }
     fn generate_export_section(&self, output_module: &mut wasm_encoder::Module) {
         let mut section = wasm_encoder::ExportSection::new();
@@ -534,7 +515,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             None => {
                 // Export globals.
                 let white_list = SubModuleExtra::MAIN_GLOBAL_EXPORTS;
-                for (global_index, _) in self.src.wasm_reader.globals.iter() {
+                // TODO: export included?
+                for (global_index, _) in self.src.globals.defined_iter() {
                     let name = self.get_global_name(global_index);
                     if existing_exports.contains(&name) {
                         continue;

@@ -5,6 +5,7 @@ use std::{
     ops::Range,
 };
 
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord, Hash)]
 pub enum RangeComp {
     // This range is fully left to Other range.

@@ -17,10 +17,15 @@ use crate::{
     emit::{
         DefinedFunction, ImportedFunction, SegmentLayout, SubModuleExtra,
         globals::{DefinedGlobal, GlobalImport},
+        index_safety::{OutputFuncId, OutputGlobalId},
         memory_layout, modify,
     },
-    index::{DataSegmentId, GappedMap, PrimaryKey, SymbolId},
-    read::{ImportsOrDefined, WithOriginalIndex},
+    index::{GappedMap, IdVec},
+    read::{
+        raw::DataSegmentId,
+        typed::{CompoundList, EntitiesFromInput},
+    },
+    symbols::SymbolId,
 };
 
 ///
@@ -32,44 +37,38 @@ use crate::{
 ///
 /// At this phase only imports id are stable, thats why add_imported_* methods return Ids,
 pub struct ObjectBuilder<'src> {
-    pub globals: ImportsOrDefined<'src, DefinedGlobal<'src>>,
-    pub functions: ImportsOrDefined<'src, DefinedFunction>,
+    pub globals: CompoundList<'src, OutputGlobalId>,
+    pub functions: CompoundList<'src, OutputFuncId>,
     pub data: GappedMap<DataSegmentId, SegmentLayout<'src>>,
 }
 
 impl<'src> ObjectBuilder<'src> {
     pub fn new() -> Self {
         Self {
-            globals: ImportsOrDefined::new(Vec::new(), Vec::new()),
-            functions: ImportsOrDefined::new(Vec::new(), Vec::new()),
+            globals: CompoundList::new(IdVec::new(), IdVec::new()),
+            functions: CompoundList::new(IdVec::new(), IdVec::new()),
             data: GappedMap::new(),
         }
     }
 
     /// Adds new global variable imported from other module.
-    pub fn add_imported_global(
-        &mut self,
-        global: GlobalImport<'src>,
-    ) -> <DefinedGlobal as PrimaryKey>::EntityType {
+    pub fn add_imported_global(&mut self, global: GlobalImport<'src>) -> OutputGlobalId {
         self.globals.push_import(global)
     }
 
     /// Adds new function imported from other module.
-    pub fn add_imported_function(
-        &mut self,
-        func: ImportedFunction<'src>,
-    ) -> <DefinedFunction as PrimaryKey>::EntityType {
+    pub fn add_imported_function(&mut self, func: ImportedFunction<'src>) -> OutputFuncId {
         self.functions.push_import(func)
     }
 
     /// Adds new function within this module.
     pub fn add_defined_function(&mut self, func: DefinedFunction) {
-        self.functions.defined.push(func)
+        self.functions.defined.push(func);
     }
 
     /// Adds new global variable defined within this module.
     pub fn add_defined_global(&mut self, global: DefinedGlobal<'src>) {
-        self.globals.defined.push(global)
+        self.globals.defined.push(global);
     }
 
     // TODO: allow define data segment from chunks
@@ -149,8 +148,8 @@ impl<'src> ObjectBuilder<'src> {
             }
         }
         Object {
-            globals: self.globals.lock(),
-            functions: self.functions.lock(),
+            globals: EntitiesFromInput::new(self.globals),
+            functions: EntitiesFromInput::new(self.functions),
             data: data_segment_outputs,
             data_relocations,
         }
@@ -166,7 +165,7 @@ impl BuilderContextToBeRemoved<'_, '_> {
     fn is_main(&self) -> bool {
         self.sub_module_extra.is_none()
     }
-    fn lib_base_import(&self) -> Option<<DefinedGlobal as PrimaryKey>::EntityType> {
+    fn lib_base_import(&self) -> Option<OutputGlobalId> {
         self.sub_module_extra
             .as_ref()
             .map(|extra| extra.self_base.lib_base_id)
@@ -180,9 +179,9 @@ impl BuilderContextToBeRemoved<'_, '_> {
 /// Phase 3 <Finalized subroutine>: calculate types, emit (types, functions, tables, memories, globals, exports, start_fn, elem, code, data segments)
 /// Phase 4 <Finalized subroutine>: calculate relocations and emit custom sections
 pub struct Object<'src> {
-    pub globals: WithOriginalIndex<'src, DefinedGlobal<'src>>,
+    pub globals: EntitiesFromInput<'src, OutputGlobalId>,
 
-    pub functions: WithOriginalIndex<'src, DefinedFunction>,
+    pub functions: EntitiesFromInput<'src, OutputFuncId>,
 
     pub data: GappedMap<DataSegmentId, memory_layout::DataSegmentOutput>,
     //TODO: Remove data_relocations, instead of DataSegmentOutput use SegmentLayout

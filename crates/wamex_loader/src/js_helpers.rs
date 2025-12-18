@@ -9,7 +9,7 @@ macro_rules! obj_set {
         obj_set!($obj, &JsValue::from_str($key), &$value.into())
     };
     ($obj:expr, $key:expr, $value:expr) => {{
-        let set = unsafe { Reflect::set($obj, &$key, $value) }.map_err(|error| Error::JsError {
+        let set = Reflect::set($obj, &$key, $value).map_err(|error| Error::JsError {
             context: "Failed to set import",
             error,
         })?;
@@ -49,7 +49,7 @@ pub fn copy_imports(
         if cfg!(debug_assertions) {
             let key_str = key.as_string().unwrap_or_default();
 
-            let existing = unsafe { Reflect::get(target, &key) }.map_err(|e| Error::JsError {
+            let existing = Reflect::get(target, &key).map_err(|e| Error::JsError {
                 context: "Failed to get existing import",
                 error: e,
             })?;

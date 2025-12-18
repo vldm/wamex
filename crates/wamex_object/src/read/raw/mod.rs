@@ -1,13 +1,15 @@
 use anyhow::{Result, anyhow, bail};
+pub use indexes::*;
 use vec_map::VecMap;
 use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::index::{DefinedFuncId, FuncTypeId, IdVec, IndexedSection};
+use crate::index::{IdVec, IndexedSection};
 
 pub mod code;
 pub mod data;
+mod indexes;
 pub mod linking;
 pub mod names;
 pub mod relocs;
@@ -105,14 +107,14 @@ impl<'a> ObjectReader<'a> {
                 Payload::FunctionSection(reader) => {
                     function_types = reader
                         .into_iter()
-                        .map(|t| t.map(crate::index::FuncTypeId::from_u32))
+                        .map(|t| t.map(FuncTypeId::from_u32))
                         .collect::<Result<Vec<_>, _>>()?;
                 }
                 Payload::ExportSection(reader) => {
                     module.exports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::StartSection { func, .. } => {
-                    code_start = Some(crate::index::InputFuncId::from_u32(func));
+                    code_start = Some(InputFuncId::from_u32(func));
                 }
                 Payload::DataCountSection { count, .. } => {
                     data_count = Some(count as usize);

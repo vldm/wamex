@@ -12,25 +12,31 @@ use smallvec::SmallVec;
 use crate::{
     InputObject, ObjectReader,
     helpers::{RangeComp, RangeExt},
-    index::{
-        DataSegmentId, DefinedFuncId, GappedMap, IdVec, InputFuncId, InputGlobalId, SymbolId,
-        TableId,
+    index::{GappedMap, IdVec},
+    read::{
+        FunctionRef, GlobalRef, TableRef,
+        raw::{DataSegmentId, DefinedFuncId, InputFuncId, InputGlobalId, TableId},
     },
 };
 mod diff;
 
+impl_entity_index! {
+    #[display = ""] // Basic symbol no need prefix for display
+    pub struct SymbolId(for<'a> SymbolRecord<'a>);
+}
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum SymbolKind {
     Func {
-        input_id: InputFuncId,
+        input_id: FunctionRef,
     },
     DataDefined {
         segment_id: DataSegmentId,
         offset: usize,
         length: usize,
     },
-    Global(InputGlobalId),
-    Table(TableId),
+    Global(GlobalRef),
+    Table(TableRef),
     Duplicate(SymbolId),
 }
 
@@ -182,10 +188,13 @@ impl<'src> SymbolMap<'src> {
 
             let sym = match *symbol {
                 SymbolInfo::Func { index, flags, name } => {
-                    let input_function_id = InputFuncId::from_u32(index);
+                    let input_function_id = FunctionRef::from_u32(index);
                     let fn_name = Self::get_or_create_name(
                         name,
-                        wasm.names.functions.get(input_function_id).map(|n| *n),
+                        wasm.names
+                            .functions
+                            .get(input_function_id)
+                            .map(|n| n.into_inner()),
                         || panic!("function {index} does not have a name"),
                     );
 
@@ -276,10 +285,10 @@ impl<'src> SymbolMap<'src> {
                     }
                 }
                 SymbolInfo::Global { flags, name, index } => {
-                    let global_id = InputGlobalId::from_u32(index);
+                    let global_id = GlobalRef::from_u32(index);
                     let global_name = Self::get_or_create_name(
                         name,
-                        wasm.names.globals.get(global_id).map(|n| *n),
+                        wasm.names.globals.get(global_id).map(|n| n.into_inner()),
                         || format!("global_{index}"),
                     );
                     SymIm {
@@ -290,10 +299,10 @@ impl<'src> SymbolMap<'src> {
                     }
                 }
                 SymbolInfo::Table { index, name, flags } => {
-                    let table_id = TableId::from_u32(index);
+                    let table_id = TableRef::from_u32(index);
                     let table_name = Self::get_or_create_name(
                         name,
-                        wasm.names.tables.get(table_id).map(|n| *n),
+                        wasm.names.tables.get(table_id).map(|n| n.into_inner()),
                         || format!("table_{}", table_id),
                     );
                     SymIm {

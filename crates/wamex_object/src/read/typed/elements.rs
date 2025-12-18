@@ -1,9 +1,16 @@
 use anyhow::{Context, bail, ensure};
-use cranelift_entity::{EntityRef, PrimaryMap};
+use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 use wasmparser::ElementKind;
 
-use super::{ElementId, ElementItems, Result, TableId};
-use crate::{InputObject, SVec, index::InputFuncId, read::raw};
+use super::{ElementId, ElementItems, Result};
+use crate::{
+    InputObject, SVec,
+    index::GappedMap,
+    read::{
+        TableRef,
+        raw::{self, InputFuncId},
+    },
+};
 
 impl_entity_index! {
     pub struct ElementItemId;
@@ -46,31 +53,32 @@ impl ElementType<'_> for InputFuncId {
     }
 }
 
-pub struct ElementTable<T> {
+pub struct ElementTable<T: ReservedValue + Clone> {
     // ID of table with indirect functions definition
-    pub table_id: TableId,
+    pub table_id: TableRef,
     pub element_ids: SVec<ElementId>,
-    pub items: PrimaryMap<ElementItemId, T>,
+    // Allow gaps in case of non-initialized elements
+    pub items: GappedMap<ElementItemId, T>,
 }
 
-impl<T> ElementTable<T> {
-    pub fn new(table_id: TableId) -> Self {
+impl<T: ReservedValue + Clone> ElementTable<T> {
+    pub fn new(table_id: TableRef) -> Self {
         Self {
             table_id,
             element_ids: SVec::new(),
-            items: PrimaryMap::new(),
+            items: GappedMap::new(),
         }
     }
 }
 
-impl<'a, T: ElementType<'a>> ElementTable<T> {
+impl<'a, T: ElementType<'a> + ReservedValue + Clone> ElementTable<T> {
     // Creates ElementTable from raw module reader
     // search all element segments for needed table_id,
     // if default_table is set, then segments with no table_index (Wasm MVP spec) are also considered.
     // Returns error if element segment uses unsupported offset expression or item type.
     pub fn from_reader(
         module: &raw::ObjectReader<'a>,
-        table_id: TableId,
+        table_id: TableRef,
         default_table: bool,
     ) -> Result<Self> {
         let mut table = Self::new(table_id);
@@ -107,22 +115,23 @@ impl<'a, T: ElementType<'a>> ElementTable<T> {
             let item_id =
                 ElementItemId::from_u32(offset.try_into().expect("Negative offset checked above"));
 
-            if let Some(size) = T::hint_size(&element.items) {
-                let max_elem = item_id.index() + size as usize;
-                let extra = max_elem.saturating_sub(table.items.len());
+            // SecondaryMap not yet support reserving capacity, so skipping for now
+            // if let Some(size) = T::hint_size(&element.items) {
+            //     let max_elem = item_id.index() + size as usize;
+            //     let extra = max_elem.saturating_sub(table.items.len());
 
-                log::debug!(
-                    "Reserving {} extra element slots for element segment {:?} in table {:?}",
-                    extra,
-                    id,
-                    table_id,
-                );
+            //     log::debug!(
+            //         "Reserving {} extra element slots for element segment {:?} in table {:?}",
+            //         extra,
+            //         id,
+            //         table_id,
+            //     );
 
-                table.items.reserve(extra);
-            }
+            //     table.items.reserve(extra);
+            // }
 
             T::for_item(element.items.clone(), item_id, |elem_id, elem| {
-                table.items[elem_id] = elem;
+                table.items[elem_id] = elem.into();
             })?;
         }
         Ok(table)

@@ -14,7 +14,8 @@ use crate::{
         SymbolOp, SymbolUOffset,
         relocation::{DataSymbolTag, FunctionIndexTag, encode},
     },
-    index::{DataSegmentId, SymbolId},
+    read::raw::DataSegmentId,
+    symbols::SymbolId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

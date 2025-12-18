@@ -39,7 +39,16 @@ impl<'any, 'src> Compare<'any, 'src> {
                 let num_imports: usize = todo!();
                 let raw_id = $id.index() + num_imports;
                 let id = crate::index::InputFuncId::new(raw_id);
-                log::info!("name: {}", self.left.wasm_reader.names.functions[id]);
+                log::info!(
+                    "name: {}",
+                    self.left
+                        .wasm_reader
+                        .names
+                        .functions
+                        .get(id)
+                        .copied()
+                        .unwrap_or_default()
+                );
                 match ($left, $right) {
                     (Some(left), Some(right)) => {
                         let left = hex::encode(left.body.as_bytes());

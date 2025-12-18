@@ -1,8 +1,11 @@
 use anyhow::{Result, bail, ensure};
 pub use wasmparser::FunctionBody;
 
-use super::Ind;
-use crate::index::{FuncTypeId, IdVec, InputFuncId};
+use super::{
+    Ind,
+    indexes::{FuncTypeId, InputFuncId},
+};
+use crate::index::IdVec;
 
 #[derive(Debug)]
 pub enum InputFunction<'a> {

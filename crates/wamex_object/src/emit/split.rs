@@ -19,8 +19,8 @@ use crate::{
         index_safety::OutputGlobalId,
         modify::{self, init_each_store_var},
     },
-    index::{ExportId, ImportId, InputFuncId, InputGlobalId, SymbolId},
-    symbols::SymbolKind,
+    read::raw::{ExportId, ImportId, InputFuncId, InputGlobalId},
+    symbols::{SymbolId, SymbolKind},
 };
 
 pub const WAMEX_ENTRY_PREFIX: &str = "__wamex_00";
@@ -440,7 +440,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
             self.state.add_imported_global(global);
             input_global_id = input_global_id.next();
         }
-        for (id, global) in ctx.module_info.wasm_reader.globals.iter() {
+        for (id, global) in ctx.module_info.globals.defined_iter() {
             let global = DefinedGlobal::PlainCopy {
                 global: global.clone(),
                 // TODO: This is probably incorrect so i left panic in case if some global is imported - for now, and will fix with test

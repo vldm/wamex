@@ -1,26 +1,32 @@
 use anyhow::{Result, bail};
 use vec_map::VecMap;
 
-use super::CustomSectionReader;
-use crate::index::{
-    DataSegmentId, ElementId, FuncTypeId, InputFuncId, InputGlobalId, MemoryId, SecondaryMap,
-    TableId, TagId,
+use super::{
+    CustomSectionReader,
+    indexes::{DataSegmentId, ElementId, FuncTypeId},
 };
+use crate::{
+    index::{GappedMap, NonDefault, SecondaryMap},
+    read::typed::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef},
+};
+
+type Str<'a> = NonDefault<&'a str>;
 
 // Custom sections
 #[derive(Default, Clone, Debug)]
 pub struct Names<'a> {
     pub module: Option<&'a str>,
-    pub functions: SecondaryMap<InputFuncId, &'a str>,
     pub locals: VecMap<wasmparser::NameMap<'a>>,
     pub labels: VecMap<wasmparser::NameMap<'a>>,
-    pub types: SecondaryMap<FuncTypeId, &'a str>,
-    pub tables: SecondaryMap<TableId, &'a str>,
-    pub memories: SecondaryMap<MemoryId, &'a str>,
-    pub globals: SecondaryMap<InputGlobalId, &'a str>,
-    pub elements: SecondaryMap<ElementId, &'a str>,
-    pub data_segments: SecondaryMap<DataSegmentId, &'a str>,
-    pub tags: SecondaryMap<TagId, &'a str>,
+    pub types: GappedMap<FuncTypeId, Str<'a>>,
+    pub elements: GappedMap<ElementId, Str<'a>>,
+    pub data_segments: GappedMap<DataSegmentId, Str<'a>>,
+    // entities
+    pub functions: GappedMap<FunctionRef, Str<'a>>,
+    pub tables: GappedMap<TableRef, Str<'a>>,
+    pub memories: GappedMap<MemoryRef, Str<'a>>,
+    pub globals: GappedMap<GlobalRef, Str<'a>>,
+    pub tags: GappedMap<TagRef, Str<'a>>,
 }
 
 impl<'a> CustomSectionReader<'a> for Names<'a> {
@@ -88,15 +94,13 @@ fn convert_indirect_name_map<'a>(
         .collect::<Result<VecMap<_>, _>>()
 }
 
-fn convert_name_map<'a, Idx>(
-    name_map: wasmparser::NameMap<'a>,
-) -> Result<SecondaryMap<Idx, &'a str>>
+fn convert_name_map<'a, Idx>(name_map: wasmparser::NameMap<'a>) -> Result<GappedMap<Idx, Str<'a>>>
 where
     Idx: crate::index::EntityRef + From<u32>,
 {
     name_map
         .into_iter()
-        .map(|r| r.map(|naming| (naming.index.into(), naming.name)))
-        .collect::<Result<SecondaryMap<Idx, &'a str>, _>>()
+        .map(|r| r.map(|naming| (naming.index.into(), naming.name.into())))
+        .collect::<Result<GappedMap<Idx, Str<'a>>, _>>()
         .map_err(|e| e.into())
 }

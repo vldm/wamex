@@ -11,8 +11,8 @@ use crate::{
     emit::{
         ComputedModules, GotBase, ModuleEmitState, index_safety::OutputGlobalId, modify::SymbolOp,
     },
-    index::{DataSegmentId, InputFuncId, InputGlobalId, SymbolId},
-    symbols::SymbolKind,
+    read::raw::{DataSegmentId, InputFuncId, InputGlobalId},
+    symbols::{SymbolId, SymbolKind},
 };
 
 pub(crate) trait EntryTypeTag {

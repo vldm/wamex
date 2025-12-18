@@ -22,7 +22,7 @@ use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     emit::{ComputedModules, ModuleEmitState, index_safety::OutputGlobalId},
-    index::{DefinedFuncId, InputFuncId, InputGlobalId},
+    read::raw::{DefinedFuncId, InputFuncId, InputGlobalId},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -92,19 +92,19 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
             let func_id = InputFuncId::new(
                 defined_function_id.index() + module_emit.src.import_info.imported_funcs.len(),
             );
-            let defined_func = &module_emit
+            let defined_func = module_emit
                 .src
-                .wasm_reader
-                .code
-                .section_payload
-                .defined_funcs[defined_function_id];
+                .functions
+                .items
+                .defined
+                .get(defined_function_id)
+                .expect("defined function should exist");
             let name = module_emit
                 .src
-                .wasm_reader
-                .names
                 .functions
+                .names
                 .get(func_id)
-                .copied()
+                .map(|name| (*name).into_inner().into())
                 .unwrap_or("__undefined_function");
             (name, defined_func.body.clone())
         };
@@ -291,19 +291,19 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
             let func_id = InputFuncId::new(
                 defined_function_id.index() + module_emit.src.import_info.imported_funcs.len(),
             );
-            let defined_func = &module_emit
+            let defined_func = module_emit
                 .src
-                .wasm_reader
-                .code
-                .section_payload
-                .defined_funcs[defined_function_id];
+                .functions
+                .items
+                .defined
+                .get(defined_function_id)
+                .expect("defined function should exist");
             let name = module_emit
                 .src
-                .wasm_reader
-                .names
                 .functions
+                .names
                 .get(func_id)
-                .copied()
+                .map(|name| (*name).into_inner().into())
                 .unwrap_or("__undefined_function");
             (name, defined_func.body.clone())
         };

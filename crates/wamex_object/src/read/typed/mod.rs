@@ -6,19 +6,21 @@
 //! 2.
 //!
 
-use std::{cmp::Ordering, collections::HashMap, fmt::Debug, ops::Range};
+use std::{cmp::Ordering, fmt::Debug, ops::Range};
 
 use anyhow::{Context, Result, bail};
 use cranelift_entity::EntityRef;
-pub use wasm_entities::{Defined, ImportsOrDefined, OutputMapType, OutputType, WithOriginalIndex};
+pub use entities::*;
 use wasmparser::{ElementItems, TypeRef};
 
 use crate::{
-    index::{
-        AnySymbolId, DefinedFuncId, ElementId, ExportId, FuncTypeId, GappedMap, ImportId,
-        InputFuncId, InputGlobalId, TableId,
+    index::{GappedMap, NonDefault},
+    read::{
+        self,
+        raw::{
+            DefinedFuncId, ElementId, FuncTypeId, ImportId, InputFuncId, InputGlobalId, TableId,
+        },
     },
-    read,
     symbols::SymbolMap,
 };
 
@@ -32,9 +34,9 @@ pub struct ImportInfo {
     pub imported_global_map: GappedMap<ImportId, InputGlobalId>,
 }
 
-mod elements;
+pub mod elements;
+mod entities;
 mod imports;
-mod wasm_entities;
 /// Partially parsed wasm object.
 /// It expects that module has valid structure and contains additional custom sections:
 /// - name section with function and global names
@@ -49,20 +51,87 @@ pub struct InputObject<'src> {
 
     pub import_info: ImportInfo,
 
-    pub export_map: HashMap<(isize, AnySymbolId), (ExportId, &'src str)>,
+    // pub export_map: HashMap<(isize, AnySymbolId), (ExportId, &'src str)>,
 
+    // entities
+    pub functions: entities::Functions<'src>,
+    pub tables: entities::Tables<'src>,
+    pub memories: entities::Memories<'src>,
+    pub globals: entities::Globals<'src>,
+    pub tags: entities::Tags<'src>,
+    // different elements
     pub indirect_function_table: elements::IndirectFunctionTable,
 }
 
 impl<'src> InputObject<'src> {
     pub fn from_wasm_bytes(wasm_bytes: &'src [u8]) -> Result<Self> {
-        let module = read::ObjectReader::parse(&wasm_bytes)?;
-        Self::from_raw_module(module)
+        let reader = read::ObjectReader::parse(&wasm_bytes)?;
+        Self::from_raw_module(reader)
     }
     pub fn from_raw_module(module: read::ObjectReader<'src>) -> Result<Self> {
         //TODO: Maybe we should use `IdMap` here?
         let mut imported_funcs: Vec<ImportId> = Vec::new();
         let mut imported_globals: Vec<ImportId> = Vec::new();
+
+        let imports = imports::read_imports(&module)?;
+        let exports = imports::read_exports(&module)?;
+
+        let functions = entities::Functions::new(
+            CompoundList::new(imports.0, module.code.section_payload.defined_funcs.clone()),
+            module
+                .names
+                .functions
+                .iter()
+                // TODO: remove
+                .map(|(id, name)| (FunctionRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .collect(),
+            exports.0,
+        );
+        let tables = entities::Tables::new(
+            CompoundList::new(imports.1, module.tables.clone()),
+            module
+                .names
+                .tables
+                .iter()
+                // TODO: remove
+                .map(|(id, name)| (TableRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .collect(),
+            exports.1,
+        );
+        let memories = entities::Memories::new(
+            CompoundList::new(imports.2, module.memories.clone()),
+            module
+                .names
+                .memories
+                .iter()
+                // TODO: remove
+                .map(|(id, name)| (MemoryRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .collect(),
+            exports.2,
+        );
+        let globals = entities::Globals::new(
+            CompoundList::new(imports.3, module.globals.clone()),
+            module
+                .names
+                .globals
+                .iter()
+                // TODO: remove
+                .map(|(id, name)| (GlobalRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .collect(),
+            exports.3,
+        );
+
+        let tags = entities::Tags::new(
+            CompoundList::new(imports.4, module.tags.clone()),
+            module
+                .names
+                .tags
+                .iter()
+                // TODO: remove
+                .map(|(id, name)| (TagRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .collect(),
+            exports.4,
+        );
 
         for (import_id, import) in module.imports.iter() {
             match import.ty {
@@ -93,30 +162,29 @@ impl<'src> InputObject<'src> {
             imported_globals,
             imported_global_map,
         };
-        let export_map = module
-            .exports
-            .iter()
-            .map(|(i, export)| {
-                (
-                    (export.kind as isize, export.index as AnySymbolId),
-                    (i, export.name),
-                )
-            })
-            .collect();
+        // let export_map = module
+        //     .exports
+        //     .iter()
+        //     .map(|(i, export)| {
+        //         (
+        //             (export.kind as isize, export.index as AnySymbolId),
+        //             (i, export.name),
+        //         )
+        //     })
+        //     .collect();
 
-        let (_table_name, table_id) = module
-            .tables
+        let (_table_name, table_id) = tables
             .iter()
-            .filter_map(|(id, _)| module.names.tables.get(id).map(|name| (*name, id)))
+            .filter_map(|(id, _)| module.names.tables.get(id).map(|name| (name.into_inner(), id)))
             .find(|(name, _)| *name == "__indirect_function_table")
             .unwrap_or_else(|| {
                 assert!(
-                    module.tables.len() == 1,
+                    tables.items.defined.len() == 1,
                     "No named __indirect_function_table was found, and there is not one table in the module."
                 );
                 (
                     "__indirect_function_table",
-                    module.tables.iter().next().unwrap().0,
+                    tables.defined_iter().next().unwrap().0,
                 )
             });
 
@@ -126,11 +194,18 @@ impl<'src> InputObject<'src> {
         let symbols_map = SymbolMap::new(&module, import_funcs_info.imported_funcs.len())?;
 
         Ok(InputObject {
-            import_info: import_funcs_info,
-            symbols: symbols_map,
             wasm_reader: module,
-            export_map,
+            symbols: symbols_map,
+
+            import_info: import_funcs_info,
+            // export_map,
             indirect_function_table,
+
+            functions,
+            tables,
+            memories,
+            globals,
+            tags,
         })
     }
 
@@ -214,17 +289,17 @@ impl<'src> InputObject<'src> {
             .names
             .functions
             .iter()
-            .find(|f| *f.1 == name)?;
+            .find(|f| **f.1 == name)?;
         Some(func.0)
     }
 
-    pub fn find_global_id_by_name(&self, name: &str) -> Option<InputGlobalId> {
+    pub fn find_global_id_by_name(&self, name: &str) -> Option<GlobalRef> {
         let global = self
             .wasm_reader
             .names
             .globals
             .iter()
-            .find(|f| *f.1 == name)?;
+            .find(|f| **f.1 == name)?;
         Some(global.0)
     }
 

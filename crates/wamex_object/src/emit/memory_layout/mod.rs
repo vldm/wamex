@@ -10,9 +10,16 @@ use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
     helpers::{RangeComp, RangeExt},
-    index::{DataSegmentId, GappedMap, ReservedValue, SymbolId},
-    symbols::{self, SymbolKind},
+    index::{GappedMap, ReservedValue},
+    read::raw::DataSegmentId,
+    symbols::{self, SymbolId, SymbolKind},
 };
+impl_entity_index! {
+
+    #[display = "segment"]
+    pub struct BuilderSegmentId(for<'a> SegmentLayout<'a>);
+}
+
 mod hexdump;
 
 /// Describes how a data symbol relates to its neighboring symbols within a segment.

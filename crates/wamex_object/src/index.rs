@@ -15,20 +15,13 @@
 //!
 
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     hash::Hash,
     ops::{Deref, DerefMut},
 };
 
 use cranelift_entity::packed_option::PackedOption;
 pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
-use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
-
-use crate::{
-    emit::SegmentLayout,
-    read::code::{FunctionWithBody, InputFunction},
-    symbols::SymbolRecord,
-};
 
 macro_rules! impl_entity_index {
     ( $(
@@ -90,7 +83,10 @@ macro_rules! impl_entity_index {
 // Usefull for maps where some items are not set, but unlike `cranelift_entity::SparseMap`
 // the amount of gaps, is small, therefore no need to store array of keys separately.
 // As a penalty for that, iterating over all items is more expensive, and memory is reserved for invalid items.
-#[derive(Clone, PartialEq, Eq, Hash, Default, Debug)]
+//
+// Also API is slightly different - instead of using `Index` trait to access items, it uses `get` and `entry` methods.
+// This is because `Index` trait does not allow returning `Option<&V>`, and `PackedOption<V>` is not very user-friendly.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct GappedMap<K: EntityRef, V: ReservedValue + Clone> {
     map: SecondaryMap<K, PackedOption<V>>,
     // tracked length of inserted non-default items
@@ -102,10 +98,7 @@ where
     V: Clone + ReservedValue,
 {
     pub fn new() -> Self {
-        GappedMap {
-            map: SecondaryMap::with_default(PackedOption::default()),
-            length: 0,
-        }
+        GappedMap::default()
     }
     /// Insert value, returning previous value if any.
     ///
@@ -151,19 +144,33 @@ where
     pub fn len(&self) -> usize {
         self.length
     }
-    pub fn entry(&mut self, key: K) -> IdMapEntry<'_, V> {
-        IdMapEntry {
+
+    pub fn entry(&mut self, key: K) -> GappedMapEntry<'_, V> {
+        GappedMapEntry {
             reserved: &mut self.map[key],
         }
     }
 }
 
+impl<K: EntityRef, V: ReservedValue + Clone> std::ops::Index<K> for GappedMap<K, V> {
+    type Output = PackedOption<V>;
+
+    fn index(&self, index: K) -> &Self::Output {
+        &self.map[index]
+    }
+}
+impl<K: EntityRef, V: ReservedValue + Clone> std::ops::IndexMut<K> for GappedMap<K, V> {
+    fn index_mut(&mut self, index: K) -> &mut Self::Output {
+        &mut self.map[index]
+    }
+}
+
 /// Reference to an entry in `IdMap`
-pub struct IdMapEntry<'a, V: ReservedValue + Clone> {
+pub struct GappedMapEntry<'a, V: ReservedValue + Clone> {
     reserved: &'a mut PackedOption<V>,
 }
 
-impl<'a, V: ReservedValue + Clone> IdMapEntry<'a, V> {
+impl<'a, V: ReservedValue + Clone> GappedMapEntry<'a, V> {
     pub fn or_insert(self, value: V) -> &'a mut V {
         self.or_insert_with(|| value)
     }
@@ -188,6 +195,14 @@ where
             map.insert(k, v);
         }
         map
+    }
+}
+impl<K: EntityRef, V: Clone + ReservedValue> Default for GappedMap<K, V> {
+    fn default() -> Self {
+        GappedMap {
+            map: SecondaryMap::with_default(PackedOption::default()),
+            length: 0,
+        }
     }
 }
 
@@ -258,6 +273,7 @@ mod test_impl_entity_index {
 
     use super::SectionId;
 
+    #[allow(dead_code, reason = "used for compile test only")]
     struct Test<'f> {
         _func: PhantomData<&'f ()>,
     }
@@ -269,36 +285,6 @@ mod test_impl_entity_index {
         pub struct WithPrimary(SectionId);
         pub struct WithPrimaryLf(for <'lf> Test<'lf>);
     }
-}
-
-impl_entity_index! {
-    #[display = "tag"]
-    pub struct TagId(TagType);
-    #[display = "type"]
-    pub struct FuncTypeId(FuncType);
-    #[display = "memory"]
-    pub struct MemoryId(MemoryType);
-    #[display = "import"]
-    pub struct ImportId(for<'a> Import<'a>);
-    #[display = "export"]
-    pub struct ExportId(for<'a> Export<'a>);
-    #[display = "table"]
-    pub struct TableId(for<'a> Table<'a>);
-    #[display = "global"]
-    pub struct InputGlobalId(for<'a> Global<'a>);
-    #[display = "element"]
-    pub struct ElementId(for<'a> Element<'a>);
-    #[display = "data"]
-    pub struct DataSegmentId(for<'a> Data<'a>);
-    #[display = ""] // Basic symbol no need prefix for display
-    pub struct SymbolId(for<'a> SymbolRecord<'a>);
-    #[display = "segment"]
-    pub struct BuilderSegmentId(for<'a> SegmentLayout<'a>);
-    #[display = "func"]
-    pub struct InputFuncId(for<'a> InputFunction<'a>);
-    #[display = "defined_func"]
-    pub struct DefinedFuncId(for<'a> FunctionWithBody<'a>);
-
 }
 
 pub type AnySymbolId = usize;
@@ -353,6 +339,74 @@ impl<T: ReservedValue> PackedOptionExt<T> for PackedOption<T> {
             //SAFETY: cast ref to inner type of repr(transparent) type
             Some(unsafe { std::mem::transmute(self) })
         }
+    }
+}
+
+/// Wrapper of `<T>` that mark default value as reserved.
+/// and ensure that `NonDefault<T>` cannot be created from `T::default()`
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[repr(transparent)]
+pub struct NonDefault<T> {
+    value: T,
+}
+impl<T> NonDefault<T> {
+    pub fn into_inner(self) -> T {
+        self.value
+    }
+}
+
+impl<T: Default + Eq> ReservedValue for NonDefault<T> {
+    fn reserved_value() -> Self {
+        NonDefault {
+            value: T::default(),
+        }
+    }
+
+    fn is_reserved_value(&self) -> bool {
+        self.value == T::default()
+    }
+}
+
+impl<T: Default + Eq> From<T> for NonDefault<T> {
+    fn from(value: T) -> Self {
+        debug_assert!(
+            value != T::default(),
+            "Cannot create NonDefault with default value"
+        );
+        NonDefault { value }
+    }
+}
+
+impl<T> Deref for NonDefault<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+impl<T> PartialEq<T> for NonDefault<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &T) -> bool {
+        &self.value == other
+    }
+}
+
+impl<T: Default + Eq> Default for NonDefault<T> {
+    fn default() -> Self {
+        Self::reserved_value()
+    }
+}
+
+impl Display for NonDefault<&str> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.value, f)
+    }
+}
+impl Debug for NonDefault<&str> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self.value, f)
     }
 }
 
