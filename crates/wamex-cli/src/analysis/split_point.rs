@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use wamex_object::{
     InputObject,
     emit::split::{
@@ -8,14 +8,12 @@ use wamex_object::{
         SplitPoint, SplitProgramInfo,
     },
     index::{EntityRef, SecondaryMap},
+    read::FunctionRef,
 };
 use wamex_types::map_vec::MiniSet;
 
 use super::dep_graph::{DepGraph, DepMiniSet, DepSet, NamedGraph, find_reachable_deps};
-use crate::{
-    SplitPointExtractor,
-    index::{ExportId, ImportId, InputFuncId, SymbolId},
-};
+use crate::{SplitPointExtractor, index::SymbolId};
 
 pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {
     if !name.starts_with(prefix) {
@@ -29,6 +27,25 @@ pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(
     Some((module_name, fn_name))
 }
 
+fn parse_entries<'i, I: 'i, Id>(
+    prefix: &str,
+    postfix: &str,
+    collection: I,
+) -> BTreeMap<(String, String), Id>
+where
+    I: Iterator<Item = (Id, &'i str)>,
+{
+    collection
+        .filter_map(|(id, name)| {
+            if let Some((module_name, unique_id)) = parser(name, prefix, postfix) {
+                Some(((module_name.into(), unique_id.into()), id))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 pub(crate) const SPLIT_IMPORT_POSTFIX: &str = "00_import_";
 pub(crate) const SPLIT_EXPORT_POSTFIX: &str = "00_export_";
 
@@ -36,60 +53,34 @@ fn find_split_points_with_prefix(
     info: &InputObject,
     prefix: &str,
 ) -> anyhow::Result<Vec<SplitPoint>> {
-    macro_rules! process_imports_or_exports {
-        ($postfix: expr, $map:ident, $member:ident, $id_ty:ty) => {
-            let $map = info
-                .wasm_reader
-                .$member
-                .iter()
-                .filter_map(|(id, item)| {
-                    if let Some((module_name, unique_id)) = parser(&item.name, prefix, $postfix) {
-                        Some(((module_name.into(), unique_id.into()), id))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<BTreeMap<(String, String), $id_ty>>();
-        };
-    }
-
-    process_imports_or_exports!(SPLIT_IMPORT_POSTFIX, import_map, imports, ImportId);
-    process_imports_or_exports!(SPLIT_EXPORT_POSTFIX, export_map, exports, ExportId);
-    let mut export_map = export_map;
+    let import_map = parse_entries(
+        prefix,
+        SPLIT_IMPORT_POSTFIX,
+        info.functions
+            .imports_iter()
+            .map(|(i, import)| (i, &*import.func_name)),
+    );
+    let mut export_map = parse_entries(
+        prefix,
+        SPLIT_EXPORT_POSTFIX,
+        info.functions
+            .exports
+            .iter()
+            .map(|e| (e.entity_index, &*e.name)),
+    );
 
     let split_points = import_map
         .into_iter()
-        .map(|(key, import_id)| -> anyhow::Result<SplitPoint> {
-            let export_id = export_map
+        .map(|(key, import_func)| -> anyhow::Result<SplitPoint> {
+            let export_func = export_map
                 .remove(&key)
                 .with_context(|| format!("No corresponding export for split import {key:?}"))?;
-            let export = info.wasm_reader.exports[export_id];
-            let wasmparser::Export {
-                kind: wasmparser::ExternalKind::Func,
-                index,
-                ..
-            } = export
-            else {
-                bail!("Expected exported function but received: {export:?}");
-            };
-            let &import_func = info
-                .import_info
-                .imported_func_map
-                .get(import_id)
-                .with_context(|| {
-                    format!(
-                        "Expected imported function but received: {:?}",
-                        &info.wasm_reader.imports[import_id]
-                    )
-                })?;
-
             Ok(SplitPoint {
                 module_name: key.0,
                 unique_id: key.1,
-                import: import_id,
-                import_func,
-                export: export_id,
-                export_func: InputFuncId::from_u32(index),
+                import_func: import_func,
+
+                export_func,
             })
         })
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
@@ -133,7 +124,7 @@ pub fn wbg_closures(module: &InputObject, graph: &DepGraph) -> MiniSet<SymbolId>
     let wbg_fns: std::collections::BTreeSet<_> = module
         .symbols
         .iter()
-        .filter(|(_id, sym)| is_wasm_bindgen_cast(&sym.name))
+        .filter(|(_id, sym)| is_wasm_bindgen_cast(&sym.debug_name))
         .map(|(id, _)| id)
         .collect();
 
@@ -191,7 +182,7 @@ pub fn compute_split_modules(
         };
         roots.insert(
             info.symbols
-                .get_function_symbol(InputFuncId::from_u32(*index))
+                .get_function_symbol(FunctionRef::from_u32(*index))
                 .unwrap(),
         );
     }
@@ -206,7 +197,7 @@ pub fn compute_split_modules(
         };
         roots.insert(
             info.symbols
-                .get_function_symbol(InputFuncId::new(index))
+                .get_function_symbol(FunctionRef::new(index))
                 .unwrap(),
         );
     }

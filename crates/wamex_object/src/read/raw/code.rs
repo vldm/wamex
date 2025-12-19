@@ -1,11 +1,8 @@
 use anyhow::{Result, bail, ensure};
 pub use wasmparser::FunctionBody;
 
-use super::{
-    Ind,
-    indexes::{FuncTypeId, InputFuncId},
-};
-use crate::index::IdVec;
+use super::{Ind, indexes::FuncTypeId};
+use crate::{index::IdVec, read::FunctionRef};
 
 #[derive(Debug)]
 pub enum InputFunction<'a> {
@@ -20,13 +17,13 @@ pub struct FunctionWithBody<'a> {
 
 #[derive(Debug, Default)]
 pub struct CodeSection<'a> {
-    pub start_func: Option<InputFuncId>,
+    pub start_func: Option<FunctionRef>,
     // function (CodeSectionEntry)
     pub defined_funcs: IdVec<FunctionWithBody<'a>>,
 }
 impl<'a> CodeSection<'a> {
     pub fn new(
-        start: Option<InputFuncId>,
+        start: Option<FunctionRef>,
         funcs: Vec<FunctionBody<'a>>,
         func_types: Vec<FuncTypeId>,
         code_header: Option<(usize, usize, u32)>,

@@ -15,7 +15,7 @@ use crate::{
     index::{GappedMap, IdVec},
     read::{
         FunctionRef, GlobalRef, TableRef,
-        raw::{DataSegmentId, DefinedFuncId, InputFuncId, InputGlobalId, TableId},
+        raw::{DataSegmentId, DefinedFuncId},
     },
 };
 mod diff;
@@ -129,7 +129,7 @@ struct DataSymbolKey {
 #[derive(Clone, Default, Debug)]
 pub struct SymbolMap<'src> {
     symbols: IdVec<SymbolRecord<'src>>,
-    funcs_ids: GappedMap<InputFuncId, SymbolId>,
+    funcs_ids: GappedMap<FunctionRef, SymbolId>,
     datas_ids: BTreeSet<DataSymbolKey>,
 }
 
@@ -175,7 +175,7 @@ impl<'src> SymbolMap<'src> {
 
         let (code_relocs, data_relocs) = Self::collect_ordered_relocs(wasm)?;
         type DupIds = SmallVec<[SymbolId; 4]>;
-        let mut func_ids = GappedMap::<InputFuncId, DupForRange>::new();
+        let mut func_ids = GappedMap::<FunctionRef, DupForRange>::new();
         // TODO: Handle symbols that overlap in data segments.
         let mut data_ids = BTreeMap::<DataSymbolKey, SymbolRange>::new();
 
@@ -354,7 +354,7 @@ impl<'src> SymbolMap<'src> {
         // Move relocs from duplicate symbols to main symbol, and mark duplicates.
         fn move_dup_symbols(
             symbols: &mut IdVec<SymbolRecord>,
-            func_ids: &GappedMap<InputFuncId, DupForRange>,
+            func_ids: &GappedMap<FunctionRef, DupForRange>,
         ) {
             for (_input_id, DupForRange(sym_range, dup_ids)) in func_ids.iter() {
                 if dup_ids.len() <= 1 {
@@ -422,7 +422,7 @@ impl<'src> SymbolMap<'src> {
             _ => sym,
         })
     }
-    pub fn get_function_symbol(&self, func_id: InputFuncId) -> Option<SymbolId> {
+    pub fn get_function_symbol(&self, func_id: FunctionRef) -> Option<SymbolId> {
         self.funcs_ids.get(func_id).copied()
     }
 
@@ -435,7 +435,7 @@ impl<'src> SymbolMap<'src> {
     //         .copied()
     // }
 
-    pub fn as_input_function(&self, id: SymbolId) -> Option<InputFuncId> {
+    pub fn as_input_function(&self, id: SymbolId) -> Option<FunctionRef> {
         match &self.symbols.get(id)?.kind {
             SymbolKind::Func { input_id } => Some(*input_id),
             _ => None,

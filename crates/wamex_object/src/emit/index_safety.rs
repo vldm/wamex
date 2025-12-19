@@ -6,7 +6,7 @@ use crate::{
     },
     index::PrimaryKey,
     read::{
-        GetInputRef, InputFuncId, LinkedToInputRef, OutputMapType,
+        GetInputRef, FunctionRef, LinkedToInputRef, OutputMapType,
         code::InputFunction,
         typed::{CompoundRef, EntitiesFromInput},
     },
@@ -34,14 +34,14 @@ impl CompoundRef for OutputGlobalId {
 }
 
 impl LinkedToInputRef for OutputFuncId {
-    type InputRef = InputFuncId;
+    type InputRef = FunctionRef;
 }
 impl LinkedToInputRef for OutputGlobalId {
     type InputRef = crate::read::typed::GlobalRef;
 }
 
-impl GetInputRef<InputFuncId> for DefinedFunction {
-    fn get_input_index(&self) -> OutputMapType<InputFuncId> {
+impl GetInputRef<FunctionRef> for DefinedFunction {
+    fn get_input_index(&self) -> OutputMapType<FunctionRef> {
         if matches!(self.kind, DefinedFunctionKind::Trampoline { .. }) {
             // Import stubs is not a real function in input module.
             return OutputMapType::OutputHasInput(self.input_func_id);
@@ -50,8 +50,8 @@ impl GetInputRef<InputFuncId> for DefinedFunction {
     }
 }
 // imported always exist in input module
-impl GetInputRef<InputFuncId> for ImportedFunction<'_> {
-    fn get_input_index(&self) -> OutputMapType<InputFuncId> {
+impl GetInputRef<FunctionRef> for ImportedFunction<'_> {
+    fn get_input_index(&self) -> OutputMapType<FunctionRef> {
         OutputMapType::BidirectionalMap(self.input_func_id())
     }
 }

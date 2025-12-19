@@ -6,7 +6,7 @@ use super::{
     indexes::{DataSegmentId, ElementId, FuncTypeId},
 };
 use crate::{
-    index::{GappedMap, NonDefault, SecondaryMap},
+    index::{GappedMap, NonDefault},
     read::typed::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef},
 };
 

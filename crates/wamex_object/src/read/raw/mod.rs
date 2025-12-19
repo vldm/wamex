@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use anyhow::{Result, anyhow, bail};
 pub use indexes::*;
 use vec_map::VecMap;
@@ -5,6 +7,7 @@ use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
+use super::typed::FunctionRef;
 use crate::index::{IdVec, IndexedSection};
 
 pub mod code;
@@ -114,7 +117,7 @@ impl<'a> ObjectReader<'a> {
                     module.exports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
                 }
                 Payload::StartSection { func, .. } => {
-                    code_start = Some(InputFuncId::from_u32(func));
+                    code_start = Some(FunctionRef::from_u32(func));
                 }
                 Payload::DataCountSection { count, .. } => {
                     data_count = Some(count as usize);
@@ -222,4 +225,22 @@ trait CustomSectionReader<'a> {
     fn read(reader: Self::Reader) -> Result<Self>
     where
         Self: Sized;
+}
+
+impl<'a> Debug for ObjectReader<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectReader")
+            .field("types", &self.types)
+            .field("imports", &self.imports)
+            .field("exports", &self.exports)
+            .field("tables", &self.tables)
+            //
+            // .field("elements", &self.elements)
+            .field("tags", &self.tags)
+            .field("globals", &self.globals)
+            .field("memories", &self.memories)
+            .field("code", &self.code)
+            .field("data", &self.data)
+            .finish()
+    }
 }

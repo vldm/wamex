@@ -12,7 +12,7 @@ mod helpers {
     pub use wamex_object::helpers::*;
 }
 mod index {
-    pub use wamex_object::{index::*, read::raw::*, symbols::SymbolId};
+    pub use wamex_object::{index::*, read::typed::FunctionRef, symbols::SymbolId};
 }
 
 mod diff;

@@ -11,7 +11,10 @@ use crate::{
     emit::{
         ComputedModules, GotBase, ModuleEmitState, index_safety::OutputGlobalId, modify::SymbolOp,
     },
-    read::raw::{DataSegmentId, InputFuncId, InputGlobalId},
+    read::{
+        raw::DataSegmentId,
+        typed::{FunctionRef, GlobalRef},
+    },
     symbols::{SymbolId, SymbolKind},
 };
 
@@ -30,7 +33,7 @@ pub enum FunctionIndexTag {}
 pub enum DataSymbolTag {}
 
 impl FunctionIndexTag {
-    fn get_input_function_id(input: &InputObject<'_>, src_symbol: SymbolId) -> Option<InputFuncId> {
+    fn get_input_function_id(input: &InputObject<'_>, src_symbol: SymbolId) -> Option<FunctionRef> {
         let SymbolKind::Func { input_id } = input.symbols.get(src_symbol)?.kind else {
             return None;
         };
@@ -94,7 +97,7 @@ impl EntryTypeTag for DataSymbolTag {
 pub(crate) struct RelocateState<'any, 'src> {
     pub input_module: &'any InputObject<'src>,
     pub computed_modules: &'any ComputedModules<'any, 'src>,
-    pub global_id_mapper: &'any dyn Fn(InputGlobalId) -> Option<OutputGlobalId>,
+    pub global_id_mapper: &'any dyn Fn(GlobalRef) -> Option<OutputGlobalId>,
     pub emit_module: &'any ModuleEmitState<'any, 'src>,
 }
 

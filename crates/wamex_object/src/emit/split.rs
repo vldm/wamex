@@ -19,7 +19,11 @@ use crate::{
         index_safety::OutputGlobalId,
         modify::{self, init_each_store_var},
     },
-    read::raw::{ExportId, ImportId, InputFuncId, InputGlobalId},
+    read::{
+        ImportOrDefined,
+        raw::{ExportId, ImportId},
+        typed::{FunctionRef, GlobalRef},
+    },
     symbols::{SymbolId, SymbolKind},
 };
 
@@ -53,17 +57,15 @@ pub fn parse_wamex_entry_name(name: &str) -> Option<(&str, &str)> {
 pub struct SplitPoint {
     pub module_name: String,
     pub unique_id: String,
-    pub import: ImportId,
-    pub import_func: InputFuncId,
-    pub export: ExportId,
-    pub export_func: InputFuncId,
+    pub import_func: FunctionRef,
+    pub export_func: FunctionRef,
 }
 
 impl SplitPoint {
-    pub fn import_func(&self) -> InputFuncId {
+    pub fn import_func(&self) -> FunctionRef {
         self.import_func
     }
-    pub fn export_func(&self) -> InputFuncId {
+    pub fn export_func(&self) -> FunctionRef {
         self.export_func
     }
 }
@@ -89,7 +91,7 @@ impl Debug for OutputModuleInfo {
 }
 
 impl OutputModuleInfo {
-    pub fn need_export(&self, symbol: &SymbolId, input_func_id: InputFuncId) -> bool {
+    pub fn need_export(&self, symbol: &SymbolId, input_func_id: FunctionRef) -> bool {
         // if any module linked to current function
         let static_export = self.exports.contains(symbol);
         // Or it is linked indirectly via split points
@@ -330,7 +332,7 @@ impl<'src> SplitContext<'_, 'src> {
         self.static_symbols.contains(&symbol)
     }
     // TODO: part of element layout
-    fn external_entrypoint_index(&self, input_func_id: InputFuncId) -> Option<u32> {
+    fn external_entrypoint_index(&self, input_func_id: FunctionRef) -> Option<u32> {
         self.emit_info.external_entrypoint_index(input_func_id)
     }
 }
@@ -344,7 +346,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
         &mut self,
         ctx: &SplitContext<'_, 'src>,
         sym: SymbolId,
-        input_func_id: InputFuncId,
+        input_func_id: FunctionRef,
         export: bool,
     ) {
         // This function entrypoint of external module.
@@ -355,74 +357,75 @@ impl<'src> Split<ObjectBuilder<'src>> {
                 input_func_id,
                 kind: DefinedFunctionKind::IndirectTrampoline { table_index_offset },
             });
-        // This is imported function
-        // Currently only possible in main module
-        } else if let Some(import_id) = ctx.module_info.get_function_import_id(input_func_id) {
-            debug_assert!(ctx.main_module);
-            let import_info = ctx.module_info.wasm_reader.imports[import_id];
+            return;
+        }
+        match ctx.module_info.functions.items.get_entity(input_func_id) {
+            // This is imported function
+            // Currently only possible in main module
+            ImportOrDefined::Import(import_info) => {
+                debug_assert!(ctx.main_module);
 
-            self.state.add_imported_function(ImportedFunction {
-                input_func_id,
-                kind: ImportFunctionKind::Existing {
-                    module_name: import_info.module,
-                    import_function_name: import_info.name,
-                },
-            });
-
-            // For reexport add trampoline that rename import under wamex namespace.
-            // E.g. `import foo.bar` becomes `export __wamex__.bar`
-            // TODO: remove this trampoline, since it is just a loader limitation.
-            if export {
-                self.state.add_defined_function(DefinedFunction {
-                    export: true,
-                    input_func_id: input_func_id,
-                    kind: DefinedFunctionKind::Trampoline {},
-                });
-            }
-        } else {
-            // Collect all relocation entries that modify something within this function.
-            let func_relocs = &*ctx.module_info.symbols.get(sym).unwrap().relocs;
-
-            let modification_list = func_relocs
-                .iter()
-                .map(|entry| {
-                    let dyn_base =
-                        !ctx.main_module && !ctx.is_static_symbol(SymbolId::from_u32(entry.index));
-                    let relocation_context = modify::RelocationContext {
-                        dyn_base,
-                        containing_symbol: None,
-                    };
-                    modify::CodeModifyEntry::from_relocation_entry(&entry, &relocation_context)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-
-            // allow unsetting if trampoline is defined
-            let mut need_export = export;
-
-            // Add trampoline for __wasm_bindgen_ functions that are deps to other modules.
-            // It is used for closures, see: `wasm_bindgen::__rt::wbg_cast::breaks_if_inlined::`
-            // This special functions are exported trough trampolines
-            if need_export && ctx.is_nonexportable(sym) {
-                self.state.add_defined_function(DefinedFunction {
-                    export: true,
+                self.state.add_imported_function(ImportedFunction {
                     input_func_id,
-                    kind: DefinedFunctionKind::Trampoline {},
+                    kind: ImportFunctionKind::Existing(import_info.clone()),
                 });
-                need_export = false
-            }
 
-            self.state.add_defined_function(DefinedFunction {
-                export: need_export,
-                input_func_id,
-                kind: DefinedFunctionKind::Copied { modification_list },
-            });
+                // For reexport add trampoline that rename import under wamex namespace.
+                // E.g. `import foo.bar` becomes `export __wamex__.bar`
+                // TODO: remove this trampoline, since it is just a loader limitation.
+                if export {
+                    self.state.add_defined_function(DefinedFunction {
+                        export: true,
+                        input_func_id: input_func_id,
+                        kind: DefinedFunctionKind::Trampoline {},
+                    });
+                }
+            }
+            ImportOrDefined::Defined(_) => {
+                // Collect all relocation entries that modify something within this function.
+                let func_relocs = &*ctx.module_info.symbols.get(sym).unwrap().relocs;
+
+                let modification_list = func_relocs
+                    .iter()
+                    .map(|entry| {
+                        let dyn_base = !ctx.main_module
+                            && !ctx.is_static_symbol(SymbolId::from_u32(entry.index));
+                        let relocation_context = modify::RelocationContext {
+                            dyn_base,
+                            containing_symbol: None,
+                        };
+                        modify::CodeModifyEntry::from_relocation_entry(&entry, &relocation_context)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+
+                // allow unsetting if trampoline is defined
+                let mut need_export = export;
+
+                // Add trampoline for __wasm_bindgen_ functions that are deps to other modules.
+                // It is used for closures, see: `wasm_bindgen::__rt::wbg_cast::breaks_if_inlined::`
+                // This special functions are exported trough trampolines
+                if need_export && ctx.is_nonexportable(sym) {
+                    self.state.add_defined_function(DefinedFunction {
+                        export: true,
+                        input_func_id,
+                        kind: DefinedFunctionKind::Trampoline {},
+                    });
+                    need_export = false
+                }
+
+                self.state.add_defined_function(DefinedFunction {
+                    export: need_export,
+                    input_func_id,
+                    kind: DefinedFunctionKind::Copied { modification_list },
+                });
+            }
         }
     }
 
     fn copy_src_globals(&mut self, ctx: &SplitContext<'_, 'src>) {
         debug_assert!(ctx.main_module);
-        let mut input_global_id = InputGlobalId::from_u32(0);
+        let mut input_global_id = GlobalRef::from_u32(0);
         for (_id, import) in ctx.module_info.wasm_reader.imports.iter() {
             let wasmparser::TypeRef::Global(global_type) = &import.ty else {
                 continue;

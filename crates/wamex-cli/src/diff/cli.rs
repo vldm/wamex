@@ -36,9 +36,9 @@ impl<'any, 'src> Compare<'any, 'src> {
     pub fn print_diff(&self) -> Result<(), anyhow::Error> {
         macro_rules! print_hex_diff {
             ($id:expr, $left: expr, $right: expr) => {
-                let num_imports: usize = todo!();
+                let num_imports: usize = self.left.functions.items.imports.len();
                 let raw_id = $id.index() + num_imports;
-                let id = crate::index::InputFuncId::new(raw_id);
+                let id = crate::index::FunctionRef::new(raw_id);
                 log::info!(
                     "name: {}",
                     self.left

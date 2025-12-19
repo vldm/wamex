@@ -1,6 +1,6 @@
 use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use super::code::{FunctionWithBody, InputFunction};
+use super::code::FunctionWithBody;
 
 impl_entity_index! {
     #[display = "type"]
@@ -28,6 +28,3 @@ impl_entity_index! {
     pub struct TagId(TagType);
 
 }
-
-pub type InputGlobalId = crate::read::typed::GlobalRef;
-pub type InputFuncId = crate::read::typed::FunctionRef;

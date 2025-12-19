@@ -27,8 +27,8 @@ use crate::{
     index::{GappedMap, SecondaryMap},
     read::{
         EntitiesFromInput, MemoryRef,
-        raw::{DataSegmentId, FuncTypeId, InputFuncId, InputGlobalId},
-        typed::GlobalRef,
+        raw::{DataSegmentId, FuncTypeId},
+        typed::{FunctionRef, GlobalRef},
     },
     symbols::SymbolId,
 };
@@ -88,23 +88,20 @@ enum DefinedFunctionKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefinedFunction {
     export: bool,
-    input_func_id: InputFuncId,
+    input_func_id: FunctionRef,
     kind: DefinedFunctionKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ImportedFunction<'a> {
-    input_func_id: InputFuncId,
+    input_func_id: FunctionRef,
     kind: ImportFunctionKind<'a>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum ImportFunctionKind<'a> {
     // use existing import function
-    Existing {
-        module_name: &'a str,
-        import_function_name: &'a str,
-    },
+    Existing(crate::read::typed::ImportedFunction<'a>),
     // Add new import function from another module (e.g. main module).
     New {
         link_module: usize,
@@ -115,10 +112,10 @@ enum ImportFunctionKind<'a> {
 impl ImportedEntity for ImportedFunction<'_> {
     fn import_name(&self) -> Cow<'_, str> {
         match self.kind {
-            ImportFunctionKind::Existing {
-                import_function_name,
+            ImportFunctionKind::Existing(crate::read::typed::ImportedFunction {
+                ref func_name,
                 ..
-            } => import_function_name.into(),
+            }) => func_name.clone(),
             ImportFunctionKind::New {
                 mangled_function_name,
                 ..
@@ -128,7 +125,10 @@ impl ImportedEntity for ImportedFunction<'_> {
 
     fn module_name(&self) -> Cow<'_, str> {
         match self.kind {
-            ImportFunctionKind::Existing { module_name, .. } => module_name.into(),
+            ImportFunctionKind::Existing(crate::read::typed::ImportedFunction {
+                ref module_name,
+                ..
+            }) => module_name.clone(),
             ImportFunctionKind::New { .. } => {
                 "__wamex".into()
                 // format!("__wamex_link_{}", link_module)
@@ -138,7 +138,7 @@ impl ImportedEntity for ImportedFunction<'_> {
 }
 
 impl ImportedFunction<'_> {
-    pub fn input_func_id(&self) -> InputFuncId {
+    pub fn input_func_id(&self) -> FunctionRef {
         self.input_func_id
     }
 }
@@ -176,7 +176,7 @@ pub(crate) struct GotBase {
 
 struct SubModuleExtra {
     self_base: GotBase,
-    entrypoints: Vec<InputFuncId>,
+    entrypoints: Vec<FunctionRef>,
     extern_modules: Vec<(SharedModuleIdentifier, GotBase)>,
     export_got_with_id: Option<SharedModuleIdentifier>,
 }
@@ -387,13 +387,13 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         output_module.section(&section);
     }
 
-    fn _get_input_func_id(&self, index: OutputFuncId) -> InputFuncId {
+    fn _get_input_func_id(&self, index: OutputFuncId) -> FunctionRef {
         self.functions
             .get_input_id(index)
             .expect("Output function index should be valid")
     }
 
-    fn _get_output_func_id(&self, input_func_id: InputFuncId) -> Option<OutputFuncId> {
+    fn _get_output_func_id(&self, input_func_id: FunctionRef) -> Option<OutputFuncId> {
         self.functions.get_output_id(input_func_id)
     }
 
@@ -458,7 +458,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             for (_id, export) in self.src.wasm_reader.exports.iter() {
                 let mut index = export.index;
                 if export.kind == wasmparser::ExternalKind::Func {
-                    let Some(func_id) = self._get_output_func_id(InputFuncId::from_u32(index))
+                    let Some(func_id) = self._get_output_func_id(FunctionRef::from_u32(index))
                     else {
                         continue;
                     };
@@ -753,7 +753,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     fn _generate_indirect_stub_function(
         &'any self,
         section: &mut wasm_encoder::CodeSection,
-        input_func_id: InputFuncId,
+        input_func_id: FunctionRef,
         table_index: u32,
     ) -> Result<Vec<RelocationEntry>> {
         let func_type_id = &self.src.get_function_type_id(input_func_id);
@@ -786,7 +786,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     fn _generate_import_call_stub(
         &'any self,
         section: &mut wasm_encoder::CodeSection,
-        input_func_id: InputFuncId,
+        input_func_id: FunctionRef,
     ) -> Result<Vec<RelocationEntry>> {
         let func_type_id = &self.src.get_function_type_id(input_func_id);
         let func_type = &self.src.wasm_reader.types[*func_type_id];
@@ -811,7 +811,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         section: &mut wasm_encoder::CodeSection,
         computed_modules: &'any ComputedModules<'any, 'src>,
         function_start_offset: usize,
-        input_func_id: InputFuncId,
+        input_func_id: FunctionRef,
         modification_list: &[modify::CodeModifyEntry],
         precise_modification: bool,
     ) -> Result<Vec<RelocationEntry>> {
@@ -821,7 +821,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .as_defined_function_id(input_func_id)
             .expect("Defined function expected");
 
-        let global_id_mapper = |global_id: InputGlobalId| self.globals.get_output_id(global_id);
+        let global_id_mapper = |global_id: GlobalRef| self.globals.get_output_id(global_id);
 
         let modify_fn = if precise_modification {
             ModifyContext::emit_code_with_changes
@@ -894,7 +894,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                 input_module: self.src,
                 computed_modules,
                 emit_module: self,
-                global_id_mapper: &|global_id: InputGlobalId| self.globals.get_output_id(global_id),
+                global_id_mapper: &|global_id: GlobalRef| self.globals.get_output_id(global_id),
             };
 
             let start_fn = StartFnGen::new(
@@ -934,7 +934,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                             input_module: self.src,
                             computed_modules,
                             emit_module: self,
-                            global_id_mapper: &|global_id: InputGlobalId| {
+                            global_id_mapper: &|global_id: GlobalRef| {
                                 self.globals.get_output_id(global_id)
                             },
                         },
@@ -1054,13 +1054,13 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
 
 #[derive(Debug, Default)]
 pub struct IndirectFunctionEmitInfo {
-    pub table_entries: Vec<InputFuncId>,
-    pub function_table_index: HashMap<InputFuncId, usize>,
+    pub table_entries: Vec<FunctionRef>,
+    pub function_table_index: HashMap<FunctionRef, usize>,
     pub num_extra_stubs: u64,
 }
 
 impl IndirectFunctionEmitInfo {
-    fn new(num_extra_stubs: Option<u64>, table_entries: Vec<InputFuncId>) -> Self {
+    fn new(num_extra_stubs: Option<u64>, table_entries: Vec<FunctionRef>) -> Self {
         // main module has 1 stub at start
         let num_stub_at_start = if num_extra_stubs.is_some() { 1 } else { 0 };
         let function_table_index: HashMap<_, _> = table_entries
@@ -1102,7 +1102,7 @@ pub struct CommonEmitInfo<'src> {
     pub src_data_segments: GappedMap<DataSegmentId, SegmentLayout<'src>>,
 
     // Imports (corresponding to split points) to exclude from all modules.
-    pub split_point_imports: BTreeSet<InputFuncId>,
+    pub split_point_imports: BTreeSet<FunctionRef>,
     pub modules_decl: HashMap<ModuleIdentifier, ModuleDecl>,
 }
 
@@ -1121,7 +1121,7 @@ impl<'src> CommonEmitInfo<'src> {
             start..end
         })
     }
-    fn external_entrypoint_index(&self, entrypoint_func: InputFuncId) -> Option<u32> {
+    fn external_entrypoint_index(&self, entrypoint_func: FunctionRef) -> Option<u32> {
         self.modules_decl.values().find_map(|module| {
             module
                 .split_points
@@ -1132,7 +1132,7 @@ impl<'src> CommonEmitInfo<'src> {
     }
 
     // Checks if given import function is an entrypoint for any module.
-    fn is_external_entrypoint(&self, import_fn: &InputFuncId) -> bool {
+    fn is_external_entrypoint(&self, import_fn: &FunctionRef) -> bool {
         self.split_point_imports.contains(import_fn)
     }
 

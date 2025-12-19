@@ -11,28 +11,17 @@ use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use anyhow::{Context, Result, bail};
 use cranelift_entity::EntityRef;
 pub use entities::*;
+pub use imports::*;
 use wasmparser::{ElementItems, TypeRef};
 
 use crate::{
-    index::{GappedMap, NonDefault},
+    index::NonDefault,
     read::{
         self,
-        raw::{
-            DefinedFuncId, ElementId, FuncTypeId, ImportId, InputFuncId, InputGlobalId, TableId,
-        },
+        raw::{DefinedFuncId, ElementId, FuncTypeId, ImportId},
     },
     symbols::SymbolMap,
 };
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct ImportInfo {
-    // List of imported functions
-    pub imported_funcs: Vec<ImportId>,
-    pub imported_func_map: GappedMap<ImportId, InputFuncId>,
-
-    pub imported_globals: Vec<ImportId>,
-    pub imported_global_map: GappedMap<ImportId, InputGlobalId>,
-}
 
 pub mod elements;
 mod entities;
@@ -45,13 +34,11 @@ mod imports;
 /// Unlike `read::ObjectReader` which is low-level representation of wasm module sections structure,
 /// `InputObject` provides higher-level API to access wasm entities like functions and globals, in a way that concatenates imported and defined entities.
 /// So user can use type-safe indexes from original module.
+/// Additionally, `InputObject` expects that module has linking information and symbol names for entities.
+#[derive(Debug)]
 pub struct InputObject<'src> {
     pub wasm_reader: read::ObjectReader<'src>,
     pub symbols: SymbolMap<'src>,
-
-    pub import_info: ImportInfo,
-
-    // pub export_map: HashMap<(isize, AnySymbolId), (ExportId, &'src str)>,
 
     // entities
     pub functions: entities::Functions<'src>,
@@ -145,33 +132,6 @@ impl<'src> InputObject<'src> {
                 _ => {}
             }
         }
-        let imported_func_map = imported_funcs
-            .iter()
-            .enumerate()
-            .map(|(func_id, &import_id)| (import_id, InputFuncId::new(func_id)))
-            .collect();
-        let imported_global_map = imported_globals
-            .iter()
-            .enumerate()
-            .map(|(global_id, &import_id)| (import_id, InputGlobalId::new(global_id)))
-            .collect();
-
-        let import_funcs_info = ImportInfo {
-            imported_funcs,
-            imported_func_map,
-            imported_globals,
-            imported_global_map,
-        };
-        // let export_map = module
-        //     .exports
-        //     .iter()
-        //     .map(|(i, export)| {
-        //         (
-        //             (export.kind as isize, export.index as AnySymbolId),
-        //             (i, export.name),
-        //         )
-        //     })
-        //     .collect();
 
         let (_table_name, table_id) = tables
             .iter()
@@ -191,14 +151,12 @@ impl<'src> InputObject<'src> {
         let indirect_function_table =
             elements::IndirectFunctionTable::from_reader(&module, table_id, true)?;
 
-        let symbols_map = SymbolMap::new(&module, import_funcs_info.imported_funcs.len())?;
+        let symbols_map = SymbolMap::new(&module, functions.items.imports.len())?;
 
         Ok(InputObject {
             wasm_reader: module,
             symbols: symbols_map,
 
-            import_info: import_funcs_info,
-            // export_map,
             indirect_function_table,
 
             functions,
@@ -224,66 +182,33 @@ impl<'src> InputObject<'src> {
     }
     pub fn function_id_iter<'any>(
         &'any self,
-    ) -> impl Iterator<Item = InputFuncId> + use<'any, 'src> {
-        (0..self.import_info.imported_funcs.len())
-            .map(InputFuncId::new)
-            .chain(
-                self.wasm_reader
-                    .code
-                    .section_payload
-                    .defined_funcs
-                    .iter()
-                    .enumerate()
-                    .map(|(index, _)| {
-                        InputFuncId::new(index + self.import_info.imported_funcs.len())
-                    }),
-            )
+    ) -> impl Iterator<Item = FunctionRef> + use<'any, 'src> {
+        self.functions.iter_all_ids()
     }
 
-    pub fn is_imported_function(&self, func_id: InputFuncId) -> bool {
-        func_id.index() < self.import_info.imported_funcs.len()
+    pub fn is_imported_function(&self, func_id: FunctionRef) -> bool {
+        func_id.index() < self.functions.items.imports.len()
     }
 
-    pub fn as_defined_function_id(&self, func_id: InputFuncId) -> Option<DefinedFuncId> {
+    pub fn as_defined_function_id(&self, func_id: FunctionRef) -> Option<DefinedFuncId> {
         if self.is_imported_function(func_id) {
             None
         } else {
-            Some(DefinedFuncId::new(
-                func_id
-                    .index()
-                    .checked_sub(self.import_info.imported_funcs.len())
-                    .expect("Function ID is out of bounds"),
+            Some(DefinedFuncId::from_u32(
+                func_id.index() as u32 - self.functions.items.imports.len() as u32,
             ))
         }
     }
 
-    pub fn get_function_type_id(&self, func_id: InputFuncId) -> FuncTypeId {
-        let Some(defined_index) = self.as_defined_function_id(func_id) else {
-            // It's import function - recover from import id.
-            let import_id = self.import_info.imported_funcs[func_id.index()];
-            let TypeRef::Func(ty) = self.wasm_reader.imports[import_id].ty else {
-                panic!("Expected function type")
-            };
-            return FuncTypeId::from_u32(ty);
-        };
-        // It's a defined function.
-        self.wasm_reader.defined_func_type_id(defined_index)
+    pub fn get_function_type_id(&self, func_id: FunctionRef) -> FuncTypeId {
+        let func = self.functions.items.get_entity(func_id);
+        match func {
+            ImportOrDefined::Defined(defined) => defined.type_id,
+            ImportOrDefined::Import(import) => import.type_id,
+        }
     }
 
-    pub fn get_function_import_id(&self, func_id: InputFuncId) -> Option<ImportId> {
-        self.import_info
-            .imported_funcs
-            .get(func_id.index())
-            .copied()
-    }
-    pub fn get_global_import_id(&self, global_id: InputGlobalId) -> Option<ImportId> {
-        self.import_info
-            .imported_globals
-            .get(global_id.index())
-            .copied()
-    }
-
-    pub fn find_function_id_by_name(&self, name: &str) -> Option<InputFuncId> {
+    pub fn find_function_id_by_name(&self, name: &str) -> Option<FunctionRef> {
         let func = self
             .wasm_reader
             .names
@@ -303,7 +228,7 @@ impl<'src> InputObject<'src> {
         Some(global.0)
     }
 
-    pub fn find_function_id_containing_range(&self, range: Range<usize>) -> Result<InputFuncId> {
+    pub fn find_function_id_containing_range(&self, range: Range<usize>) -> Result<FunctionRef> {
         let func_index = Self::find_by_range(
             self.wasm_reader
                 .code
@@ -314,8 +239,8 @@ impl<'src> InputObject<'src> {
             |defined_func| defined_func.body.range(),
         )
         .with_context(|| format!("No match for function relocation range {range:?}"))?;
-        Ok(InputFuncId::new(
-            func_index + self.import_info.imported_funcs.len(),
+        Ok(FunctionRef::new(
+            func_index + self.functions.items.imports.len(),
         ))
     }
 
@@ -352,13 +277,5 @@ impl<'src> InputObject<'src> {
             )
         }
         Ok(index)
-    }
-}
-
-impl<'src> Debug for InputObject<'src> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ModuleInfo")
-            .field("import_funcs_info", &self.import_info)
-            .finish()
     }
 }

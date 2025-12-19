@@ -27,7 +27,7 @@ pub struct ExportEntry<'a, IDX: EntityRef> {
 pub struct ImportedFunction<'a> {
     pub module_name: Cow<'a, str>,
     pub func_name: Cow<'a, str>,
-    pub func_type: wasmparser::FuncType,
+    pub type_id: FuncTypeId,
 }
 
 // No Ord in wasmparser::TableType
@@ -63,10 +63,15 @@ pub struct ImportedTag<'a> {
 }
 
 impl_entity_index! {
+    #[display = "if"]
     pub struct ImportedFuncId(for<'a> ImportedFunction<'a>);
+    #[display = "it"]
     pub struct ImportedTableId(for<'a> ImportedTable<'a>);
+    #[display = "im"]
     pub struct ImportedMemoryId(for<'a> ImportedMemory<'a>);
+    #[display = "ig"]
     pub struct ImportedGlobalId(for<'a> ImportedGlobal<'a>);
+    #[display = "it"]
     pub struct ImportedTagId(for<'a> ImportedTag<'a>);
 }
 
@@ -90,11 +95,7 @@ pub fn read_imports<'a>(
                 imported_funcs.push(ImportedFunction {
                     module_name: import.module.into(),
                     func_name: import.name.into(),
-                    func_type: reader
-                        .types
-                        .get(FuncTypeId::from_u32(num))
-                        .expect("Function type must exist")
-                        .clone(),
+                    type_id: FuncTypeId::from_u32(num),
                 });
             }
             TypeRef::Table(ref table_type) => {

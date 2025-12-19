@@ -98,6 +98,9 @@ where
             (id, import_or_defined)
         })
     }
+    pub fn iter_all_ids(&self) -> impl ExactSizeIterator<Item = IDX> {
+        (0..(self.items.imports.len() + self.items.defined.len())).map(EntityRef::new)
+    }
 }
 /// Compound reference to both imported and defined entity types.
 pub trait CompoundRef: EntityRef {
@@ -418,6 +421,23 @@ where
         f.debug_struct("EntitiesCollection")
             .field("imports", &self.imports)
             .field("defined", &self.defined)
+            .finish()
+    }
+}
+
+impl<'src, IDX> Debug for EntitiesCollection<'src, IDX>
+where
+    IDX: CompoundRef + Debug,
+    IDX::ImportType<'src>: Debug,
+    <IDX::ImportType<'src> as PrimaryKey>::EntityType: Debug,
+    IDX::DefinedType<'src>: Debug,
+    <IDX::DefinedType<'src> as PrimaryKey>::EntityType: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EntitiesCollection")
+            .field("items", &self.items)
+            .field("names", &self.names)
+            .field("exports", &self.exports)
             .finish()
     }
 }

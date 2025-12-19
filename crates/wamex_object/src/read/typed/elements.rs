@@ -1,5 +1,5 @@
 use anyhow::{Context, bail, ensure};
-use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 use wasmparser::ElementKind;
 
 use super::{ElementId, ElementItems, Result};
@@ -7,12 +7,13 @@ use crate::{
     InputObject, SVec,
     index::GappedMap,
     read::{
-        TableRef,
-        raw::{self, InputFuncId},
+        FunctionRef, TableRef,
+        raw::{self},
     },
 };
 
 impl_entity_index! {
+    #[display = "ei"]
     pub struct ElementItemId;
 }
 pub trait ElementType<'a> {
@@ -26,7 +27,7 @@ pub trait ElementType<'a> {
         Self: Sized;
 }
 
-impl ElementType<'_> for InputFuncId {
+impl ElementType<'_> for FunctionRef {
     fn hint_size(items: &ElementItems<'_>) -> Option<u32> {
         match items {
             ElementItems::Functions(func_indices) => Some(func_indices.count()),
@@ -43,7 +44,7 @@ impl ElementType<'_> for InputFuncId {
                 let mut elem_id = first;
                 for elem in func_indices.into_iter_with_offsets() {
                     let (_offset, func_id) = elem?;
-                    save(elem_id, InputFuncId::from_u32(func_id));
+                    save(elem_id, FunctionRef::from_u32(func_id));
                     elem_id = elem_id.next();
                 }
                 Ok(())
@@ -53,6 +54,7 @@ impl ElementType<'_> for InputFuncId {
     }
 }
 
+#[derive(Debug)]
 pub struct ElementTable<T: ReservedValue + Clone> {
     // ID of table with indirect functions definition
     pub table_id: TableRef,
@@ -138,4 +140,4 @@ impl<'a, T: ElementType<'a> + ReservedValue + Clone> ElementTable<T> {
     }
 }
 
-pub type IndirectFunctionTable = ElementTable<InputFuncId>;
+pub type IndirectFunctionTable = ElementTable<FunctionRef>;

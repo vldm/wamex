@@ -22,7 +22,10 @@ use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     emit::{ComputedModules, ModuleEmitState, index_safety::OutputGlobalId},
-    read::raw::{DefinedFuncId, InputFuncId, InputGlobalId},
+    read::{
+        raw::DefinedFuncId,
+        typed::{FunctionRef, GlobalRef},
+    },
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -76,9 +79,9 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
     pub fn emit_code_with_changes(
         module_emit: &'any ModuleEmitState<'any, 'src>,
         computed_modules: &'any ComputedModules<'any, 'src>,
-        global_id_mapper: impl Fn(InputGlobalId) -> Option<OutputGlobalId>,
+        global_id_mapper: impl Fn(GlobalRef) -> Option<OutputGlobalId>,
         defined_function_id: DefinedFuncId,
-        input_function_id: InputFuncId, // debug purposes
+        input_function_id: FunctionRef, // debug purposes
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let reloc_info = RelocateState {
@@ -89,9 +92,8 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         };
 
         let (function_name, src_body) = {
-            let func_id = InputFuncId::new(
-                defined_function_id.index() + module_emit.src.import_info.imported_funcs.len(),
-            );
+            let num_imports = module_emit.src.functions.items.imports.len();
+            let func_id = FunctionRef::new(defined_function_id.index() + num_imports);
             let defined_func = module_emit
                 .src
                 .functions
@@ -276,9 +278,9 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
     pub fn emit_code_in_place(
         module_emit: &'any ModuleEmitState<'any, 'src>,
         computed_modules: &'any ComputedModules<'any, 'src>,
-        global_id_mapper: impl Fn(InputGlobalId) -> Option<OutputGlobalId>,
+        global_id_mapper: impl Fn(GlobalRef) -> Option<OutputGlobalId>,
         defined_function_id: DefinedFuncId,
-        input_function_id: InputFuncId, // debug purposes
+        input_function_id: FunctionRef, // debug purposes
         entries: &[CodeModifyEntry],
     ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
         let reloc_info = RelocateState {
@@ -288,9 +290,8 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
             global_id_mapper: &global_id_mapper,
         };
         let (function_name, src_body) = {
-            let func_id = InputFuncId::new(
-                defined_function_id.index() + module_emit.src.import_info.imported_funcs.len(),
-            );
+            let num_imports = module_emit.src.functions.items.imports.len();
+            let func_id = FunctionRef::new(defined_function_id.index() + num_imports);
             let defined_func = module_emit
                 .src
                 .functions

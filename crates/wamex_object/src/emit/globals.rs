@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
-use crate::{emit::ImportedEntity, read::raw::InputGlobalId};
+use crate::{emit::ImportedEntity, read::GlobalRef};
 
 #[derive(Debug)]
 pub enum DefinedGlobal<'a> {
     PlainCopy {
-        input_global_id: InputGlobalId,
+        input_global_id: GlobalRef,
         global: wasmparser::Global<'a>,
     },
     WithConstructor(wasm_encoder::GlobalType),
@@ -16,12 +16,12 @@ pub enum GlobalImport<'a> {
     Existing {
         global_name: &'a str,
         module_name: &'a str,
-        input_global_id: InputGlobalId,
+        input_global_id: GlobalRef,
         global_type: wasm_encoder::GlobalType,
     },
     New {
         global_name: Cow<'a, str>,
-        input_global_id: Option<InputGlobalId>,
+        input_global_id: Option<GlobalRef>,
         global_type: wasm_encoder::GlobalType,
     },
 }
