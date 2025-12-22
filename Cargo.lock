@@ -1210,6 +1210,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pub_if"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd95cb3c3a9fbd2b36831afc971cbf813b91f44a6591069541ac06dbf16bb4f9"
+
+[[package]]
 name = "quote"
 version = "1.0.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1766,6 +1772,7 @@ dependencies = [
  "hex",
  "leb128fmt",
  "log",
+ "pub_if",
  "rustc-demangle",
  "smallvec",
  "vec_map",

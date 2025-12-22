@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+
 /// Map optimized for small number of entries.
 ///
 /// Allows fast lookup but in compromise of slower inserts and removes.

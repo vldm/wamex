@@ -53,6 +53,24 @@ macro_rules! impl_entity_index {
                 next
             }
         }
+        impl core::ops::Add<u32> for $entity {
+            type Output = Self;
+
+            fn add(self, rhs: u32) -> Self::Output {
+                let next = Self::from_u32(self.0 + rhs);
+                debug_assert!(next != $crate::index::ReservedValue::reserved_value());
+                next
+            }
+        }
+        impl core::ops::Sub<u32> for $entity {
+            type Output = Self;
+
+            fn sub(self, rhs: u32) -> Self::Output {
+                debug_assert!(self.0 >= rhs);
+                let next = Self::from_u32(self.0 - rhs);
+                next
+            }
+        }
         // Impl primary key if needed
         $(
             impl_entity_index!(@primary_key $entity $($type)*);

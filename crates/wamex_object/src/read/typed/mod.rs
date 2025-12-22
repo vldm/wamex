@@ -152,7 +152,11 @@ impl<'src> InputObject<'src> {
         let indirect_function_table =
             elements::IndirectFunctionTable::from_reader(&module, table_id, true)?;
 
-        let symbols_map = Symbols::new(&module, functions.items.imports.len())?;
+        let symbols_map = Symbols::new(
+            &module,
+            functions.items.imports.len(),
+            false, // remove duplicates from table
+        )?;
 
         Ok(InputObject {
             wasm_reader: module,

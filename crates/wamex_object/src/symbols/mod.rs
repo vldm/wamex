@@ -10,10 +10,11 @@ pub use diff::{DiffEntry, DiffResult, Differ, StaticModuleInfo};
 #[cfg(feature = "unstable")]
 pub use diff::{SymbolMapWithContent, SymbolMapping};
 use smallvec::SmallVec;
+use wamex_types::map_vec::MiniSet;
 
 use crate::{
     InputObject, ObjectReader,
-    helpers::{RangeComp, RangeExt},
+    helpers::{RangeComp, RangeExt, ShiftMap},
     index::{GappedMap, IdVec},
     read::{
         FunctionRef, GlobalRef, TableRef,
@@ -55,7 +56,8 @@ pub struct SymbolRecord<'a> {
     /// Every index in relocation entry is corresponding to one symbol in symbol table.
     /// Except for TypeIndexLeb relocations, which is in type index space.
     pub relocs: Vec<wasmparser::RelocationEntry>,
-    pub reloc_users: BTreeSet<SymbolId>,
+    /// Map of symbols that use this symbol in their relocations.
+    pub reloc_users: MiniSet<SymbolId>, //TODO: Replace by `MiniSet`
 }
 
 impl SymbolRecord<'_> {
@@ -145,7 +147,11 @@ impl<'src> Symbols<'src> {
             datas_ids: BTreeSet::new(),
         }
     }
-    pub fn new(wasm: &'_ crate::read::ObjectReader<'src>, num_imports_fn: usize) -> Result<Self> {
+    pub fn new(
+        wasm: &'_ crate::read::ObjectReader<'src>,
+        num_imports_fn: usize,
+        remove_duplicates: bool,
+    ) -> Result<Self> {
         use wasmparser::SymbolInfo;
 
         #[derive(Debug, Clone)]
@@ -328,7 +334,7 @@ impl<'src> Symbols<'src> {
                 flags: sym.flags,
                 kind: sym.symbol_kind,
                 relocs: Vec::new(),
-                reloc_users: BTreeSet::new(),
+                reloc_users: MiniSet::new(),
             });
             debug_assert_eq!(id, symbol_id)
         }
@@ -371,8 +377,8 @@ impl<'src> Symbols<'src> {
         fn move_dup_symbols(
             this: &mut Symbols,
             func_ids: GappedMap<FunctionRef, DupForRange>,
-        ) -> BTreeSet<SymbolId> {
-            let mut removed = BTreeSet::new();
+        ) -> ShiftMap<SymbolId> {
+            let mut removed = ShiftMap::new();
             for (_input_id, DupForRange(sym_range, dup_ids)) in func_ids.iter() {
                 if dup_ids.len() <= 1 {
                     continue;
@@ -382,18 +388,23 @@ impl<'src> Symbols<'src> {
                     if dup_id == sym_range.id {
                         continue;
                     }
+                    // Notify all users of duplicate symbol to use new one.
+                    this.replace_usage(dup_id, sym_range.id, 0);
+
                     // take relocs, and mark as duplicate
                     let dup_sym = &mut this.symbols[dup_id];
                     let relocs = std::mem::take(&mut dup_sym.relocs);
+                    let relocs_users = std::mem::take(&mut dup_sym.reloc_users);
                     dup_sym.kind = SymbolKind::Duplicate(sym_range.id);
                     // extend main symbol with
                     this.symbols[sym_range.id].relocs.extend(relocs.into_iter());
+                    this.symbols[sym_range.id]
+                        .reloc_users
+                        .extend(relocs_users.into_iter());
                     // order relocs
                     this.symbols[sym_range.id].relocs.sort_by_key(|r| r.offset);
 
-                    // Notify all users of duplicate symbol to use new one.
-                    this.replace_usage(dup_id, sym_range.id, 0);
-                    removed.insert(dup_id);
+                    removed.remove(dup_id, 1); // always remove 1
                 }
             }
             removed
@@ -419,7 +430,11 @@ impl<'src> Symbols<'src> {
 
         let removed = move_dup_symbols(&mut this, func_ids);
         // Optional phase that shifts all non-used symbols out.
-        // let this = this.retain_symbols(|sym_id| !removed.contains(&sym_id));
+        let this = if remove_duplicates {
+            this.shrink_table(removed)
+        } else {
+            this
+        };
         // We can now remove
         Ok(this)
     }
@@ -595,11 +610,12 @@ impl<'src> Symbols<'src> {
 
     /// Replace symbol usage in all relocations.
     pub fn replace_usage(&mut self, id: SymbolId, new_id: SymbolId, addend_change: i64) {
+        // take it to avoid &mut symbols aliasing issues
         let users = std::mem::take(&mut self.symbols[id].reloc_users);
         let raw_id = id.as_u32();
-        for user_id in users {
+        for user_id in &users {
             // patch relocs in user symbol
-            let user_sym = &mut self.symbols[user_id];
+            let user_sym = &mut self.symbols[*user_id];
             for reloc in &mut user_sym.relocs {
                 if reloc.index != raw_id || reloc.ty == wasmparser::RelocationType::TypeIndexLeb {
                     continue;
@@ -607,29 +623,56 @@ impl<'src> Symbols<'src> {
                 // index is a symbol which <address> should be placed somewhere at `offset`
                 reloc.index = new_id.as_u32();
                 // addend is a value that should be added to the symbol <address>
-                // `replace_usage` is operation of merging two symbols, so we need to adjust addend accordingly
+                // `replace_usage` is operation of merging (embedding) two symbols, so we need to adjust addend accordingly
                 reloc.addend = reloc.addend + addend_change;
             }
         }
+        self.symbols[id].reloc_users = users;
     }
 
-    /// Retain only symbols for which `keep` returns true.
+    /// Rebuild symbol tables using `ShiftMap`.
+    /// `ShiftMap` contain mapping from old symbol id to new symbol id.
+    /// Expects that `ShiftMap` does not contain any "inserts", only `removals` is allowed.
+    ///
+    /// Update all relocations to use new symbol ids.
     ///
     /// Make sure that 'linking_name' is not important and can be lost.
-    pub fn retain_symbols<F>(self, mut keep: F) -> Self
-    where
-        F: FnMut(SymbolId) -> bool,
-    {
-        // build a shift map
+    /// Also if this is called as part of moving operation, make sure to also update `relocs` and `reloc_users` accordingly.
+    pub fn shrink_table(self, shifts: ShiftMap<SymbolId>) -> Self {
         let mut symbols = IdVec::new();
         let mut funcs_ids = GappedMap::<FunctionRef, SymbolId>::new();
         let mut datas_ids = BTreeSet::<DataSymbolKey>::new();
 
-        for (id, symbol) in self.symbols.into_inner().into_iter() {
-            if !keep(id) {
+        for (id, mut symbol) in self.symbols.into_inner().into_iter() {
+            let Some(new_id_expected) = shifts.get_shifted_offset(id) else {
                 continue;
+            };
+            // update relocs and reloc_users
+            for reloc in &mut symbol.relocs {
+                if reloc.ty == wasmparser::RelocationType::TypeIndexLeb {
+                    continue;
+                }
+                // skip removed relocs
+                let new_idx = shifts
+                    .get_shifted_offset(SymbolId::from_u32(reloc.index))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Relocation in symbol {id} points to removed symbol: {:?}",
+                            reloc
+                        );
+                    });
+                reloc.index = new_idx.as_u32();
             }
+            for user_id in std::mem::take(&mut symbol.reloc_users) {
+                // skip removed users
+                let new_user_id = shifts.get_shifted_offset(user_id).unwrap_or_else(|| {
+                    panic!("Relocation user of symbol {id} points to removed symbol: {user_id}");
+                });
+                symbol.reloc_users.insert(new_user_id);
+            }
+
             let new_id = symbols.push(symbol);
+            debug_assert_eq!(new_id.as_u32(), new_id_expected.as_u32());
             match &symbols[new_id].kind {
                 SymbolKind::Func { input_id } => {
                     funcs_ids.insert(*input_id, new_id);
