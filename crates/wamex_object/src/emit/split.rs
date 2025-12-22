@@ -21,7 +21,6 @@ use crate::{
     },
     read::{
         ImportOrDefined,
-        raw::{ExportId, ImportId},
         typed::{FunctionRef, GlobalRef},
     },
     symbols::{SymbolId, SymbolKind},

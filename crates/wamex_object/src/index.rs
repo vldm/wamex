@@ -60,12 +60,12 @@ macro_rules! impl_entity_index {
     )*};
     (@primary_key $entity:ident $type: ident) => {
         impl $crate::index::PrimaryKey for $type {
-            type EntityType = $entity;
+            type EntityRef = $entity;
         }
     };
     (@primary_key $entity:ident for<$b: lifetime> $type: ty) => {
         impl<$b> $crate::index::PrimaryKey for $type {
-            type EntityType = $entity;
+            type EntityRef = $entity;
         }
     };
 
@@ -210,15 +210,18 @@ impl<K: EntityRef, V: Clone + ReservedValue> Default for GappedMap<K, V> {
 /// Allows creating `IdVec` of some entity type with default index type.
 ///
 pub trait PrimaryKey {
-    type EntityType: EntityRef;
+    type EntityRef: EntityRef;
 }
 
 // A wrapper around `PrimaryMap` that allows only entities with defined `PrimaryKey`.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct IdVec<T: PrimaryKey>(PrimaryMap<T::EntityType, T>);
+pub struct IdVec<T: PrimaryKey>(PrimaryMap<T::EntityRef, T>);
 impl<T: PrimaryKey> IdVec<T> {
     pub fn new() -> Self {
         IdVec(PrimaryMap::new())
+    }
+    pub fn into_inner(self) -> PrimaryMap<T::EntityRef, T> {
+        self.0
     }
 }
 
@@ -226,7 +229,7 @@ impl<T> Deref for IdVec<T>
 where
     T: PrimaryKey,
 {
-    type Target = PrimaryMap<T::EntityType, T>;
+    type Target = PrimaryMap<T::EntityRef, T>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -259,7 +262,7 @@ impl<T: PrimaryKey> FromIterator<T> for IdVec<T> {
 
 impl<T: PrimaryKey + Debug> Debug for IdVec<T>
 where
-    T::EntityType: Debug,
+    T::EntityRef: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -288,7 +291,7 @@ mod test_impl_entity_index {
 }
 
 pub type AnySymbolId = usize;
-pub type SectionId = usize;
+pub type SectionId = u32;
 
 // TODO: Maybe replace Vecs with id_arena?
 // Currently the only difference is that we also use
@@ -399,12 +402,12 @@ impl<T: Default + Eq> Default for NonDefault<T> {
     }
 }
 
-impl Display for NonDefault<&str> {
+impl<T: Display> Display for NonDefault<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self.value, f)
     }
 }
-impl Debug for NonDefault<&str> {
+impl<T: Debug> Debug for NonDefault<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.value, f)
     }

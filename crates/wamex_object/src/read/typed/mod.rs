@@ -20,9 +20,10 @@ use crate::{
         self,
         raw::{DefinedFuncId, ElementId, FuncTypeId, ImportId},
     },
-    symbols::SymbolMap,
+    symbols::Symbols,
 };
 
+mod data;
 pub mod elements;
 mod entities;
 mod imports;
@@ -38,7 +39,7 @@ mod imports;
 #[derive(Debug)]
 pub struct InputObject<'src> {
     pub wasm_reader: read::ObjectReader<'src>,
-    pub symbols: SymbolMap<'src>,
+    pub symbols: Symbols<'src>,
 
     // entities
     pub functions: entities::Functions<'src>,
@@ -46,7 +47,7 @@ pub struct InputObject<'src> {
     pub memories: entities::Memories<'src>,
     pub globals: entities::Globals<'src>,
     pub tags: entities::Tags<'src>,
-    // different elements
+    // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
 }
 
@@ -151,7 +152,7 @@ impl<'src> InputObject<'src> {
         let indirect_function_table =
             elements::IndirectFunctionTable::from_reader(&module, table_id, true)?;
 
-        let symbols_map = SymbolMap::new(&module, functions.items.imports.len())?;
+        let symbols_map = Symbols::new(&module, functions.items.imports.len())?;
 
         Ok(InputObject {
             wasm_reader: module,

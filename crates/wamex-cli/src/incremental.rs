@@ -453,7 +453,7 @@ impl StructureDiffResult {
                     log::info!(
                         "    Symbol {:?} <{}>",
                         sym,
-                        crate::helpers::demangle_full(&symbol.name)
+                        crate::helpers::demangle_full(&symbol.debug_name)
                     );
                 }
             }

@@ -10,7 +10,9 @@ description = "Command line interface for wamex splitter"
 [dependencies]
 anyhow = { version = "1.0.82", features = ["backtrace"] }
 clap = { version = "4.5.4", features = ["derive"] }
-wamex_object = { version = "0.1.0", path = "../wamex_object" }
+wamex_object = { version = "0.1.0", path = "../wamex_object", features = [
+    "unstable",
+] }
 
 wasm-encoder = { version = "0.238.0", features = ["wasmparser"] }
 wasmparser = "0.238.0"
@@ -41,6 +43,7 @@ lazy_static = "1.4.0"
 [features]
 default = ["metadata"]
 metadata = ["dep:wamex_types"]
+unstable = []
 
 [[bench]]
 name = "split_benchmarks"

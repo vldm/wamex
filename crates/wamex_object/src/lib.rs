@@ -15,8 +15,7 @@ pub mod symbols;
 pub use anyhow::Result;
 pub use emit::split::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use read::{InputObject, ObjectReader};
-pub use symbols::{StaticModuleInfo, SymbolMap};
-
+pub use symbols::{StaticModuleInfo, Symbols};
 
 // SmallVec with default inline size of 4
 type SVec<T, const N: usize = 4> = smallvec::SmallVec<[T; N]>;

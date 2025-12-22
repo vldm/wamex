@@ -17,7 +17,7 @@ pub struct Relocation {
 impl Relocation {
     pub(super) fn push_section(&mut self, reader: wasmparser::RelocSectionReader) -> Result<()> {
         let exist = self.relocs.insert(
-            reader.section_index() as SectionId,
+            reader.section_index() as usize,
             RelocationSection::read(reader.entries())?,
         );
         if exist.is_some() {
@@ -29,7 +29,7 @@ impl Relocation {
         Ok(())
     }
     pub fn get_section(&self, index: SectionId) -> Option<&RelocationSection> {
-        self.relocs.get(index)
+        self.relocs.get(index as usize)
     }
 }
 

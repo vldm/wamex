@@ -9,14 +9,25 @@ use std::{collections::BTreeMap, mem, ops::Deref};
 
 use cranelift_entity::SecondaryMap;
 
-use super::{SymbolId, SymbolMap};
+use super::{SymbolId, Symbols};
 use crate::index::GappedMap;
 
+///
+/// Partial result of `Differ` work.
+/// It represents name mapping from `left` to `right` symbol, if it can be determined.
+///
+/// Symbols are matched by `linking_name` first, but
+/// not all symbols can be matched by name like anonymous symbols (.L*).
+/// For these symbols we try to match their `context` (parent symbols) and content.
+///
+/// The fields structure is not stable and might change in future versions.
+/// It is exposed to implement some extended logic on top of it.
+///
 pub struct SymbolMapping {
     // Most of symbols are mapped.
-    left_to_right: GappedMap<SymbolId, SymbolId>,
-    left_non_matched: Vec<SymbolId>,
-    right_non_matched: Vec<SymbolId>,
+    pub left_to_right: GappedMap<SymbolId, SymbolId>,
+    pub left_non_matched: Vec<SymbolId>,
+    pub right_non_matched: Vec<SymbolId>,
 }
 
 impl SymbolMapping {
@@ -37,6 +48,8 @@ impl SymbolMapping {
     }
 }
 
+// expose pub only if user ask us
+#[pub_if::pub_if(feature = "unstable")]
 pub struct Differ<L, R> {
     left: L,
     right: R,
@@ -50,9 +63,9 @@ where
     pub fn new(left: L, right: R) -> Self {
         Self { left, right }
     }
+    /// Build symbol mapping and refine it with context-based matching.
     pub fn symbol_map(&self) -> SymbolMapping {
         let mut mapping = self.build_name_mapping();
-        self.try_match_wamex_split_point(&mut mapping);
         self.refine_mapping(&mut mapping);
         mapping
     }
@@ -61,7 +74,8 @@ where
         name.starts_with(".L") || name.starts_with("$L")
     }
 
-    fn build_name_mapping(&self) -> SymbolMapping {
+    /// Build initial name based mapping.
+    pub fn build_name_mapping(&self) -> SymbolMapping {
         //1. Build name -> symbol id maps for first_module;
         // If more than one symbol with same name found - we treat them as duplicates and compare by context later.
         let mut name_to_left_symbol: BTreeMap<&str, SymbolId> = BTreeMap::new();
@@ -132,70 +146,6 @@ where
         }
     }
 
-    fn wamex_parse_name(name: &str) -> Option<(&str, &str)> {
-        crate::emit::split::parse_wamex_entry_name(name)
-    }
-    // Try to match unmatched wamex split points by their module name and function position.
-    fn try_match_wamex_split_point(&self, mapping: &mut SymbolMapping) {
-        // To avoid conflicts wamex entrypoints contain unique portion in their names.
-        // So we match them by module name.
-        let mut non_matched_wamex_left_symbols: BTreeMap<&str, SVec<(&str, SymbolId)>> =
-            BTreeMap::new();
-        let mut non_matched_wamex_right_symbols: BTreeMap<&str, SVec<(&str, SymbolId)>> =
-            BTreeMap::new();
-        for left in &mapping.left_non_matched {
-            let left_symbol = &self.left.symbols().get(*left).unwrap();
-            let Some(name) = &left_symbol.linking_name else {
-                continue;
-            };
-            if !name.contains(crate::emit::split::WAMEX_ENTRY_PREFIX) {
-                continue;
-            }
-            let Some((module, fn_name)) = Self::wamex_parse_name(name) else {
-                continue;
-            };
-            non_matched_wamex_left_symbols
-                .entry(module)
-                .or_default()
-                .push((fn_name, *left));
-        }
-        for right in &mapping.right_non_matched {
-            let right_symbol = &self.right.symbols().get(*right).unwrap();
-            let Some(name) = &right_symbol.linking_name else {
-                continue;
-            };
-            if !name.contains(crate::emit::split::WAMEX_ENTRY_PREFIX) {
-                continue;
-            }
-            let Some((module, fn_name)) = Self::wamex_parse_name(name) else {
-                continue;
-            };
-            non_matched_wamex_right_symbols
-                .entry(module)
-                .or_default()
-                .push((fn_name, *right));
-        }
-        // Now match left and right symbols within same module by function number
-        for (module, mut left_syms) in non_matched_wamex_left_symbols {
-            let Some(mut right_syms) = non_matched_wamex_right_symbols.remove(module) else {
-                continue;
-            };
-            left_syms.sort_by_key(|(fn_name, _)| *fn_name);
-            right_syms.sort_by_key(|(fn_name, _)| *fn_name);
-            for (left, right) in left_syms.into_iter().zip(right_syms.into_iter()) {
-                log::info!(
-                    "Matched wamex split point symbol: module: {module}, left: {:?}, right: {:?}",
-                    left.0,
-                    right.0
-                );
-                mapping.left_to_right.insert(left.1, right.1);
-                // Remove from non-matched lists
-                mapping.left_non_matched.retain(|v| *v != left.1);
-                mapping.right_non_matched.retain(|v| *v != right.1);
-            }
-        }
-    }
-
     // Calculate hash and check if hashes and childs are same
     fn is_same_content(
         &self,
@@ -231,13 +181,13 @@ where
         Ok(())
     }
 
-    // Try to match non-mapped symbols.
-    // If symbols have not changed, matching can still fail if name is not unique, or not changed.
-    // To deal with this, we can add more pieces of information to the matching process:
-    // 1. Use stable name (don't use .L names that can change between compilations)
-    // 2. Use content and list of childs to match symbols that have not changed.
-    // 3. If not working - use context (parent symbols) to find where symbol was used.
-    fn refine_mapping(&self, mapping: &mut SymbolMapping) {
+    /// Try to match non-mapped symbols.
+    /// If symbols have not changed, matching can still fail if name is not unique, or not changed.
+    /// To deal with this, we can add more pieces of information to the matching process:
+    /// 1. Use stable name (don't use .L names that can change between compilations)
+    /// 2. Use content and list of childs to match symbols that have not changed.
+    /// 3. If not working - use context (parent symbols) to find where symbol was used.
+    pub fn refine_mapping(&self, mapping: &mut SymbolMapping) {
         // 1. Build parent map for left symbols
         let mut left_parent_map: BTreeMap<SymbolId, SymbolContext> = BTreeMap::new();
         for (sym_id, symbol) in self.left.symbols().iter() {
@@ -395,13 +345,13 @@ where
     where
         'left: 'a,
     {
-        self.left.symbols().get(sym_id).map(|s| &*s.name)
+        self.left.symbols().get(sym_id).map(|s| &*s.debug_name)
     }
     fn right_sym_name<'a>(&'a self, sym_id: SymbolId) -> Option<&'a str>
     where
         'right: 'a,
     {
-        self.right.symbols().get(sym_id).map(|s| &*s.name)
+        self.right.symbols().get(sym_id).map(|s| &*s.debug_name)
     }
     pub fn debug_diff(&self, diff: &DiffResult) {
         let replaced_iter = diff.replaced();
@@ -722,7 +672,7 @@ use crate::{InputObject, SVec};
 
 pub trait SymbolMapWithContent<'src> {
     fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>>;
-    fn symbols(&self) -> &SymbolMap<'src>;
+    fn symbols(&self) -> &Symbols<'src>;
 }
 
 impl<'src> SymbolMapWithContent<'src> for InputObject<'src> {
@@ -731,21 +681,21 @@ impl<'src> SymbolMapWithContent<'src> for InputObject<'src> {
             .get(sym_id)
             .and_then(|s| s.stable_content(self))
     }
-    fn symbols(&self) -> &SymbolMap<'src> {
+    fn symbols(&self) -> &Symbols<'src> {
         &self.symbols
     }
 }
 
 #[derive(Clone, Default, Debug)]
 pub struct StaticModuleInfo {
-    symbols: SymbolMap<'static>,
+    symbols: Symbols<'static>,
     contents: SecondaryMap<SymbolId, Vec<u8>>,
 }
 
 impl StaticModuleInfo {
     pub fn empty() -> Self {
         Self {
-            symbols: SymbolMap::empty(),
+            symbols: Symbols::empty(),
             contents: SecondaryMap::new(),
         }
     }
@@ -766,7 +716,7 @@ impl SymbolMapWithContent<'static> for StaticModuleInfo {
     fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>> {
         self.contents.get(sym_id).cloned()
     }
-    fn symbols(&self) -> &SymbolMap<'static> {
+    fn symbols(&self) -> &Symbols<'static> {
         &self.symbols
     }
 }
@@ -778,7 +728,7 @@ where
     fn stable_content(&self, sym_id: SymbolId) -> Option<Vec<u8>> {
         <M as SymbolMapWithContent<'src>>::stable_content(*self, sym_id)
     }
-    fn symbols(&self) -> &SymbolMap<'src> {
+    fn symbols(&self) -> &Symbols<'src> {
         <M as SymbolMapWithContent<'src>>::symbols(*self)
     }
 }

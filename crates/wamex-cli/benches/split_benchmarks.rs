@@ -63,6 +63,23 @@ fn benchmark_parse_module(c: &mut Criterion) {
     });
 }
 
+fn benchmark_parse_object_module(c: &mut Criterion) {
+    let lazy_routes_wasm = load_lazy_routes_wasm();
+    c.bench_function("parse_lazy_routes_object", |b| {
+        b.iter_custom(|iters| {
+            let mut total_duration = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
+                let start = std::time::Instant::now();
+                let info = InputObject::from_raw_module(black_box(module)).unwrap();
+                hint_black_box(info);
+                total_duration += start.elapsed();
+            }
+            total_duration
+        })
+    });
+}
+
 fn benchmark_dependency_analysis(c: &mut Criterion) {
     let lazy_routes_wasm = load_lazy_routes_wasm();
     let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
@@ -313,6 +330,7 @@ impl ValueFormatter for MemUsage {
 criterion_group!(
     split_benches,
     benchmark_parse_module,
+    benchmark_parse_object_module,
     benchmark_dependency_analysis,
     benchmark_compute_split_modules,
     benchmark_emit_modules,

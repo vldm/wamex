@@ -352,7 +352,7 @@ mod tests {
 
         let format_dep = |dep: SymbolId| {
             let symbol = info.symbols.get(dep).unwrap();
-            let name = &symbol.name;
+            let name = &symbol.debug_name;
             match symbol.kind {
                 SymbolKind::Func { input_id } => {
                     format!("func[{input_id}] <{name:?}>")

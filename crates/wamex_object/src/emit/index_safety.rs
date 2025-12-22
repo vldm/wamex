@@ -4,12 +4,7 @@ use crate::{
         DefinedFunctionKind, ImportedFunction,
         globals::{DefinedGlobal, GlobalImport},
     },
-    index::PrimaryKey,
-    read::{
-        GetInputRef, FunctionRef, LinkedToInputRef, OutputMapType,
-        code::InputFunction,
-        typed::{CompoundRef, EntitiesFromInput},
-    },
+    read::{FunctionRef, GetInputRef, LinkedToInputRef, OutputMapType, typed::CompoundRef},
 };
 
 impl_entity_index! {

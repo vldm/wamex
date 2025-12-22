@@ -184,9 +184,9 @@ impl<'src, IDX: CompoundRef> CompoundList<'src, IDX> {
     pub fn push_defined(
         &mut self,
         defined: IDX::DefinedType<'src>,
-    ) -> <IDX::DefinedType<'src> as PrimaryKey>::EntityType {
+    ) -> <IDX::DefinedType<'src> as PrimaryKey>::EntityRef {
         self.defined.push(defined);
-        <IDX::DefinedType<'src> as PrimaryKey>::EntityType::new(self.defined.len() - 1)
+        <IDX::DefinedType<'src> as PrimaryKey>::EntityRef::new(self.defined.len() - 1)
     }
 
     /// Returns compound index for defined entity.
@@ -194,7 +194,7 @@ impl<'src, IDX: CompoundRef> CompoundList<'src, IDX> {
     /// otherwise the index of this defined item will be shifted, and need to be recalculated.
     pub fn calculate_compound_index(
         &self,
-        defined_idx: <IDX::DefinedType<'src> as PrimaryKey>::EntityType,
+        defined_idx: <IDX::DefinedType<'src> as PrimaryKey>::EntityRef,
     ) -> IDX {
         IDX::new(self.imports.len() + defined_idx.index())
     }
@@ -413,9 +413,9 @@ impl<'src, IDX> Debug for CompoundList<'src, IDX>
 where
     IDX: CompoundRef,
     IDX::ImportType<'src>: Debug,
-    <IDX::ImportType<'src> as PrimaryKey>::EntityType: Debug,
+    <IDX::ImportType<'src> as PrimaryKey>::EntityRef: Debug,
     IDX::DefinedType<'src>: Debug,
-    <IDX::DefinedType<'src> as PrimaryKey>::EntityType: Debug,
+    <IDX::DefinedType<'src> as PrimaryKey>::EntityRef: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EntitiesCollection")
@@ -429,9 +429,9 @@ impl<'src, IDX> Debug for EntitiesCollection<'src, IDX>
 where
     IDX: CompoundRef + Debug,
     IDX::ImportType<'src>: Debug,
-    <IDX::ImportType<'src> as PrimaryKey>::EntityType: Debug,
+    <IDX::ImportType<'src> as PrimaryKey>::EntityRef: Debug,
     IDX::DefinedType<'src>: Debug,
-    <IDX::DefinedType<'src> as PrimaryKey>::EntityType: Debug,
+    <IDX::DefinedType<'src> as PrimaryKey>::EntityRef: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EntitiesCollection")

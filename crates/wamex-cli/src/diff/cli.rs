@@ -388,7 +388,7 @@ impl<'any, 'src> Compare<'any, 'src> {
     fn compare_vec<Type>(
         left: &IdVec<Type>,
         right: &IdVec<Type>,
-    ) -> Vec<(<Type as PrimaryKey>::EntityType, anyhow::Error)>
+    ) -> Vec<(<Type as PrimaryKey>::EntityRef, anyhow::Error)>
     where
         Type: PrimaryKey + DiffExt,
     {

@@ -7,6 +7,8 @@ use std::{
 use anyhow::{Result, ensure};
 use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 pub use diff::{DiffEntry, DiffResult, Differ, StaticModuleInfo};
+#[cfg(feature = "unstable")]
+pub use diff::{SymbolMapWithContent, SymbolMapping};
 use smallvec::SmallVec;
 
 use crate::{
@@ -19,6 +21,7 @@ use crate::{
     },
 };
 mod diff;
+// mod reloc;
 
 impl_entity_index! {
     #[display = ""] // Basic symbol no need prefix for display
@@ -44,14 +47,15 @@ pub enum SymbolKind {
 pub struct SymbolRecord<'a> {
     /// From Name + linking section, fail in case of conflicts.
     /// undefined and non-named
-    pub name: Cow<'a, str>,
+    pub debug_name: Cow<'a, str>,
     pub linking_name: Option<Cow<'a, str>>,
     pub flags: wasmparser::SymbolFlags,
+    pub kind: SymbolKind,
     /// Relocation entries inside this symbol
     /// Every index in relocation entry is corresponding to one symbol in symbol table.
     /// Except for TypeIndexLeb relocations, which is in type index space.
     pub relocs: Vec<wasmparser::RelocationEntry>,
-    pub kind: SymbolKind,
+    pub reloc_users: BTreeSet<SymbolId>,
 }
 
 impl SymbolRecord<'_> {
@@ -64,7 +68,7 @@ impl SymbolRecord<'_> {
 
     pub fn stable_name(&self) -> Option<&str> {
         match self.kind {
-            SymbolKind::Func { .. } => Some(&self.name),
+            SymbolKind::Func { .. } => Some(&self.debug_name),
             _ => None,
         }
     }
@@ -127,13 +131,13 @@ struct DataSymbolKey {
 }
 
 #[derive(Clone, Default, Debug)]
-pub struct SymbolMap<'src> {
+pub struct Symbols<'src> {
     symbols: IdVec<SymbolRecord<'src>>,
     funcs_ids: GappedMap<FunctionRef, SymbolId>,
     datas_ids: BTreeSet<DataSymbolKey>,
 }
 
-impl<'src> SymbolMap<'src> {
+impl<'src> Symbols<'src> {
     pub fn empty() -> Self {
         Self {
             symbols: IdVec::new(),
@@ -319,15 +323,20 @@ impl<'src> SymbolMap<'src> {
             };
 
             let id = symbols.push(SymbolRecord {
-                name: sym.name,
+                debug_name: sym.name,
                 linking_name: sym.linking_name.map(From::from),
                 flags: sym.flags,
                 kind: sym.symbol_kind,
                 relocs: Vec::new(),
+                reloc_users: BTreeSet::new(),
             });
             debug_assert_eq!(id, symbol_id)
         }
 
+        /// Move relocations from flat list to symbols.
+        ///
+        /// And mark reloc_users.
+        ///
         fn move_relocs<'a, U: 'a>(
             symbols: &mut IdVec<SymbolRecord>,
             iterator: impl IntoIterator<Item = (U, &'a SymbolRange)>,
@@ -348,14 +357,22 @@ impl<'src> SymbolMap<'src> {
                     let mut reloc = relocations.pop_front().unwrap();
                     reloc.offset -= symbol.range.start as u32;
                     symbols[symbol.id].relocs.push(reloc);
+
+                    // Record that this symbol uses the target symbol of the relocation
+                    // skip TypeIndexLeb because it contain type index, not symbol index
+                    if reloc.ty != wasmparser::RelocationType::TypeIndexLeb {
+                        let target_symbol_id = SymbolId::from_u32(reloc.index);
+                        symbols[target_symbol_id].reloc_users.insert(symbol.id);
+                    }
                 }
             }
         }
         // Move relocs from duplicate symbols to main symbol, and mark duplicates.
         fn move_dup_symbols(
-            symbols: &mut IdVec<SymbolRecord>,
-            func_ids: &GappedMap<FunctionRef, DupForRange>,
-        ) {
+            this: &mut Symbols,
+            func_ids: GappedMap<FunctionRef, DupForRange>,
+        ) -> BTreeSet<SymbolId> {
+            let mut removed = BTreeSet::new();
             for (_input_id, DupForRange(sym_range, dup_ids)) in func_ids.iter() {
                 if dup_ids.len() <= 1 {
                     continue;
@@ -366,13 +383,20 @@ impl<'src> SymbolMap<'src> {
                         continue;
                     }
                     // take relocs, and mark as duplicate
-                    let dup_sym = &mut symbols[dup_id];
+                    let dup_sym = &mut this.symbols[dup_id];
                     let relocs = std::mem::take(&mut dup_sym.relocs);
                     dup_sym.kind = SymbolKind::Duplicate(sym_range.id);
                     // extend main symbol with
-                    symbols[sym_range.id].relocs.extend(relocs.into_iter());
+                    this.symbols[sym_range.id].relocs.extend(relocs.into_iter());
+                    // order relocs
+                    this.symbols[sym_range.id].relocs.sort_by_key(|r| r.offset);
+
+                    // Notify all users of duplicate symbol to use new one.
+                    this.replace_usage(dup_id, sym_range.id, 0);
+                    removed.insert(dup_id);
                 }
             }
+            removed
         }
 
         // 1. Get ordered relocs (data segments, code).
@@ -384,35 +408,44 @@ impl<'src> SymbolMap<'src> {
             code_relocs,
         );
         move_relocs(&mut symbols, data_ids.iter(), data_relocs);
-        move_dup_symbols(&mut symbols, &func_ids);
-
-        Ok(Self {
+        let mut this = Self {
             symbols,
             funcs_ids: func_ids
                 .iter()
                 .map(|(k, DupForRange(v, _))| (k, v.id))
                 .collect(),
             datas_ids: data_ids.into_iter().map(|(k, _)| k).collect(),
-        })
+        };
+
+        let removed = move_dup_symbols(&mut this, func_ids);
+        // Optional phase that shifts all non-used symbols out.
+        // let this = this.retain_symbols(|sym_id| !removed.contains(&sym_id));
+        // We can now remove
+        Ok(this)
     }
 
-    pub fn clone_owned(&self) -> SymbolMap<'static> {
+    pub fn clone_owned(&self) -> Symbols<'static> {
         let symbols = self
             .symbols
             .iter()
             .map(|(_id, sym)| SymbolRecord {
-                name: sym.name.clone().into_owned().into(),
+                debug_name: sym.debug_name.clone().into_owned().into(),
                 linking_name: sym.linking_name.clone().map(|n| Cow::Owned(n.into_owned())),
                 flags: sym.flags,
                 relocs: sym.relocs.clone(),
                 kind: sym.kind,
+                reloc_users: sym.reloc_users.clone(),
             })
             .collect();
-        SymbolMap {
+        Symbols {
             symbols,
             funcs_ids: self.funcs_ids.clone(),
             datas_ids: self.datas_ids.clone(),
         }
+    }
+
+    pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut SymbolRecord<'src>> {
+        self.symbols.get_mut(id)
     }
 
     // TODO: Build remap index instead of handling duplicates here.
@@ -425,15 +458,6 @@ impl<'src> SymbolMap<'src> {
     pub fn get_function_symbol(&self, func_id: FunctionRef) -> Option<SymbolId> {
         self.funcs_ids.get(func_id).copied()
     }
-
-    // pub fn get_data_symbol(&self, segment_id: DataSegmentId, offset: usize) -> Option<SymbolId> {
-    //     self.datas_ids
-    //         .get(&DataSymbolKey {
-    //             data_segment: segment_id,
-    //             offset,
-    //         })
-    //         .copied()
-    // }
 
     pub fn as_input_function(&self, id: SymbolId) -> Option<FunctionRef> {
         match &self.symbols.get(id)?.kind {
@@ -523,14 +547,14 @@ impl<'src> SymbolMap<'src> {
 
     pub fn print_debug(&self) {
         for (id, symbol) in self.symbols.iter() {
-            println!("---{id} <{name}>", name = &symbol.name);
+            println!("---{id} <{name}>", name = &symbol.debug_name);
             println!("    record: {:?}", symbol);
             for reloc in &symbol.relocs {
                 let id = SymbolId::from_u32(reloc.index);
                 println!(
                     "-->{id} <{name}> reloc{:?}",
                     reloc,
-                    name = self.symbols[id].name,
+                    name = self.symbols[id].debug_name,
                 );
             }
         }
@@ -547,7 +571,85 @@ impl<'src> SymbolMap<'src> {
             )
         })
     }
+    pub fn iter_data_symbols_for_segment(
+        &self,
+        segment_id: DataSegmentId,
+    ) -> impl Iterator<Item = (SymbolId, &SymbolRecord<'src>)> {
+        self.datas_ids
+            .range(
+                DataSymbolKey {
+                    data_segment: segment_id,
+                    offset: 0,
+                    symbol_id: SymbolId::reserved_value(),
+                }..DataSymbolKey {
+                    data_segment: DataSegmentId::from_u32(segment_id.as_u32() + 1),
+                    offset: 0,
+                    symbol_id: SymbolId::reserved_value(),
+                },
+            )
+            .map(|key| (key.symbol_id, &self.symbols[key.symbol_id]))
+    }
     pub fn iter(&self) -> impl Iterator<Item = (SymbolId, &SymbolRecord<'src>)> {
         self.symbols.iter()
+    }
+
+    /// Replace symbol usage in all relocations.
+    pub fn replace_usage(&mut self, id: SymbolId, new_id: SymbolId, addend_change: i64) {
+        let users = std::mem::take(&mut self.symbols[id].reloc_users);
+        let raw_id = id.as_u32();
+        for user_id in users {
+            // patch relocs in user symbol
+            let user_sym = &mut self.symbols[user_id];
+            for reloc in &mut user_sym.relocs {
+                if reloc.index != raw_id || reloc.ty == wasmparser::RelocationType::TypeIndexLeb {
+                    continue;
+                }
+                // index is a symbol which <address> should be placed somewhere at `offset`
+                reloc.index = new_id.as_u32();
+                // addend is a value that should be added to the symbol <address>
+                // `replace_usage` is operation of merging two symbols, so we need to adjust addend accordingly
+                reloc.addend = reloc.addend + addend_change;
+            }
+        }
+    }
+
+    /// Retain only symbols for which `keep` returns true.
+    ///
+    /// Make sure that 'linking_name' is not important and can be lost.
+    pub fn retain_symbols<F>(self, mut keep: F) -> Self
+    where
+        F: FnMut(SymbolId) -> bool,
+    {
+        // build a shift map
+        let mut symbols = IdVec::new();
+        let mut funcs_ids = GappedMap::<FunctionRef, SymbolId>::new();
+        let mut datas_ids = BTreeSet::<DataSymbolKey>::new();
+
+        for (id, symbol) in self.symbols.into_inner().into_iter() {
+            if !keep(id) {
+                continue;
+            }
+            let new_id = symbols.push(symbol);
+            match &symbols[new_id].kind {
+                SymbolKind::Func { input_id } => {
+                    funcs_ids.insert(*input_id, new_id);
+                }
+                SymbolKind::DataDefined {
+                    segment_id, offset, ..
+                } => {
+                    datas_ids.insert(DataSymbolKey {
+                        data_segment: *segment_id,
+                        offset: *offset,
+                        symbol_id: new_id,
+                    });
+                }
+                _ => {}
+            }
+        }
+        Self {
+            symbols,
+            funcs_ids,
+            datas_ids,
+        }
     }
 }

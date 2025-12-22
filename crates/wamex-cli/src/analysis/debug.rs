@@ -30,7 +30,7 @@ pub(crate) fn print_deps_inner(
     };
     let format_dep = |dep: SymbolId| {
         let symbol = info.symbols.get(dep).expect("dep should be valid");
-        let name = crate::helpers::demangle_full(&symbol.name);
+        let name = crate::helpers::demangle_full(&symbol.debug_name);
         match symbol.kind {
             SymbolKind::Func { input_id } => {
                 format!(
@@ -96,7 +96,7 @@ pub fn format_dep_graph(graph: &DepGraph, info: &InputObject) -> String {
 
     let format_symbol = |id: SymbolId| -> String {
         let symbol = info.symbols.get(id).expect("symbol should exist");
-        let name = crate::helpers::demangle_full(&symbol.name);
+        let name = crate::helpers::demangle_full(&symbol.debug_name);
         match symbol.kind {
             SymbolKind::Func { input_id } => {
                 format!(
@@ -154,7 +154,7 @@ pub fn format_split_program_info(
 
     let format_symbol = |id: SymbolId| -> String {
         let symbol = info.symbols.get(id).expect("symbol should exist");
-        let name = crate::helpers::demangle_full(&symbol.name);
+        let name = crate::helpers::demangle_full(&symbol.debug_name);
         format!("{id:?} <{name}>")
     };
 
@@ -223,7 +223,7 @@ pub fn format_symbol_map(info: &InputObject) -> String {
     symbols.sort_by_key(|(id, _)| *id);
 
     for (id, symbol) in symbols {
-        let name = crate::helpers::demangle_full(&symbol.name);
+        let name = crate::helpers::demangle_full(&symbol.debug_name);
 
         match symbol.kind {
             SymbolKind::Func { input_id } => {
@@ -289,7 +289,7 @@ pub fn format_symbol_map(info: &InputObject) -> String {
                     .symbols
                     .get(crate::index::SymbolId::from_u32(reloc.index));
                 let target_name = target_symbol
-                    .map(|s| crate::helpers::demangle_full(&s.name))
+                    .map(|s| crate::helpers::demangle_full(&s.debug_name))
                     .unwrap_or_else(|| format!("unknown_{}", reloc.index));
                 writeln!(
                     &mut output,

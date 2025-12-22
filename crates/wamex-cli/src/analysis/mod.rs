@@ -1,6 +1,6 @@
 pub use wamex_object::{
     InputObject,
-    symbols::{StaticModuleInfo, SymbolMap},
+    symbols::{StaticModuleInfo, Symbols},
 };
 
 pub mod debug;

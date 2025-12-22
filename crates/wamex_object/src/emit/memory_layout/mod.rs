@@ -183,14 +183,14 @@ impl<'src> SegmentLayout<'src> {
                             "Data segment has gap larger than alignment: {:?} > {} before {}",
                             gap_range,
                             alignment,
-                            sym.name
+                            sym.debug_name
                         );
                     } else {
                         log::debug!(
                             "Data segment has gap: {:?} ({} bytes) before {}",
                             gap_range,
                             gap_range.len(),
-                            sym.name
+                            sym.debug_name
                         );
                     }
                 }
@@ -199,7 +199,7 @@ impl<'src> SegmentLayout<'src> {
 
                 log::trace!(
                     "Data symbol {}: offset: {}, size: {}, aligned: {}, alignment: {}",
-                    sym.name,
+                    sym.debug_name,
                     symbol_in_data.start,
                     symbol_in_data.len(),
                     aligned,
@@ -213,7 +213,7 @@ impl<'src> SegmentLayout<'src> {
             };
 
             let part = DataChunk {
-                name: sym.name.clone(),
+                name: sym.debug_name.clone(),
                 flags: sym.flags,
                 relocations: sym.relocs.clone(),
                 symbol_index: sym_id,
@@ -234,7 +234,7 @@ impl<'src> SegmentLayout<'src> {
     }
 
     pub fn debug_layout(
-        symbol_table: &symbols::SymbolMap,
+        symbol_table: &symbols::Symbols,
         module_name: String,
         data_segments: &GappedMap<DataSegmentId, SegmentLayout<'_>>,
     ) {
@@ -264,7 +264,7 @@ impl<'src> SegmentLayout<'src> {
                                     symbol_table.get(SymbolId::from_u32(reloc.index)).unwrap();
                                 hexdump::Ref {
                                     range: reloc.relocation_range(),
-                                    name: &reloc_symbol.name,
+                                    name: &reloc_symbol.debug_name,
                                 }
                             })
                             .collect();
