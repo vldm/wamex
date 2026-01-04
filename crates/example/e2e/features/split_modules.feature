@@ -49,9 +49,9 @@ Feature: Check that split modules load correctly
 
   Scenario: Lifetime module loads correctly
     Given the app is running
-    When I enter "lieftime" into the input field
+    When I enter "lifetime" into the input field
     And I submit the form
-    Then the result should contain "test"
+    Then the result should contain "test lifetime"
     And the WASM module "use_lifetime" should be loaded
 
   Scenario: Fallback returns input unchanged

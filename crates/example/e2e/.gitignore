@@ -3,4 +3,3 @@ dist/
 
 # Cargo build artifacts
 target/
-Cargo.lock

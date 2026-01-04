@@ -563,11 +563,12 @@ impl<'src> Symbols<'src> {
     pub fn print_debug(&self) {
         for (id, symbol) in self.symbols.iter() {
             println!("---{id} <{name}>", name = &symbol.debug_name);
-            println!("    record: {:?}", symbol);
+            println!("    users: {:?}", symbol.reloc_users);
+            println!("    records: {:?}", symbol);
             for reloc in &symbol.relocs {
                 let id = SymbolId::from_u32(reloc.index);
                 println!(
-                    "-->{id} <{name}> reloc{:?}",
+                    "    -->{id} <{name}> reloc{:?}",
                     reloc,
                     name = self.symbols[id].debug_name,
                 );

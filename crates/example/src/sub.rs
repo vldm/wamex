@@ -56,5 +56,5 @@ pub fn dyn_fns_inner(func: &dyn Fn() -> String) -> String {
 
 #[cfg_attr(feature = "split", wamex::split(use_lifetime))]
 pub fn use_lifetime(input: &str) -> String {
-    input.to_string()
+    format!("{} {}", input, "lifetime")
 }

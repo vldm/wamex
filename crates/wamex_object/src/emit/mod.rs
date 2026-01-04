@@ -328,7 +328,6 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                     .map(|def| &def.kind),
                 // modify name for import stubs to avoid conflicts
                 Some(DefinedFunctionKind::Trampoline { .. })
-                    | Some(DefinedFunctionKind::IndirectTrampoline { .. })
             );
 
         if namespace {
@@ -555,14 +554,17 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         // generate empty entries for lazy entrypoints
         match &self.sub_module_extra {
             None => {
-                let (defined_id, _) = self
-                    .functions
-                    .defined()
-                    .next()
-                    .expect("we need any defined function in main module");
-                let id = defined_id.index() + self.functions.imports().len();
+                fn find_abort_function(
+                    functions: &EntitiesFromInput<'_, OutputFuncId>,
+                ) -> Option<OutputFuncId> {
+                    for (id, _def) in functions.defined() {
+                        return Some(id); // TODO: Place real abort function
+                    }
+                    None
+                }
+                let id = find_abort_function(&self.functions).expect("Abort function not found");
 
-                let abort_fn_id = id as u32; // TODO: Place real abort function
+                let abort_fn_id = id.index() as u32;
                 let num_lazy_entries = self.indirect_functions.num_extra_stubs;
                 let start_of_lazy_fns = self.indirect_functions.table_entries.len() as i32 + 1;
 

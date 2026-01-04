@@ -17,7 +17,7 @@ pub async fn print_lazy_loaded_string(data: &str) -> Result<String, JsError> {
         format!("{}", sub::multiple_dyn_fns(true).await)
     } else if data == "dep_dyn" {
         format!("{}", sub::dep_dyn().await)
-    } else if data == "lieftime" {
+    } else if data == "lifetime" {
         format!("{}", sub::use_lifetime("test").await)
     } else if data.starts_with("debug") {
         // debug memory

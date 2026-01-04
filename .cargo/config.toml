@@ -1,7 +1,7 @@
-# Flags for examples
-[target.wasm32-unknown-unknown]
-rustflags = ['-Clink-args=--emit-relocs']
-
 # Flags for cli
 [target.x86_64-unknown-linux-gnu]
 rustflags = ['-Ctarget-cpu=native'] # for gxhash
+
+# Flags for examples
+[target.wasm32-unknown-unknown]
+rustflags = ['-Clink-args=--emit-relocs']

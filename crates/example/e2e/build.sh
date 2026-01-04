@@ -20,7 +20,7 @@ WASM_FILE=$(cargo build \
     --release \
     --features "split" \
     --message-format=json | \
-    jq -r 'select(.reason == "compiler-artifact" and .target.name == "example") | .filenames[0]')
+    jq -r 'select(.reason == "compiler-artifact" and .target.name == "wamex_example") | .filenames[0]')
 
 echo "Built WASM file: $WASM_FILE"
 

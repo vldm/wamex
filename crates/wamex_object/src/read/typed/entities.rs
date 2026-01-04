@@ -366,7 +366,7 @@ where
     }
 
     pub fn get_defined_for_output_id(&self, output_id: IDX) -> Option<&IDX::DefinedType<'src>> {
-        let raw_id = output_id.index();
+        let raw_id = output_id.index().checked_sub(self.entities.imports.len())?;
         self.entities.defined.get(EntityRef::new(raw_id))
     }
 

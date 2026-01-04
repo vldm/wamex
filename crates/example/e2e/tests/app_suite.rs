@@ -1,5 +1,5 @@
-use std::fs::read_dir;
-use std::ffi::OsStr;
+use std::{ffi::OsStr, fs::read_dir};
+
 use cucumber::World;
 
 mod fixtures;

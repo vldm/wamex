@@ -33,11 +33,24 @@ use crate::{
 pub struct SplitPoint {
     pub module_name: String,
     pub unique_id: String,
-    pub import_func: FunctionRef,
-    pub export_func: FunctionRef,
+    import_func: FunctionRef,
+    export_func: FunctionRef,
 }
 
 impl SplitPoint {
+    pub fn new(
+        module_name: String,
+        unique_id: String,
+        import_func: FunctionRef,
+        export_func: FunctionRef,
+    ) -> Self {
+        Self {
+            module_name,
+            unique_id,
+            import_func,
+            export_func,
+        }
+    }
     pub fn import_func(&self) -> FunctionRef {
         self.import_func
     }
@@ -507,6 +520,13 @@ impl Split<()> {
             state: ObjectBuilder::new(),
         };
 
+        // TODO: add abort function.
+        // builder.state.add_defined_function(DefinedFunction {
+        //     export: false,
+        //     input_func_id: FunctionRef::from_u32(0), // dummy, will be replaced
+        //     kind: DefinedFunctionKind::AbortFunction,
+        // });
+
         // TODO: make it hard error, to do so, we need to resolve synonym symbols first
         let mut used_funcs = BTreeSet::new();
         let mut data_to_define = BTreeMap::new();
@@ -524,10 +544,7 @@ impl Split<()> {
                 SymbolKind::Func { input_id } => input_id,
                 _ => panic!("Unexpected symbol kind"),
             };
-            if !used_funcs.insert(input_func_id) {
-                // duplicate symbol for same function, skip
-                continue;
-            }
+            assert!(used_funcs.insert(input_func_id));
             let need_export = output_module_info.need_export(&sym, input_func_id);
             builder.include_function_by_symbol(&ctx, sym, input_func_id, need_export);
         }

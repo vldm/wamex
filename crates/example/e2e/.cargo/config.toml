@@ -1,0 +1,7 @@
+# Override parent workspace settings for e2e tests
+# E2E tests run on the host, not WASM target
+
+[build]
+# Explicitly set target to host platform (x86_64-unknown-linux-gnu)
+# This overrides any parent settings trying to build for wasm32-unknown-unknown
+target = "x86_64-unknown-linux-gnu"

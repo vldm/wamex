@@ -41,6 +41,7 @@ impl GetInputRef<FunctionRef> for DefinedFunction {
             // Import stubs is not a real function in input module.
             return OutputMapType::OutputHasInput(self.input_func_id);
         }
+        // indirect trampolines are imports that converted into defined functions
         OutputMapType::BidirectionalMap(self.input_func_id)
     }
 }

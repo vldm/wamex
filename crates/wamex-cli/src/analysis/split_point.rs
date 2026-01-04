@@ -75,13 +75,7 @@ fn find_split_points_with_prefix(
             let export_func = export_map
                 .remove(&key)
                 .with_context(|| format!("No corresponding export for split import {key:?}"))?;
-            Ok(SplitPoint {
-                module_name: key.0,
-                unique_id: key.1,
-                import_func: import_func,
-
-                export_func,
-            })
+            Ok(SplitPoint::new(key.0, key.1, import_func, export_func))
         })
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
 
@@ -117,20 +111,32 @@ pub fn find_split_points(
 }
 
 fn is_wasm_bindgen_cast(name: &str) -> bool {
-    name == "__wbindgen_describe_closure" || name == "__wbindgen_describe_cast"
+    name == "__wbindgen_describe_closure"
+        || name == "__wbindgen_describe_cast"
+        || name == "__wbindgen_describe"
 }
 
 pub fn wbg_closures(module: &InputObject, graph: &DepGraph) -> MiniSet<SymbolId> {
-    let wbg_fns: std::collections::BTreeSet<_> = module
-        .symbols
-        .iter()
-        .filter(|(_id, sym)| is_wasm_bindgen_cast(&sym.debug_name))
-        .map(|(id, _)| id)
-        .collect();
+    let mut wbg_closures = std::collections::BTreeSet::new();
 
-    let mut wbg_descriptors = std::collections::BTreeSet::new();
-    for id in wbg_fns.iter().cloned() {
-        wbg_descriptors.insert(id);
+    let mut wbg_all = std::collections::BTreeSet::new();
+    for (id, import) in module.functions.imports_iter() {
+        // find all wbg fns
+        if import.module_name != "__wbindgen_placeholder__" {
+            continue;
+        }
+        let id = module
+            .symbols
+            .get_function_symbol(FunctionRef::new(id.index()))
+            .unwrap();
+        wbg_all.insert(id);
+        if is_wasm_bindgen_cast(&import.func_name) {
+            wbg_closures.insert(id);
+        }
+    }
+
+    let mut wbg_descriptors = wbg_all;
+    for id in wbg_closures.iter().cloned() {
         if let Some(parents) = graph.get_parents(id) {
             for parent in parents {
                 debug_assert!(module.symbols.is_function(*parent));
@@ -158,14 +164,11 @@ pub fn merge_split_points_by_name(
     result
 }
 
-pub fn compute_split_modules(
+pub fn main_roots(
     info: &InputObject,
-    dep_graph: &DepGraph,
     split_points: &[SplitPoint],
     wbg_descriptors: &MiniSet<SymbolId>,
-) -> anyhow::Result<SplitProgramInfo> {
-    let split_points_by_module = merge_split_points_by_name(split_points);
-
+) -> DepSet {
     let mut roots: DepSet = DepSet::new();
     if let Some(id) = info.wasm_reader.code.section_payload.start_func {
         roots.insert(info.symbols.get_function_symbol(id).unwrap());
@@ -210,16 +213,28 @@ pub fn compute_split_modules(
         roots.remove(
             &info
                 .symbols
-                .get_function_symbol(split_point.export_func)
+                .get_function_symbol(split_point.export_func())
                 .unwrap(),
         );
         roots.remove(
             &info
                 .symbols
-                .get_function_symbol(split_point.import_func)
+                .get_function_symbol(split_point.import_func())
                 .unwrap(),
         );
     }
+    roots
+}
+
+pub fn compute_split_modules(
+    info: &InputObject,
+    dep_graph: &DepGraph,
+    split_points: &[SplitPoint],
+    wbg_descriptors: &MiniSet<SymbolId>,
+) -> anyhow::Result<SplitProgramInfo> {
+    let split_points_by_module = merge_split_points_by_name(split_points);
+
+    let roots = main_roots(info, split_points, wbg_descriptors);
 
     let main_deps = find_reachable_deps(dep_graph, &roots);
 
@@ -230,7 +245,7 @@ pub fn compute_split_modules(
         for entry_point in entry_points.iter() {
             roots.insert(
                 info.symbols
-                    .get_function_symbol(entry_point.export_func)
+                    .get_function_symbol(entry_point.export_func())
                     .unwrap(),
             );
         }

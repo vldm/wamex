@@ -38,7 +38,7 @@ python3 -m http.server 8080 &
 SERVER_PID=$!
 
 echo "Waiting for server to start..."
-sleep 2
+sleep 1
 
 echo ""
 echo "Step 4: Running tests..."

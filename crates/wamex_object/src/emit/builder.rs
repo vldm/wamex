@@ -181,9 +181,7 @@ impl BuilderContextToBeRemoved<'_, '_> {
 /// Phase 4 <Finalized subroutine>: calculate relocations and emit custom sections
 pub struct Object<'src> {
     pub globals: EntitiesFromInput<'src, OutputGlobalId>,
-
     pub functions: EntitiesFromInput<'src, OutputFuncId>,
-
     pub data: GappedMap<DataSegmentId, memory_layout::DataSegmentOutput>,
     //TODO: Remove data_relocations, instead of DataSegmentOutput use SegmentLayout
     pub data_relocations: SecondaryMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
