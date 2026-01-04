@@ -6,6 +6,9 @@ mod cli;
 
 use std::collections::BTreeMap;
 
+use analysis::split_point::{
+    SPLIT_EXPORT_POSTFIX, SPLIT_IMPORT_POSTFIX, WAMEX_ENTRY_PREFIX, parser,
+};
 pub use cli::Compare;
 use wamex_object::symbols::{Differ, SymbolId, SymbolMapWithContent, SymbolMapping};
 
@@ -35,7 +38,7 @@ where
             let Some(name) = &left_symbol.linking_name else {
                 continue;
             };
-            if !name.contains(crate::emit::split::WAMEX_ENTRY_PREFIX) {
+            if !name.contains(WAMEX_ENTRY_PREFIX) {
                 continue;
             }
             let Some((module, fn_name)) = wamex_parse_name(name) else {
@@ -51,7 +54,7 @@ where
             let Some(name) = &right_symbol.linking_name else {
                 continue;
             };
-            if !name.contains(crate::emit::split::WAMEX_ENTRY_PREFIX) {
+            if !name.contains(WAMEX_ENTRY_PREFIX) {
                 continue;
             }
             let Some((module, fn_name)) = wamex_parse_name(name) else {
@@ -85,5 +88,12 @@ where
 }
 
 fn wamex_parse_name(name: &str) -> Option<(&str, &str)> {
-    analysis::split_point::parser(name, crate::emit::split::WAMEX_ENTRY_PREFIX, "00_")
+    parse_wamex_entry_name(name)
+}
+
+pub fn parse_wamex_entry_name(name: &str) -> Option<(&str, &str)> {
+    if let Some(v) = parser(name, WAMEX_ENTRY_PREFIX, SPLIT_IMPORT_POSTFIX) {
+        return Some(v);
+    }
+    parser(name, WAMEX_ENTRY_PREFIX, SPLIT_EXPORT_POSTFIX)
 }

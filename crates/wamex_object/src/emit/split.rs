@@ -26,29 +26,6 @@ use crate::{
     symbols::{SymbolId, SymbolKind},
 };
 
-pub const WAMEX_ENTRY_PREFIX: &str = "__wamex_00";
-pub const SPLIT_IMPORT_POSTFIX: &str = "00_import_";
-pub const SPLIT_EXPORT_POSTFIX: &str = "00_export_";
-
-pub fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {
-    if !name.starts_with(prefix) {
-        return None;
-    }
-    let name = &name[prefix.len()..];
-    let postfix_index = name.find(postfix)?;
-    let module_name = &name[..postfix_index];
-    let fn_name = &name[postfix_index + postfix.len()..];
-
-    Some((module_name, fn_name))
-}
-
-pub fn parse_wamex_entry_name(name: &str) -> Option<(&str, &str)> {
-    if let Some(v) = parser(name, WAMEX_ENTRY_PREFIX, SPLIT_IMPORT_POSTFIX) {
-        return Some(v);
-    }
-    parser(name, WAMEX_ENTRY_PREFIX, SPLIT_EXPORT_POSTFIX)
-}
-
 /// Split-point entrypoint pair (import stub + export impl).
 ///
 /// Note: the algorithm that discovers split points lives in `wamex-cli`.

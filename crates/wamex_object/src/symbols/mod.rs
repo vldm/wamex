@@ -22,7 +22,7 @@ use crate::{
     },
 };
 mod diff;
-mod reloc;
+// mod reloc;
 
 impl_entity_index! {
     #[display = ""] // Basic symbol no need prefix for display

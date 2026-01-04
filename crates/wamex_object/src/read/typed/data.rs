@@ -100,11 +100,13 @@ impl<'a> DataChunk<'a, &'a [u8]> {
             symbol_index: SymbolId::reserved_value(),
         })
     }
-    /// Extracts data chunks defined in linking table as separate chunks.
+    /// Extracts data chunks defined in linking table as separate symbol.
     ///
     /// Expects that self is a chunk extracted directly from data segment usign `from_segment`.
     ///
     /// Returns list of data chunks sliced from segment.
+    /// Some returned chunks can be marked as `BoundToPrevious` if they offset overlaps with previous symbol.
+    /// To filter these symbols use `filter_bound_symbols` method.
     pub fn slice_segment(
         self,
         symbol_table: &crate::symbols::Symbols<'a>,

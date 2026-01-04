@@ -35,7 +35,8 @@ use crate::{
 /// - data chunks (to be placed into data sections under data segments)
 /// - global variables imported or defined
 ///
-/// At this phase only imports id are stable, thats why add_imported_* methods return Ids,
+/// At this phase only imports id are stable, thats why only add_imported_* methods return Ids.
+///
 pub struct ObjectBuilder<'src> {
     pub globals: CompoundList<'src, OutputGlobalId>,
     pub functions: CompoundList<'src, OutputFuncId>,
