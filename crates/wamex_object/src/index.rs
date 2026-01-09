@@ -30,6 +30,7 @@ macro_rules! impl_entity_index {
     );* $(;)? ) => {$(
 
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[repr(transparent)]
         $visability struct $entity(u32);
         impl_entity_index!(@entity $entity $(, $display)?);
         impl From<u32> for $entity {

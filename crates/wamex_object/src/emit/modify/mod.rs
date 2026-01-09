@@ -22,10 +22,12 @@ use wasmparser::{BinaryReader, FunctionBody};
 
 use crate::{
     emit::{ComputedModules, ModuleEmitState, index_safety::OutputGlobalId},
+    helpers::RangeExt,
     read::{
         raw::DefinedFuncId,
         typed::{FunctionRef, GlobalRef},
     },
+    symbols::reloc::{AnyRelocationEntry, Encoding},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -83,7 +85,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         defined_function_id: DefinedFuncId,
         input_function_id: FunctionRef, // debug purposes
         entries: &[CodeModifyEntry],
-    ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
+    ) -> Result<(Vec<u8>, Vec<AnyRelocationEntry>)> {
         let reloc_info = RelocateState {
             input_module: &module_emit.src,
             computed_modules,
@@ -202,12 +204,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 ModifyEntry::Custom(data) => data.try_apply(ctx)?,
                 ModifyEntry::Other(other) => {
                     log::trace!("skiping modify entry {other:?} ");
-                    other_relocations.push(wasmparser::RelocationEntry {
-                        ty: other.ty,
-                        index: other.index,
-                        addend: other.addend,
-                        offset: (other.offset as isize + shift).try_into()?,
-                    });
+                    other_relocations.push(other.shift(shift));
                     ctx.writer.extend_from_slice(&source[instr_range.clone()]);
 
                     while let Some(ModifyEntry::Other(next_entry)) = entries_iter.peek() {
@@ -216,12 +213,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                         }
                         log::trace!("skiping modify entry {next_entry:?} ");
                         entries_iter.next();
-                        other_relocations.push(wasmparser::RelocationEntry {
-                            ty: next_entry.ty,
-                            index: next_entry.index,
-                            addend: next_entry.addend,
-                            offset: (other.offset as isize + shift).try_into()?,
-                        });
+                        other_relocations.push(next_entry.shift(shift));
                     }
                 }
             }
@@ -257,19 +249,31 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
             if new_line {
                 writeln!(result, "").ok();
             }
-            let reloc = match entry {
+            match entry {
                 ModifyEntry::Custom(c) => {
-                    write!(result, "Custom {:?}", c).ok();
-                    &c.entry
+                    let reloc = &c.entry;
+                    write!(
+                        result,
+                        "Custom {:?} index:{}, offset:{}, addend:{}",
+                        reloc.symbol_type, reloc.symbol_id, reloc.offset, reloc.addend
+                    )
+                    .ok();
                 }
-                ModifyEntry::Other(o) => o,
+                ModifyEntry::Other(o) => match o {
+                    AnyRelocationEntry::Type(t) => {
+                        write!(result, "Type {}, offset:{}", t.index, t.offset).ok();
+                    }
+                    AnyRelocationEntry::Linkage(reloc) => {
+                        write!(
+                            result,
+                            "Other {:?} index:{}, offset:{}, addend:{}",
+                            reloc.symbol_type, reloc.symbol_id, reloc.offset, reloc.addend
+                        )
+                        .ok();
+                    }
+                },
             };
-            write!(
-                result,
-                "Other {:?} index:{}, offset:{}, addend:{}",
-                reloc.ty, reloc.index, reloc.offset, reloc.addend
-            )
-            .ok();
+
             new_line = true;
         }
         result
@@ -282,7 +286,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
         defined_function_id: DefinedFuncId,
         input_function_id: FunctionRef, // debug purposes
         entries: &[CodeModifyEntry],
-    ) -> Result<(Vec<u8>, Vec<wasmparser::RelocationEntry>)> {
+    ) -> Result<(Vec<u8>, Vec<AnyRelocationEntry>)> {
         let reloc_info = RelocateState {
             input_module: &module_emit.src,
             computed_modules,
@@ -326,10 +330,10 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
 
             let (range, data) = match entry {
                 ModifyEntry::Custom(data) => {
-                    let ix_size = match data.entry.ty {
-                        wasmparser::RelocationType::MemoryAddrLeb => 2,
-                        wasmparser::RelocationType::MemoryAddrSleb
-                        | wasmparser::RelocationType::TableIndexSleb => 1,
+                    // size is based on observation of wasm instruction set
+                    let ix_size = match data.entry.encoding {
+                        Encoding::Leb => 2,  // memoryaddr_leb
+                        Encoding::Sleb => 1, // memoryaddr_sleb | tableindex_sleb
                         _ => {
                             bail!("Unsupported relocation type")
                         }
@@ -339,12 +343,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
                 }
                 ModifyEntry::Other(other) => {
                     log::trace!("skiping modify entry {other:?} ");
-                    other_relocations.push(wasmparser::RelocationEntry {
-                        ty: other.ty,
-                        index: other.index,
-                        addend: other.addend,
-                        offset: (other.offset as isize + shift).try_into()?,
-                    });
+                    other_relocations.push(other.shift(shift));
                     continue;
                 }
             };
@@ -386,7 +385,7 @@ impl<'any, 'src> ModifyContext<'any, 'src> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModifyEntry<C> {
     Custom(C),
-    Other(wasmparser::RelocationEntry),
+    Other(AnyRelocationEntry),
 }
 
 pub type CodeModifyEntry = ModifyEntry<ConstantExtractionEntry>;
@@ -403,7 +402,7 @@ pub trait CustomModify {
     where
         'src: 'any;
     fn try_from_entry(
-        entry: &wasmparser::RelocationEntry,
+        entry: &AnyRelocationEntry,
         context: &RelocationContext,
     ) -> Result<Option<Self>>
     where
@@ -416,17 +415,12 @@ pub trait CustomModify {
 
 impl<C: CustomModify> ModifyEntry<C> {
     pub fn from_relocation_entry(
-        entry: &wasmparser::RelocationEntry,
+        entry: &AnyRelocationEntry,
         context: &RelocationContext,
     ) -> Result<Self> {
         C::try_from_entry(entry, context).map(|opt| match opt {
             Some(custom_entry) => ModifyEntry::Custom(custom_entry),
-            None => ModifyEntry::Other(wasmparser::RelocationEntry {
-                ty: entry.ty,
-                index: entry.index,
-                addend: entry.addend,
-                offset: entry.offset,
-            }),
+            None => ModifyEntry::Other(*entry),
         })
     }
     fn range(&self) -> Range<usize> {

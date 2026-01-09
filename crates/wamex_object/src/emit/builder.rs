@@ -20,6 +20,7 @@ use crate::{
         index_safety::{OutputFuncId, OutputGlobalId},
         memory_layout, modify,
     },
+    helpers::RangeExt,
     index::{GappedMap, IdVec},
     read::{
         raw::DataSegmentId,
@@ -130,17 +131,19 @@ impl<'src> ObjectBuilder<'src> {
                     .map(|reloc| {
                         let relocation_context = modify::RelocationContext {
                             dyn_base: !ctx.is_main()
-                                && !ctx.is_static_symbol(SymbolId::from_u32(reloc.index)),
+                                && reloc
+                                    .symbol_id()
+                                    .map(|id| !ctx.is_static_symbol(id))
+                                    .unwrap_or(true),
                             containing_symbol: Some(modify::DataSymbolWithOffset {
                                 storage_segment_id: segment_id,
                                 storage_symbol_id: *symbol_index,
-                                storage_offset_in_data: reloc.offset, // sym.data_mem_offset as u32,
+                                storage_offset_in_data: reloc.offset(), // sym.data_mem_offset as u32,
                             }),
                         };
 
                         // relocs has offset relative to symbol - update to be relative to segment
-                        let mut reloc = reloc.clone();
-                        reloc.offset += sym.data_mem_offset as u32;
+                        let reloc = reloc.shift_right(sym.data_mem_offset as usize);
                         modify::DataModifyEntry::from_relocation_entry(&reloc, &relocation_context)
                     })
                     .collect::<Result<Vec<_>>>()

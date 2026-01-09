@@ -5,6 +5,8 @@ use std::{
     ops::{Add, Range, Sub},
 };
 
+use crate::symbols::reloc::AnyRelocationEntry;
+
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord, Hash)]
 pub enum RangeComp {
     // This range is fully left to Other range.
@@ -39,6 +41,7 @@ impl RangeComp {
 pub trait RangeExt {
     fn shift_left(&self, offset: usize) -> Self;
     fn shift_right(&self, offset: usize) -> Self;
+    fn shift(&self, offset: isize) -> Self;
     fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp;
 }
 
@@ -54,6 +57,14 @@ impl RangeExt for Range<usize> {
         Range {
             start: self.start + offset,
             end: self.end + offset,
+        }
+    }
+
+    fn shift(&self, offset: isize) -> Self {
+        if offset >= 0 {
+            self.shift_right(offset as usize)
+        } else {
+            self.shift_left((-offset) as usize)
         }
     }
 
@@ -84,18 +95,26 @@ impl RangeExt for Range<usize> {
     }
 }
 
-impl RangeExt for wasmparser::RelocationEntry {
+impl RangeExt for AnyRelocationEntry {
     fn shift_left(&self, offset: usize) -> Self {
-        Self {
-            offset: self.offset.checked_sub(offset as u32).unwrap(),
-            ..*self
-        }
+        let mut modified = *self;
+        let new_offset = self.offset().checked_sub(offset as u32).unwrap();
+        modified.set_offset(new_offset);
+        modified
     }
 
     fn shift_right(&self, offset: usize) -> Self {
-        Self {
-            offset: self.offset + offset as u32,
-            ..*self
+        let mut modified = *self;
+        let new_offset = modified.offset() + offset as u32;
+        modified.set_offset(new_offset);
+        modified
+    }
+
+    fn shift(&self, offset: isize) -> Self {
+        if offset >= 0 {
+            self.shift_right(offset as usize)
+        } else {
+            self.shift_left((-offset) as usize)
         }
     }
 

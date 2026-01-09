@@ -13,7 +13,7 @@ use crate::{
     helpers::{RangeComp, RangeExt},
     index::{IdVec, NonDefault},
     read::DataSegmentId,
-    symbols::{SymbolId, SymbolKind},
+    symbols::{SymbolId, SymbolKind, reloc::AnyRelocationEntry},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,7 +52,7 @@ pub struct DataChunk<'a, D: 'a> {
     pub flags: SymbolFlags,
     pub data: D,
     // offset related to this symbol
-    pub relocations: Vec<wasmparser::RelocationEntry>,
+    pub relocations: Vec<AnyRelocationEntry>,
     // associated symbol index
     // Can be `reserved_value` if created from data segment without symbol info
     pub symbol_index: SymbolId,
@@ -263,14 +263,14 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
             let mut relocs = std::mem::take(&mut sym_record.relocs);
             // modify their offsets
             for reloc in &mut relocs {
-                reloc.offset += offset;
+                *reloc = reloc.shift_right(offset as usize);
             }
 
             // Add relocs to real symbol
             let real_sym = table.get_mut(real_id).expect("Symbol must exist");
             real_sym.relocs.extend(relocs);
             // order relocs by offset
-            real_sym.relocs.sort_by_key(|r| r.offset);
+            real_sym.relocs.sort_by_key(|r| r.offset());
 
             to_be_removed.insert(removed);
         })

@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     borrow::Cow,
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::Range,
@@ -20,9 +21,10 @@ use crate::{
         FunctionRef, GlobalRef, TableRef,
         raw::{DataSegmentId, DefinedFuncId},
     },
+    symbols::reloc::AnyRelocationEntry,
 };
 mod diff;
-mod reloc;
+pub mod reloc;
 
 impl_entity_index! {
     #[display = ""] // Basic symbol no need prefix for display
@@ -55,13 +57,13 @@ pub struct SymbolRecord<'a> {
     /// Relocation entries inside this symbol
     /// Every index in relocation entry is corresponding to one symbol in symbol table.
     /// Except for TypeIndexLeb relocations, which is in type index space.
-    pub relocs: Vec<wasmparser::RelocationEntry>,
+    pub relocs: Vec<reloc::AnyRelocationEntry>, //TODO: move out type of relocations?
     /// Map of symbols that use this symbol in their relocations.
     pub reloc_users: MiniSet<SymbolId>, //TODO: Replace by `MiniSet`
 }
 
 impl SymbolRecord<'_> {
-    fn apply_empty_relocs(body: &mut [u8], relocations: &[wasmparser::RelocationEntry]) {
+    fn apply_empty_relocs(body: &mut [u8], relocations: &[reloc::AnyRelocationEntry]) {
         for rel in relocations {
             let reloc_range = rel.relocation_range();
             body[reloc_range].fill(0);
@@ -109,18 +111,13 @@ impl SymbolRecord<'_> {
     }
 
     pub fn childs(&self) -> impl Iterator<Item = SymbolId> + '_ {
-        let filter_non_types = |reloc: &&wasmparser::RelocationEntry| {
-            !matches!(reloc.ty, wasmparser::RelocationType::TypeIndexLeb)
-        };
-
         let duplicate_iter = match self.kind {
             SymbolKind::Duplicate(original_id) => Some(original_id),
             _ => None,
         };
         self.relocs
             .iter()
-            .filter(filter_non_types)
-            .map(|reloc| SymbolId::from_u32(reloc.index))
+            .filter_map(|reloc| AnyRelocationEntry::symbol_id(reloc))
             .chain(duplicate_iter)
     }
 }
@@ -360,16 +357,18 @@ impl<'src> Symbols<'src> {
                         }
                     }
                     // Collect relocations with offset relative to symbol start
-                    let mut reloc = relocations.pop_front().unwrap();
-                    reloc.offset -= symbol.range.start as u32;
-                    symbols[symbol.id].relocs.push(reloc);
+                    let reloc = AnyRelocationEntry::from_raw(
+                        relocations.pop_front().unwrap(),
+                        symbol.range.start as u32,
+                    );
 
                     // Record that this symbol uses the target symbol of the relocation
                     // skip TypeIndexLeb because it contain type index, not symbol index
-                    if reloc.ty != wasmparser::RelocationType::TypeIndexLeb {
-                        let target_symbol_id = SymbolId::from_u32(reloc.index);
+                    if let AnyRelocationEntry::Linkage(reloc) = &reloc {
+                        let target_symbol_id = reloc.symbol_id;
                         symbols[target_symbol_id].reloc_users.insert(symbol.id);
                     }
+                    symbols[symbol.id].relocs.push(reloc);
                 }
             }
         }
@@ -402,7 +401,9 @@ impl<'src> Symbols<'src> {
                         .reloc_users
                         .extend(relocs_users.into_iter());
                     // order relocs
-                    this.symbols[sym_range.id].relocs.sort_by_key(|r| r.offset);
+                    this.symbols[sym_range.id]
+                        .relocs
+                        .sort_by_key(AnyRelocationEntry::offset);
 
                     removed.remove(dup_id, 1); // always remove 1
                 }
@@ -566,12 +567,20 @@ impl<'src> Symbols<'src> {
             println!("    users: {:?}", symbol.reloc_users);
             println!("    records: {:?}", symbol);
             for reloc in &symbol.relocs {
-                let id = SymbolId::from_u32(reloc.index);
-                println!(
-                    "    -->{id} <{name}> reloc{:?}",
-                    reloc,
-                    name = self.symbols[id].debug_name,
-                );
+                match reloc {
+                    AnyRelocationEntry::Linkage(r) => {
+                        let id = r.symbol_id;
+                        println!(
+                            "    -->{id} <{name}> reloc{:?}",
+                            reloc,
+                            name = self.symbols[id].debug_name,
+                        );
+                    }
+                    AnyRelocationEntry::Type(r) => {
+                        let id = r.index;
+                        println!("    -->{id} type reloc");
+                    }
+                }
             }
         }
     }
@@ -613,16 +622,20 @@ impl<'src> Symbols<'src> {
     pub fn replace_usage(&mut self, id: SymbolId, new_id: SymbolId, addend_change: i64) {
         // take it to avoid &mut symbols aliasing issues
         let users = std::mem::take(&mut self.symbols[id].reloc_users);
-        let raw_id = id.as_u32();
         for user_id in &users {
             // patch relocs in user symbol
             let user_sym = &mut self.symbols[*user_id];
             for reloc in &mut user_sym.relocs {
-                if reloc.index != raw_id || reloc.ty == wasmparser::RelocationType::TypeIndexLeb {
+                let AnyRelocationEntry::Linkage(reloc) = reloc else {
+                    // skip Type reloc
+                    continue;
+                };
+                // relocation of other symbol
+                if reloc.symbol_id != id {
                     continue;
                 }
                 // index is a symbol which <address> should be placed somewhere at `offset`
-                reloc.index = new_id.as_u32();
+                reloc.symbol_id = new_id;
                 // addend is a value that should be added to the symbol <address>
                 // `replace_usage` is operation of merging (embedding) two symbols, so we need to adjust addend accordingly
                 reloc.addend = reloc.addend + addend_change;
@@ -650,19 +663,21 @@ impl<'src> Symbols<'src> {
             };
             // update relocs and reloc_users
             for reloc in &mut symbol.relocs {
-                if reloc.ty == wasmparser::RelocationType::TypeIndexLeb {
+                let AnyRelocationEntry::Linkage(reloc) = reloc else {
+                    // skip TypeIndexLeb because it contain type index, not symbol index
                     continue;
-                }
+                };
+
                 // skip removed relocs
                 let new_idx = shifts
-                    .get_shifted_offset(SymbolId::from_u32(reloc.index))
+                    .get_shifted_offset(reloc.symbol_id)
                     .unwrap_or_else(|| {
                         panic!(
                             "Relocation in symbol {id} points to removed symbol: {:?}",
                             reloc
                         );
                     });
-                reloc.index = new_idx.as_u32();
+                reloc.symbol_id = new_idx;
             }
             for user_id in std::mem::take(&mut symbol.reloc_users) {
                 // skip removed users

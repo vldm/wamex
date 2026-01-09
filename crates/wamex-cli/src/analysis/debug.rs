@@ -285,18 +285,24 @@ pub fn format_symbol_map(info: &InputObject) -> String {
         if !symbol.relocs.is_empty() {
             writeln!(&mut output, "  Relocations: {}", symbol.relocs.len()).unwrap();
             for reloc in &symbol.relocs {
-                let target_symbol = info
-                    .symbols
-                    .get(crate::index::SymbolId::from_u32(reloc.index));
-                let target_name = target_symbol
-                    .map(|s| crate::helpers::demangle_full(&s.debug_name))
-                    .unwrap_or_else(|| format!("unknown_{}", reloc.index));
-                writeln!(
-                    &mut output,
-                    "    {:?} @ offset {} -> {target_name}",
-                    reloc.ty, reloc.offset
-                )
-                .unwrap();
+                match reloc {
+                    wamex_object::symbols::reloc::AnyRelocationEntry::Linkage(reloc) => {
+                        let target_symbol = info.symbols.get(reloc.symbol_id);
+                        let target_name = target_symbol
+                            .map(|s| crate::helpers::demangle_full(&s.debug_name))
+                            .unwrap_or_else(|| format!("unknown_{}", reloc.symbol_id));
+                        writeln!(
+                            &mut output,
+                            "    {:?} @ offset {} -> {target_name}",
+                            reloc.symbol_type, reloc.offset
+                        )
+                        .unwrap();
+                    }
+                    wamex_object::symbols::reloc::AnyRelocationEntry::Type(t) => {
+                        writeln!(&mut output, "    Type {:?} @ offset {}", t.index, t.offset)
+                            .unwrap();
+                    }
+                }
             }
         }
     }

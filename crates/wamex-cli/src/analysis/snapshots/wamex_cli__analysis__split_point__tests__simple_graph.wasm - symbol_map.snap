@@ -7,38 +7,38 @@ expression: symbol_map_output
 0 global[0] <__stack_pointer>
 1 func[0] <hello_world> size=20
   Relocations: 1
-    MemoryAddrSleb @ offset 11 -> .Lanon.40cffdd5158028b640e87266bd095959.0
+    MemoryAddr @ offset 11 -> .Lanon.40cffdd5158028b640e87266bd095959.0
 2 func[1] <version> size=20
   Relocations: 1
-    MemoryAddrSleb @ offset 11 -> .Lanon.40cffdd5158028b640e87266bd095959.1
+    MemoryAddr @ offset 11 -> .Lanon.40cffdd5158028b640e87266bd095959.1
 3 func[2] <constant> size=20
   Relocations: 1
-    MemoryAddrSleb @ offset 11 -> .Lanon.40cffdd5158028b640e87266bd095959.2
+    MemoryAddr @ offset 11 -> .Lanon.40cffdd5158028b640e87266bd095959.2
 4 func[3] <indirect_fn> size=95
   Relocations: 6
-    GlobalIndexLeb @ offset 4 -> __stack_pointer
-    GlobalIndexLeb @ offset 15 -> __stack_pointer
-    MemoryAddrSleb @ offset 30 -> .Lswitch.table.indirect_fn
-    TypeIndexLeb @ offset 49 -> __stack_pointer
-    TableNumberLeb @ offset 54 -> __indirect_function_table
-    GlobalIndexLeb @ offset 89 -> __stack_pointer
+    GlobalIndex @ offset 4 -> __stack_pointer
+    GlobalIndex @ offset 15 -> __stack_pointer
+    MemoryAddr @ offset 30 -> .Lswitch.table.indirect_fn
+    Type type0 @ offset 49
+    TableNumber @ offset 54 -> __indirect_function_table
+    GlobalIndex @ offset 89 -> __stack_pointer
 5 table[0] <__indirect_function_table>
 6 func[4] <no_inline_fn> size=143
   Relocations: 9
-    GlobalIndexLeb @ offset 4 -> __stack_pointer
-    GlobalIndexLeb @ offset 15 -> __stack_pointer
-    FunctionIndexLeb @ offset 47 -> hello_world
-    MemoryAddrSleb @ offset 53 -> .Lanon.40cffdd5158028b640e87266bd095959.0
-    FunctionIndexLeb @ offset 73 -> version
-    MemoryAddrSleb @ offset 79 -> .Lanon.40cffdd5158028b640e87266bd095959.1
-    FunctionIndexLeb @ offset 99 -> constant
-    MemoryAddrSleb @ offset 105 -> .Lanon.40cffdd5158028b640e87266bd095959.2
-    GlobalIndexLeb @ offset 137 -> __stack_pointer
+    GlobalIndex @ offset 4 -> __stack_pointer
+    GlobalIndex @ offset 15 -> __stack_pointer
+    FunctionIndex @ offset 47 -> hello_world
+    MemoryAddr @ offset 53 -> .Lanon.40cffdd5158028b640e87266bd095959.0
+    FunctionIndex @ offset 73 -> version
+    MemoryAddr @ offset 79 -> .Lanon.40cffdd5158028b640e87266bd095959.1
+    FunctionIndex @ offset 99 -> constant
+    MemoryAddr @ offset 105 -> .Lanon.40cffdd5158028b640e87266bd095959.2
+    GlobalIndex @ offset 137 -> __stack_pointer
 7 data[.rodata(0):0+13] <.Lanon.40cffdd5158028b640e87266bd095959.0>
 8 data[.rodata(0):13+5] <.Lanon.40cffdd5158028b640e87266bd095959.1>
 9 data[.rodata(0):18+8] <.Lanon.40cffdd5158028b640e87266bd095959.2>
 10 data[.rodata(0):28+12] <.Lswitch.table.indirect_fn>
   Relocations: 3
-    TableIndexI32 @ offset 0 -> hello_world
-    TableIndexI32 @ offset 4 -> version
-    TableIndexI32 @ offset 8 -> constant
+    TableIndex @ offset 0 -> hello_world
+    TableIndex @ offset 4 -> version
+    TableIndex @ offset 8 -> constant

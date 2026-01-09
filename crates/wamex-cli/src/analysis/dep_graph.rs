@@ -6,6 +6,7 @@ use std::{
 use wamex_object::{
     InputObject,
     index::{GappedMap, ReservedValue},
+    symbols::reloc::AnyRelocationEntry,
 };
 
 use crate::index::SymbolId;
@@ -128,11 +129,6 @@ pub struct SharedEntries<Id> {
 pub fn get_dependencies(info: &InputObject) -> anyhow::Result<DepGraph> {
     let mut deps = DepGraph::new();
 
-    // TypeIndexLeb relocations index is not in symbol index space.
-    let non_type_index = |entry: &&wasmparser::RelocationEntry| {
-        use wasmparser::RelocationType;
-        !matches!(entry.ty, RelocationType::TypeIndexLeb)
-    };
     let is_fn_or_data = |id: &SymbolId| info.symbols.is_function(*id) || info.symbols.is_data(*id);
 
     for (id, child) in info.symbols.iter() {
@@ -143,8 +139,7 @@ pub fn get_dependencies(info: &InputObject) -> anyhow::Result<DepGraph> {
             child
                 .relocs
                 .iter()
-                .filter(non_type_index)
-                .map(|entry| SymbolId::from_u32(entry.index))
+                .filter_map(AnyRelocationEntry::symbol_id)
                 .filter_map(|index| info.symbols.as_duplicate_mapped(index).or(Some(index)))
                 .filter(is_fn_or_data),
         );

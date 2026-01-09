@@ -378,7 +378,10 @@ impl<'src> Split<ObjectBuilder<'src>> {
                     .iter()
                     .map(|entry| {
                         let dyn_base = !ctx.main_module
-                            && !ctx.is_static_symbol(SymbolId::from_u32(entry.index));
+                            && entry
+                                .symbol_id()
+                                .map(|id| !ctx.is_static_symbol(id))
+                                .unwrap_or(false);
                         let relocation_context = modify::RelocationContext {
                             dyn_base,
                             containing_symbol: None,

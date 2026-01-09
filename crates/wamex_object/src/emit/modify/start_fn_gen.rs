@@ -6,7 +6,6 @@ use std::ops::Range;
 
 use anyhow::{Result, bail};
 use wasm_encoder::{InstructionSink, MemArg};
-use wasmparser::{RelocationEntry, RelocationType};
 
 use crate::{
     emit::modify::{
@@ -15,7 +14,12 @@ use crate::{
         relocation::{DataSymbolTag, FunctionIndexTag, encode},
     },
     read::raw::DataSegmentId,
-    symbols::SymbolId,
+    symbols::{
+        SymbolId,
+        reloc::{
+            AnyRelocationEntry, Encoding, Relative, RelocationEntry, RelocationWidth, SymbolType,
+        },
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,14 +64,21 @@ impl StartFnGen {
             let ModifyEntry::Custom(data_entry) = entry else {
                 continue;
             };
-            let relocated_symbol_offset = match data_entry.relocation.ty {
-                RelocationType::MemoryAddrI32 => relocate
+            if !matches!(data_entry.relocation.encoding, Encoding::Fixed) {
+                bail!(
+                    "Unsupported data relocation encoding {:?} in entry {:?}",
+                    data_entry.relocation.encoding,
+                    data_entry
+                );
+            }
+            let relocated_symbol_offset = match data_entry.relocation.symbol_type {
+                SymbolType::MemoryAddr => relocate
                     .get_entry_symbol_op::<DataSymbolTag>(&data_entry.relocation)
                     .map(|v| v.map(|v| v.try_into().unwrap())),
-                RelocationType::TableIndexI32 => {
+                SymbolType::TableIndex => {
                     relocate.get_entry_symbol_op::<FunctionIndexTag>(&data_entry.relocation)
                 }
-                _ => panic!("Unsupported relocation type {:?}", data_entry.relocation.ty),
+                index => panic!("Unsupported relocation type {index:?}",),
             }?;
             let storage = relocate
                 .get_data_symbol_op(
@@ -160,24 +171,30 @@ impl CustomModify for DataEntry {
     where
         'src: 'any;
     fn try_from_entry(
-        entry: &wasmparser::RelocationEntry,
+        entry: &AnyRelocationEntry,
         context: &RelocationContext,
     ) -> Result<Option<Self>>
     where
         Self: Sized,
     {
-        Self::check_whitelisted_data_relocation(entry)?;
-        Ok(match entry.ty {
-            RelocationType::MemoryAddrI32 | RelocationType::TableIndexI32 if context.dyn_base => {
-                let storage = context.containing_symbol.as_ref().unwrap().clone(); // storage should always exist in dyn relocation mode
-                let relocation = entry.clone();
-                Some(Self {
-                    storage,
-                    relocation,
-                })
+        Ok(match entry {
+            AnyRelocationEntry::Linkage(entry) => {
+                Self::check_whitelisted_data_relocation(entry)?;
+                match entry.symbol_type {
+                    SymbolType::MemoryAddr | SymbolType::TableIndex if context.dyn_base => {
+                        let storage = context.containing_symbol.as_ref().unwrap().clone(); // storage should always exist in dyn relocation mode
+                        let relocation = entry.clone();
+                        Some(Self {
+                            storage,
+                            relocation,
+                        })
+                    }
+                    _ => None,
+                }
             }
-
-            _ => return Ok(None),
+            AnyRelocationEntry::Type(_) => {
+                bail!("Type relocations are not supported for start function generation");
+            }
         })
     }
 
@@ -187,7 +204,7 @@ impl CustomModify for DataEntry {
         start..(start + 4)
     }
     fn try_apply(&self, ctx: Self::Context<'_, '_>) -> Result<()> {
-        const DUMMY_ADDR: u32 = 0xefbeadde; // Dead Beef in little endian
+        const DUMMY_ADDR: u32 = 0xdeadbeefu32.to_be(); // Dead Beef in little endian
         let relocation_range = self.range();
         let target = &mut ctx.data_segment[relocation_range];
 
@@ -199,23 +216,17 @@ impl CustomModify for DataEntry {
 }
 
 impl DataEntry {
-    fn check_whitelisted_data_relocation(entry: &wasmparser::RelocationEntry) -> Result<()> {
-        match entry.ty {
-            RelocationType::MemoryAddrLeb64
-            | RelocationType::MemoryAddrSleb64
-            | RelocationType::MemoryAddrI64
-            | RelocationType::MemoryAddrRelSleb64
-            | RelocationType::MemoryAddrTlsSleb64
-            | RelocationType::TableIndexSleb64
-            | RelocationType::TableIndexI64
-            | RelocationType::FunctionOffsetI64
-            | RelocationType::TableIndexRelSleb64 => {
-                bail!("U64 memory pointers is currently not supported")
-            }
-            RelocationType::MemoryAddrI32 | RelocationType::TableIndexI32 => Ok(()),
-
-            _ => bail!("Unsupported data relocation type"),
+    fn check_whitelisted_data_relocation(entry: &RelocationEntry) -> Result<()> {
+        if matches!(entry.width, RelocationWidth::Bits64) {
+            bail!("U64 memory pointers is currently not supported")
         }
+        if !matches!(entry.encoding, Encoding::Fixed) {
+            bail!("Only fixed encoding cannot be found in data segment")
+        }
+        if !matches!(entry.relation, Relative::None) {
+            bail!("Relocation memory pointers is currently not supported")
+        }
+        Ok(())
     }
 }
 

@@ -10,7 +10,6 @@ use index_safety::OutputFuncId;
 pub use memory_layout::{DataChunk, DataSegmentOutput, SegmentLayout, SymbolRelation};
 use modify::{ModifyContext, StoreType};
 use wamex_types::{BumpVersion, dylink0::Dylink0Section, map_vec::MiniSet};
-use wasmparser::RelocationEntry;
 
 use crate::{
     InputObject,
@@ -23,14 +22,14 @@ use crate::{
             SplitProgramInfo,
         },
     },
-    helpers::encoding_size,
+    helpers::{RangeExt, encoding_size},
     index::{GappedMap, SecondaryMap},
     read::{
         EntitiesFromInput, MemoryRef,
         raw::{DataSegmentId, FuncTypeId},
         typed::{FunctionRef, GlobalRef},
     },
-    symbols::SymbolId,
+    symbols::{SymbolId, reloc::AnyRelocationEntry},
 };
 
 mod builder;
@@ -661,7 +660,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         section: &mut wasm_encoder::CodeSection,
         input_func_id: FunctionRef,
         table_index: u32,
-    ) -> Result<Vec<RelocationEntry>> {
+    ) -> Result<Vec<AnyRelocationEntry>> {
         let func_type_id = &self.src.get_function_type_id(input_func_id);
         let func_type = &self.src.wasm_reader.types[*func_type_id];
 
@@ -693,7 +692,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         &'any self,
         section: &mut wasm_encoder::CodeSection,
         input_func_id: FunctionRef,
-    ) -> Result<Vec<RelocationEntry>> {
+    ) -> Result<Vec<AnyRelocationEntry>> {
         let func_type_id = &self.src.get_function_type_id(input_func_id);
         let func_type = &self.src.wasm_reader.types[*func_type_id];
 
@@ -720,7 +719,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         input_func_id: FunctionRef,
         modification_list: &[modify::CodeModifyEntry],
         precise_modification: bool,
-    ) -> Result<Vec<RelocationEntry>> {
+    ) -> Result<Vec<AnyRelocationEntry>> {
         let mut code_relocs = Vec::new();
         let defined_id = self
             .src
@@ -744,8 +743,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             modification_list,
         )?;
         for mut reloc in modified_relocs {
-            reloc.offset += function_start_offset as u32;
-            code_relocs.push(reloc);
+            code_relocs.push(reloc.shift_right(function_start_offset));
         }
         section.raw(&result);
 
@@ -757,7 +755,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         computed_modules: &'any ComputedModules<'any, 'src>,
         output_module: &mut wasm_encoder::Module,
         precise_modification: bool,
-    ) -> Result<Vec<RelocationEntry>> {
+    ) -> Result<Vec<AnyRelocationEntry>> {
         let defined_functions_count = self.functions.defined().len() as u32
             + if !self.is_main() {
                 1 // start function
@@ -821,7 +819,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         &'any self,
         computed_modules: &'any ComputedModules<'any, 'src>,
         output_module: &mut wasm_encoder::Module,
-    ) -> Result<Vec<RelocationEntry>> {
+    ) -> Result<Vec<AnyRelocationEntry>> {
         // TODO: Add shifter relocs
         let relocs = Vec::new();
         let mut section = wasm_encoder::DataSection::new();
@@ -901,8 +899,8 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
     fn generate_compiler_tools_sections(
         &self,
         output_module: &mut wasm_encoder::Module,
-        _shifted_code_relocs: Vec<RelocationEntry>,
-        _shifted_data_relocs: Vec<RelocationEntry>,
+        _shifted_code_relocs: Vec<AnyRelocationEntry>,
+        _shifted_data_relocs: Vec<AnyRelocationEntry>,
     ) -> Result<()> {
         let wamex_version = wasm_encoder::CustomSection {
             name: "__wamex_version".into(),

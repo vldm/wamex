@@ -1,8 +1,9 @@
-//! Type-safe implementation of relocation entries.
+//! Decomposed variant of relocation entries.
+//!
 //! For simplifcation relocation can be represented as next pseudocode:
-//! ```rust,no_build
+//! ```compile_fail
 //!  pointer = writter.offset_of(def_sym) + .offset;
-//!  *pointer = encode_addr_of(.sym) + sym.addend;
+//!  *pointer = encode::<Encoding>(addr_of(.sym) + sym.addend, width);
 //! ```
 //! `def_sym` - is the symbol that contain some relocated links (code or data),
 //!   and have some place in output buffer.
@@ -16,137 +17,141 @@
 //! But instead of implementing it straightforward like in pseudo-code, due to design of `wasmparser::RelocationEntry`
 //! (which is inherited from LLVM) real handling looks like a big match of `ty` and multiple duplicate handlers with copy-pasted logic.
 //!
-//! In this module we are trying to utilise this decomposed form, but not all symbol indexes can be encoded as all combinations of relation/encoding/width.
-//! To keep the same constrains as in original `wasmparser::RelocationEntry`, we implement witness based enums.
-//! This witness based type-safe system is hidden under `mod type_safe`
+//! In this module we are trying to utilise this decomposed form.
+//! Not all symbol indexes can be encoded as all combinations of relation/encoding/width.
+//! Originally there was type-safe implementation that uses GADT like structure to force type-safe constraints for each of `RelocationEntry`
+//! type.
 //!
-//! This is mostly experiment of using GADT like structure in rust, to implement "optional" fields with type-level guarantee.
+//! The experiment of type-safe relocation can be seen at commit:"978d259765c19daf1594c67a8465ec175f1e4f7a" and 6d536209516e3fc7946d955ecd65eb68974ca139
+//! Both of variants looks non-usable and verbose, for implementing simple logic on top of them.
 //!
-//! Some of implementation may be overkill (like type-level option in addend, or handling entries in `TypedRelocationEntry::with_any`), but it could be always refactored to decomposed relocation entry with erased type, and runtime checks.
+//! Instead in current design constraints fo index types are enforced in runtime in From/Into implementations.
+//!
 
-use std::{fmt::Debug, hash::Hash, marker::PhantomData};
-
-use wamex_internal_macro::Constraints;
+use std::{fmt::Debug, hash::Hash};
 
 use crate::{
     index::SectionId,
-    read::{FuncTypeId, FunctionRef, GlobalRef, TableRef},
+    read::{FuncTypeId, FunctionRef},
     symbols::SymbolId,
 };
 
 /// Lossless representation of `wasmparser::RelocationEntry` with type-safe disamiguation of symbol types.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Constraints)]
-pub enum TypedRelocationEntry {
-    #[has(tls, base, has64, int, sleb, leb, addend)]
-    MemoryAddr(RelocationEntry<MemoryAddr>),
-    #[has(leb)]
-    TableNumber(RelocationEntry<TableRef>),
-    #[has(int, leb)]
-    GlobalIndex(RelocationEntry<GlobalRef>),
-    #[has(int, leb)]
-    FunctionIndex(RelocationEntry<FunctionRef>),
-    // Indirect function index used in call_indirect
-    #[has(base, has64, int, sleb)]
-    TableIndex(RelocationEntry<IndirectFunctionIndex>),
-    #[has(has64, int, addend)]
-    FunctionOffset(RelocationEntry<FunctionOffset>),
-    #[has(int, addend)]
-    SectionOffset(RelocationEntry<SectionOffset>),
-    #[has(leb)]
-    EventIndex(RelocationEntry<EventIndex>),
-    #[has(int, addend)]
-    MemoryAddrLocrel(RelocationEntry<MemoryAddrLoc>),
-    #[index_type(FuncTypeId)]
-    #[has(leb)]
-    TypeIndex(RelocationEntry<FuncTypeId>),
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum AnyRelocationEntry {
+    Linkage(RelocationEntry),
+    Type(TypeRelocationEntry),
 }
 
-impl TypedRelocationEntry {
-    /// Return SymbolId is possible.
-    ///
-    /// Type index is special, since only one
-    /// that contain `FunctionTypeId` in index field
-    /// while other contain `SymbolId` instead
+impl AnyRelocationEntry {
+    /// Get symbol index if this is linkage relocation entry.
     pub fn symbol_id(&self) -> Option<SymbolId> {
         match self {
-            Self::TypeIndex(v) => return None,
-            _ => {}
+            AnyRelocationEntry::Linkage(reloc) => Some(reloc.symbol_id),
+            AnyRelocationEntry::Type(_) => None,
         }
-
-        return Some(self.with_any(GetSymbolId));
     }
-
-    pub fn with_any<F>(&self, mut func: F) -> F::Output
-    where
-        F: Caller<RelocEntry<MemoryAddr> = RelocationEntry<MemoryAddr>>,
-        F: Caller<RelocEntry<TableRef> = RelocationEntry<TableRef>>,
-        F: Caller<RelocEntry<GlobalRef> = RelocationEntry<GlobalRef>>,
-        F: Caller<RelocEntry<FunctionRef> = RelocationEntry<FunctionRef>>,
-        F: Caller<RelocEntry<IndirectFunctionIndex> = RelocationEntry<IndirectFunctionIndex>>,
-        F: Caller<RelocEntry<FunctionOffset> = RelocationEntry<FunctionOffset>>,
-        F: Caller<RelocEntry<SectionOffset> = RelocationEntry<SectionOffset>>,
-        F: Caller<RelocEntry<EventIndex> = RelocationEntry<EventIndex>>,
-        F: Caller<RelocEntry<MemoryAddrLoc> = RelocationEntry<MemoryAddrLoc>>,
-        F: Caller<RelocEntry<FuncTypeId> = RelocationEntry<FuncTypeId>>,
-    {
+    /// Get offset of relocation entry within the containing symbol.
+    pub fn offset(&self) -> u32 {
         match self {
-            Self::MemoryAddr(v) => func.call::<MemoryAddr>(v),
-            Self::TableNumber(v) => func.call::<TableRef>(v),
-            Self::GlobalIndex(v) => func.call::<GlobalRef>(v),
-            Self::FunctionIndex(v) => func.call::<FunctionRef>(v),
-            Self::TableIndex(v) => func.call::<IndirectFunctionIndex>(v),
-            Self::FunctionOffset(v) => func.call::<FunctionOffset>(v),
-            Self::SectionOffset(v) => func.call::<SectionOffset>(v),
-            Self::EventIndex(v) => func.call::<EventIndex>(v),
-            Self::MemoryAddrLocrel(v) => func.call::<MemoryAddrLoc>(v),
-            Self::TypeIndex(v) => func.call::<FuncTypeId>(v),
+            AnyRelocationEntry::Linkage(reloc) => reloc.offset,
+            AnyRelocationEntry::Type(reloc) => reloc.offset,
         }
     }
-}
-
-pub trait Caller {
-    type RelocEntry<Type: Constraints>;
-    type Output;
-    fn call<Type: Constraints>(&mut self, r: &Self::RelocEntry<Type>) -> Self::Output;
-}
-
-fn get_symbol_id<Type: Constraints>(entry: &RelocationEntry<Type>) -> SymbolId {
-    SymbolId::new(entry.index.index())
-}
-struct GetSymbolId;
-
-impl Caller for GetSymbolId {
-    type RelocEntry<Type: Constraints> = RelocationEntry<Type>;
-    type Output = SymbolId;
-    fn call<Type: Constraints>(&mut self, r: &Self::RelocEntry<Type>) -> Self::Output {
-        get_symbol_id(r)
+    /// Set offset of relocation entry within the containing symbol.
+    pub fn set_offset(&mut self, new_offset: u32) {
+        match self {
+            AnyRelocationEntry::Linkage(reloc) => reloc.offset = new_offset,
+            AnyRelocationEntry::Type(reloc) => reloc.offset = new_offset,
+        }
     }
+    /// Get linkage relocation entry if applicable.
+    pub fn linkage(&self) -> Option<&RelocationEntry> {
+        match self {
+            AnyRelocationEntry::Linkage(reloc) => Some(reloc),
+            AnyRelocationEntry::Type(_) => None,
+        }
+    }
+    /// Return range of bytes in the containing symbol that should be modified by this relocation.
+    pub fn relocation_range(&self) -> std::ops::Range<usize> {
+        let start = self.offset() as usize;
+        let len = match self {
+            AnyRelocationEntry::Type(_) => {
+                5 // always leb32
+            }
+            AnyRelocationEntry::Linkage(reloc) => reloc.extent(),
+        };
+
+        start..(start + len)
+    }
+}
+
+/// Implementation of relocation entry for function `type` index.
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct TypeRelocationEntry {
+    pub offset: u32,
+    pub index: FuncTypeId,
+    // pub addend: i64, // not applicable for type relocations
+    // pub relation: Relative, // not applicable for type relocations
+    // pub encoding: Encoding, // leb
+    // pub width: RelocationWidth, // 32
 }
 
 ///
-/// Implementation of relocation entry for some typed index.
-/// We use type-safe indexes to enforce constraints of specific relocation type.
+/// Implementation of relocation entry type defined in linker symbols table.
+/// Generic index is used because type relocations has no `SymbolId`
 ///
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct RelocationEntry<Indx: Constraints> {
+pub struct RelocationEntry {
     /// Optional addend to be added to the resulting value.
-    pub addend: Addend<Indx>,
+    pub addend: i64,
     /// Index of symbol in `Symbols` table that store information about relocated symbol.
-    /// This is generic due to fact that `types` isn't stored as symbol in `Symbols` table.
-    pub index: Indx::IndexType,
+    /// This is generic due to fact that type relocations has no `SymbolId`
+    pub symbol_id: SymbolId,
     /// Offset in bytes from the start of the symbol definition
     /// targeted by this relocation.
     pub offset: u32,
+    /// Type of symbol stored in `Symbols` table.
+    pub symbol_type: SymbolType,
     /// Information about global variable base, if this is position independent relocation.
-    pub relation: Relative<Indx>,
+    pub relation: Relative,
     /// Representation of resulting value in the output binary.
     /// Either Sleb/Leb or fixed integer.
-    pub encoding: Encoding<Indx>,
+    pub encoding: Encoding,
     /// Width of encoding result value (64 or 32 bit)
-    pub width: RelocationWidth<Indx>,
-    /// Type-safe index tag in, that signalize in which table object is stored,
-    /// like addend for MemoryAddr/FunctionOffset/SectionOffset
-    pub index_type: PhantomData<Indx>,
+    pub width: RelocationWidth,
+}
+
+impl RelocationEntry {
+    pub fn relocation_range(&self) -> std::ops::Range<usize> {
+        let start = self.offset as usize;
+        let len = self.extent();
+        start..(start + len)
+    }
+
+    pub fn extent(&self) -> usize {
+        match (self.encoding, self.width) {
+            (Encoding::Fixed, RelocationWidth::Bits32) => 4,
+            (Encoding::Fixed, RelocationWidth::Bits64) => 8,
+            (Encoding::Sleb | Encoding::Leb, RelocationWidth::Bits32) => 5,
+            (Encoding::Sleb | Encoding::Leb, RelocationWidth::Bits64) => 10,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+/// Enumeration of all symbols that can be stored in `Symbols` table.
+pub enum SymbolType {
+    MemoryAddr,
+    TableNumber,
+    GlobalIndex,
+    FunctionIndex,
+    // Indirect function index used in call_indirect
+    TableIndex,
+    FunctionOffset,
+    SectionOffset,
+    EventIndex,
+    MemoryAddrLocrel,
 }
 
 // == Extra typed indexes ==
@@ -190,170 +195,40 @@ pub struct SectionOffset {
 /// For memory addresses and offsets - addend is either
 /// 32 or 64 bit integer that added to resulting address.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Addend<Index: Constraints> {
-    v: TypeLevelOption<i64, Index::Addend>,
-}
-
-impl<Index> Addend<Index>
-where
-    Index: Constraints<Addend = Has>,
-{
-    pub fn some(value: i64) -> Addend<Index> {
-        Addend {
-            v: TypeLevelOption::some(value),
-        }
-    }
-}
-
-impl<Index> Addend<Index>
-where
-    Index: Constraints,
-{
-    pub fn none() -> Addend<Index> {
-        Addend {
-            v: TypeLevelOption::none(),
-        }
-    }
-    pub fn to_option(&self) -> Option<i64> {
-        self.v.to_option()
-    }
-}
-
-// == Type safety markers and traits ==
-
-/// Each type can mark associated types either `Yes` or `No` for each of associated types.
-/// Every `No` marker enforces that enum variant with this constraint cannot be constructed.
-pub trait Constraints {
-    type RelTls: Debug + Eq + Hash + Copy + SealedOptionTag;
-    type RelBase: Debug + Eq + Hash + Copy + SealedOptionTag;
-    type Has64: Debug + Eq + Hash + Copy + SealedOptionTag;
-    type Int: Debug + Eq + Hash + Copy + SealedOptionTag;
-    type Sleb: Debug + Eq + Hash + Copy + SealedOptionTag;
-    type Leb: Debug + Eq + Hash + Copy + SealedOptionTag;
-    type Addend: Debug + Eq + Hash + Copy + SealedOptionTag;
-    type IndexType: Debug + Eq + Hash + Copy + EntityRef;
-}
-use impl_type_safety::{SealedOptionTag, TypeLevelOption};
-
-use crate::index::EntityRef;
-
-/// Constructor of witnesses
-/// Use as
-/// ```
-/// RelocationEntry {
-///     encoding: Encoding::Leb(Has),
-/// // ...
-/// }
-/// ```
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Has;
-
-mod impl_type_safety {
-    use super::*;
-
-    pub trait SealedOptionTag {
-        const SOME: bool;
-    }
-    impl SealedOptionTag for Yes {
-        const SOME: bool = true;
-    }
-    impl SealedOptionTag for No {
-        const SOME: bool = false;
-    }
-    pub type Yes = Has;
-    pub type No = std::convert::Infallible;
-
-    #[derive(Clone, Copy)]
-    pub union TypeLevelOption<V: Copy, Tag: Copy> {
-        has: (V, Tag),
-        none: (),
-    }
-    impl<V: Copy> TypeLevelOption<V, Has> {
-        pub fn some(value: V) -> Self {
-            Self { has: (value, Has) }
-        }
-        pub fn into_inner(self) -> V {
-            unsafe { self.has.0 }
-        }
-    }
-
-    impl<V: Copy, Tag: Copy> TypeLevelOption<V, Tag> {
-        pub fn none() -> Self {
-            Self { none: () }
-        }
-
-        pub fn to_option(self) -> Option<V>
-        where
-            Tag: SealedOptionTag,
-        {
-            if Tag::SOME {
-                // Safety: SealedOptionTag has SOME=false when Tag is Never type.
-                Some(unsafe { self.has.0 })
-            } else {
-                let _ = unsafe { self.none };
-                None
-            }
-        }
-    }
-
-    impl<V: Copy, Tag: Copy + SealedOptionTag> Debug for TypeLevelOption<V, Tag>
-    where
-        V: Debug,
-    {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            self.to_option().fmt(f)
-        }
-    }
-
-    impl<V: Copy, Tag: Copy + SealedOptionTag> PartialEq for TypeLevelOption<V, Tag>
-    where
-        V: PartialEq,
-    {
-        fn eq(&self, other: &Self) -> bool {
-            self.to_option() == other.to_option()
-        }
-    }
-
-    impl<V: Copy, Tag: Copy + SealedOptionTag> Eq for TypeLevelOption<V, Tag> where V: Eq {}
-    impl<V: Copy, Tag: Copy + SealedOptionTag> Hash for TypeLevelOption<V, Tag>
-    where
-        V: Hash,
-    {
-        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-            self.to_option().hash(state)
-        }
-    }
+#[repr(transparent)]
+pub struct Addend {
+    pub value: i64,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum Encoding<Index: Constraints> {
+pub enum Encoding {
     // 4-byte little-endian integer
     // e.g. `uint32` or `int32`
-    Fixed(Index::Int),
+    Fixed,
     // 5-byte Variable-length SIGNED integer
     // 32-bit SLEB128
-    Sleb(Index::Sleb),
+    Sleb,
     // 5-byte Variable-length UNSIGNED integer
     // 32-bit ULEB128
-    Leb(Index::Leb),
+    Leb,
 }
 
 /// Base of addr/index is stored can be stored in global variable.
 /// This enum indicates which variable stores this base.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum Relative<Index: Constraints> {
+pub enum Relative {
     /// Absolute address
-    None(Has),
+    None,
     /// Symbol relative to `__memory_base` / `__table_base` global
-    Got(Index::RelBase),
+    Got,
     /// Symbol relative to `__tls_base` global
-    Tls(Index::RelTls),
+    Tls,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum RelocationWidth<Index: Constraints> {
-    Bits32(Has),
-    Bits64(Index::Has64),
+pub enum RelocationWidth {
+    Bits32,
+    Bits64,
 }
 
 // Is not used anymore - but during implementation we highlighted what entities are actually used
@@ -365,21 +240,84 @@ pub enum RelocationWidth<Index: Constraints> {
 //     fn memory_chunk(&self, symbol: SymbolId) -> Option<u32>;
 // }
 
+impl AnyRelocationEntry {
+    pub fn from_raw(entry: wasmparser::RelocationEntry, symbol_start: u32) -> Self {
+        use wasmparser::RelocationType::*;
+        let symbol_type = match entry.ty {
+            TypeIndexLeb => {
+                return AnyRelocationEntry::Type(TypeRelocationEntry {
+                    offset: entry.offset - symbol_start,
+                    index: FuncTypeId::from_u32(entry.index),
+                });
+            }
+            EventIndexLeb => SymbolType::EventIndex,
+            TableNumberLeb => SymbolType::TableNumber,
+            SectionOffsetI32 => SymbolType::SectionOffset,
+            FunctionOffsetI32 | FunctionOffsetI64 => SymbolType::FunctionOffset,
+            GlobalIndexI32 | GlobalIndexLeb => SymbolType::GlobalIndex,
+            FunctionIndexLeb | FunctionIndexI32 => SymbolType::FunctionIndex,
+            TableIndexSleb | TableIndexI32 | TableIndexI64 | TableIndexRelSleb
+            | TableIndexRelSleb64 | TableIndexSleb64 => SymbolType::TableIndex,
+            MemoryAddrLocrelI32 => SymbolType::MemoryAddrLocrel,
+            MemoryAddrI32 | MemoryAddrLeb | MemoryAddrSleb | MemoryAddrRelSleb
+            | MemoryAddrTlsSleb | MemoryAddrI64 | MemoryAddrLeb64 | MemoryAddrSleb64
+            | MemoryAddrRelSleb64 | MemoryAddrTlsSleb64 => SymbolType::MemoryAddr,
+        };
+        let encoding: Encoding = match entry.ty {
+            SectionOffsetI32 | FunctionOffsetI32 | GlobalIndexI32 | FunctionIndexI32
+            | TableIndexI32 | MemoryAddrI32 | FunctionOffsetI64 | TableIndexI64 | MemoryAddrI64
+            | MemoryAddrLocrelI32 => Encoding::Fixed,
+            TableIndexRelSleb64 | TableIndexSleb64 | TableIndexRelSleb | TableIndexSleb
+            | MemoryAddrLeb64 | MemoryAddrSleb64 | MemoryAddrSleb | MemoryAddrRelSleb
+            | MemoryAddrRelSleb64 | MemoryAddrTlsSleb | MemoryAddrTlsSleb64 => Encoding::Sleb,
+            FunctionIndexLeb | GlobalIndexLeb | TableNumberLeb | MemoryAddrLeb | EventIndexLeb => {
+                Encoding::Leb
+            }
+            TypeIndexLeb => unreachable!(),
+        };
+
+        let relation = match entry.ty {
+            TableIndexRelSleb | TableIndexRelSleb64 | MemoryAddrRelSleb | MemoryAddrRelSleb64 => {
+                Relative::Got
+            }
+            MemoryAddrTlsSleb64 | MemoryAddrTlsSleb => Relative::Tls,
+            SectionOffsetI32 | FunctionOffsetI32 | GlobalIndexI32 | FunctionIndexI32
+            | TableIndexI32 | MemoryAddrI32 | FunctionOffsetI64 | TableIndexI64 | MemoryAddrI64
+            | TableIndexSleb64 | TableIndexSleb | MemoryAddrLeb64 | MemoryAddrSleb64
+            | MemoryAddrSleb | FunctionIndexLeb | GlobalIndexLeb | TableNumberLeb
+            | MemoryAddrLeb | EventIndexLeb | MemoryAddrLocrelI32 => Relative::None,
+            TypeIndexLeb => unreachable!(),
+        };
+
+        let width = match entry.ty {
+            MemoryAddrLocrelI32 | SectionOffsetI32 | FunctionOffsetI32 | GlobalIndexI32
+            | GlobalIndexLeb | FunctionIndexI32 | FunctionIndexLeb | TableIndexI32
+            | TableIndexSleb | TableIndexRelSleb | MemoryAddrI32 | TableNumberLeb
+            | EventIndexLeb | MemoryAddrLeb | MemoryAddrSleb | MemoryAddrRelSleb
+            | MemoryAddrTlsSleb => RelocationWidth::Bits32,
+            FunctionOffsetI64 | TableIndexI64 | TableIndexRelSleb64 | TableIndexSleb64
+            | MemoryAddrI64 | MemoryAddrLeb64 | MemoryAddrSleb64 | MemoryAddrRelSleb64
+            | MemoryAddrTlsSleb64 => RelocationWidth::Bits64,
+            TypeIndexLeb => unreachable!(),
+        };
+
+        Self::Linkage(RelocationEntry {
+            offset: entry.offset - symbol_start,
+            addend: entry.addend,
+            symbol_id: SymbolId::from_u32(entry.index),
+            symbol_type,
+            relation,
+            encoding,
+            width,
+        })
+    }
+}
+
 // // Check size compatibility with wasmparser::RelocationEntry
 const _ASSERT_SIZE: () = const {
-    use std::mem::align_of;
-    // Current rust version cannot pack 3 1-byte fields into outer enum-variant without padding
-    // We could use repr(packed) but it could potentially cause perfomance loss on some architectures.
-    // Therefore for now it is commented and runtime test is added as marker.
-    // assert!(size_of::<TypedRelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());
-    assert!(align_of::<TypedRelocationEntry>() <= align_of::<wasmparser::RelocationEntry>());
-    let addend_offset = std::mem::offset_of!(RelocationEntry<MemoryAddr>, addend);
-    let index_offset = std::mem::offset_of!(RelocationEntry<MemoryAddr>, index);
-    let offset_offset = std::mem::offset_of!(RelocationEntry<MemoryAddr>, offset);
-
-    assert!(addend_offset == 0);
-    assert!(index_offset == 8);
-    assert!(offset_offset == 12);
+    // Because type entry doesn't have addend - enum tag can be packed and resulting size remains equal to non decomposed version.
+    assert!(size_of::<RelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());
+    assert!(align_of::<RelocationEntry>() <= align_of::<wasmparser::RelocationEntry>());
 };
 
 #[cfg(test)]
@@ -389,19 +327,15 @@ mod tests {
     fn runtime_assert_size() {
         use std::mem::{align_of, size_of};
         println!(
-            "Size of TypedRelocationEntry: {}",
-            size_of::<super::TypedRelocationEntry>()
+            "Size of LinkageRelocation: {}",
+            size_of::<super::RelocationEntry>()
         );
 
         println!(
             "Size of wasmparser::RelocationEntry: {}",
             size_of::<wasmparser::RelocationEntry>()
         );
-        assert!(
-            size_of::<super::TypedRelocationEntry>() <= size_of::<wasmparser::RelocationEntry>()
-        );
-        assert!(
-            align_of::<super::TypedRelocationEntry>() <= align_of::<wasmparser::RelocationEntry>()
-        );
+        assert!(size_of::<super::RelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());
+        assert!(align_of::<super::RelocationEntry>() <= align_of::<wasmparser::RelocationEntry>());
     }
 }

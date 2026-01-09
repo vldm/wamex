@@ -4,7 +4,6 @@ use std::fmt::Debug;
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_entity::EntityRef;
-use wasmparser::RelocationEntry;
 
 use crate::{
     InputObject,
@@ -15,7 +14,10 @@ use crate::{
         raw::DataSegmentId,
         typed::{FunctionRef, GlobalRef},
     },
-    symbols::{SymbolId, SymbolKind},
+    symbols::{
+        SymbolId, SymbolKind,
+        reloc::{AnyRelocationEntry, Encoding, RelocationEntry, RelocationWidth, SymbolType},
+    },
 };
 
 pub(crate) trait EntryTypeTag {
@@ -159,7 +161,7 @@ impl RelocateState<'_, '_> {
     {
         self._get_symbol_op::<T, _>(
             |module| {
-                T::get_mapped_value(self.input_module, module, SymbolId::from_u32(relocation.index))
+                T::get_mapped_value(self.input_module, module, relocation.symbol_id)
             },
             || {
                 anyhow!(
@@ -198,10 +200,9 @@ impl RelocateState<'_, '_> {
 
     fn get_relocated_function_index(&self, relocation: &RelocationEntry) -> Result<usize> {
         Self::ensure_empty_addend(relocation)?;
-        let Some(input_func_id) = FunctionIndexTag::get_input_function_id(
-            self.input_module,
-            SymbolId::from_u32(relocation.index),
-        ) else {
+        let Some(input_func_id) =
+            FunctionIndexTag::get_input_function_id(self.input_module, relocation.symbol_id)
+        else {
             bail!("Relocation {relocation:?} does not refer to a valid function")
         };
         let Some(output_func_id) = self.emit_module.functions.get_output_id(input_func_id) else {
@@ -229,15 +230,15 @@ impl RelocateState<'_, '_> {
         Ok(offset as usize)
     }
 
-    fn get_global_id(&self, relocation: &RelocationEntry) -> Result<usize> {
+    fn get_relocated_global_index(&self, relocation: &RelocationEntry) -> Result<usize> {
         let symbol = self
             .input_module
             .symbols
-            .get(SymbolId::from_u32(relocation.index))
+            .get(relocation.symbol_id)
             .ok_or_else(|| {
                 anyhow!(
                     "Relocation {relocation:?} refers to invalid symbol id {}",
-                    relocation.index
+                    relocation.symbol_id
                 )
             })?;
         let SymbolKind::Global(original_global_id) = symbol.kind else {
@@ -255,86 +256,73 @@ impl RelocateState<'_, '_> {
         Ok(global_id.index())
     }
 
-    pub fn apply_relocation(&self, data: &mut [u8], relocation: &RelocationEntry) -> Result<()> {
+    pub fn apply_relocation(&self, data: &mut [u8], relocation: &AnyRelocationEntry) -> Result<()> {
         let relocation_range = relocation.relocation_range();
         let target = &mut data[relocation_range];
-        use encode::*;
-        use wasmparser::RelocationType::*;
-        match relocation.ty {
-            FunctionIndexLeb => {
-                encode_leb128_u32_5byte(
-                    self.get_relocated_function_index(relocation)? as u32,
-                    target.try_into().unwrap(),
-                );
+        let relocated_value = match relocation {
+            AnyRelocationEntry::Linkage(relocation) => match relocation.symbol_type {
+                SymbolType::FunctionIndex => self.get_relocated_function_index(relocation)? as u32,
+                SymbolType::TableIndex => {
+                    self.get_relocated_function_table_index(relocation)? as u32
+                }
+                SymbolType::MemoryAddr => self.get_relocated_memory_offset(relocation)? as u32,
+                SymbolType::GlobalIndex => self.get_relocated_global_index(relocation)? as u32,
+                SymbolType::TableNumber
+                | SymbolType::SectionOffset
+                | SymbolType::MemoryAddrLocrel
+                | SymbolType::FunctionOffset
+                | SymbolType::EventIndex => {
+                    log::warn!("This type of relocation is not supported yet: {relocation:?}");
+                    // skip relocation.
+                    return Ok(());
+                }
+            },
+            AnyRelocationEntry::Type(relocation) => {
+                log::warn!("TypeId relocation is not supported yet: {relocation:?}");
+                // return original type index as-is
+                relocation.index.as_u32()
             }
-            TableIndexSleb => {
-                encode_leb128_i32_5byte(
-                    self.get_relocated_function_table_index(relocation)? as i32,
-                    target.try_into().unwrap(),
-                );
-            }
-            TypeIndexLeb => {
-                // we keep types from input module, so we can ignore this relocation for now
-                // TODO: Implement relocation.
-            }
-            TableNumberLeb => {
-                // Table number also is only 1 <indirect function table>
-            }
-            TableIndexI32 => {
-                encode_u32(
-                    self.get_relocated_function_table_index(relocation)? as u32,
-                    target.try_into().unwrap(),
-                );
-            }
-            // 64-bit wasm disabled for now
-            // TableIndexSleb64 => {
-            //     encode_leb128_i64_10byte(
-            //         self.get_relocated_function_table_index(relocation)? as i64,
-            //         target.try_into().unwrap(),
-            //     );
-            // }
-            // TableIndexI64 => {
-            //     encode_u64(
-            //         self.get_relocated_function_table_index(relocation)? as u64,
-            //         target.try_into().unwrap(),
-            //     );
-            // }
-            FunctionIndexI32 => {
-                encode_u32(
-                    self.get_relocated_function_index(relocation)? as u32,
-                    target.try_into().unwrap(),
-                );
-            }
-            MemoryAddrLeb => {
-                encode_leb128_u32_5byte(
-                    self.get_relocated_memory_offset(relocation)? as u32,
-                    target.try_into().unwrap(),
-                );
-            }
-            MemoryAddrSleb => {
-                encode_leb128_i32_5byte(
-                    self.get_relocated_memory_offset(relocation)? as i32,
-                    target.try_into().unwrap(),
-                );
-            }
-            MemoryAddrI32 => {
-                encode_u32(
-                    self.get_relocated_memory_offset(relocation)? as u32,
-                    target.try_into().unwrap(),
-                );
-            }
-            GlobalIndexLeb => {
-                encode_leb128_u32_5byte(
-                    self.get_global_id(relocation)? as u32,
-                    target.try_into().unwrap(),
-                );
-            }
+        };
 
-            _ => {
-                panic!("Unsupported relocation type {relocation:?}");
-            }
+        match relocation {
+            AnyRelocationEntry::Linkage(relocation) => Self::encode(
+                target,
+                relocated_value,
+                relocation.encoding,
+                relocation.width,
+            ),
+            AnyRelocationEntry::Type(_) => Self::encode(
+                target,
+                relocated_value,
+                Encoding::Leb,
+                RelocationWidth::Bits32,
+            ),
         }
 
         Ok(())
+    }
+
+    fn encode(target: &mut [u8], value: u32, encoding: Encoding, width: RelocationWidth) {
+        use encode::*;
+        match (encoding, width) {
+            (Encoding::Fixed, RelocationWidth::Bits32) => {
+                encode_u32(value, target.try_into().unwrap())
+            }
+            (Encoding::Leb, RelocationWidth::Bits32) => {
+                encode_leb128_u32_5byte(value, target.try_into().unwrap())
+            }
+            (Encoding::Sleb, RelocationWidth::Bits32) => {
+                encode_leb128_i32_5byte(value as i32, target.try_into().unwrap())
+            }
+            (Encoding::Fixed, RelocationWidth::Bits64) => {
+                encode_u64(value as u64, target.try_into().unwrap())
+            }
+            (Encoding::Leb, RelocationWidth::Bits64) => {
+                encode_leb128_u64_10byte(value as u64, target.try_into().unwrap())
+            }
+            (Encoding::Sleb, RelocationWidth::Bits64) => {
+                encode_leb128_i64_10byte(value as i64, target.try_into().unwrap())
+            }
+        }
     }
 }

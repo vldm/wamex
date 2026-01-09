@@ -12,7 +12,7 @@ use crate::{
     helpers::{RangeComp, RangeExt},
     index::{GappedMap, ReservedValue},
     read::raw::DataSegmentId,
-    symbols::{self, SymbolId, SymbolKind},
+    symbols::{self, SymbolId, SymbolKind, reloc::AnyRelocationEntry},
 };
 impl_entity_index! {
 
@@ -55,14 +55,14 @@ pub struct DataChunk<'a> {
     symbol_index: SymbolId,
 
     // offset related to this symbol
-    relocations: Vec<wasmparser::RelocationEntry>,
+    relocations: Vec<AnyRelocationEntry>,
 }
 
 impl DataChunk<'_> {
     pub fn name(&self) -> &str {
         &self.name
     }
-    pub fn relocations(&self) -> &[wasmparser::RelocationEntry] {
+    pub fn relocations(&self) -> &[AnyRelocationEntry] {
         &self.relocations
     }
     //TODO: Don't expose in public API
@@ -260,11 +260,16 @@ impl<'src> SegmentLayout<'src> {
                             .relocs
                             .iter()
                             .map(|reloc| {
-                                let reloc_symbol =
-                                    symbol_table.get(SymbolId::from_u32(reloc.index)).unwrap();
+                                let name = match reloc {
+                                    AnyRelocationEntry::Linkage(r) => {
+                                        let reloc_symbol = symbol_table.get(r.symbol_id).unwrap();
+                                        &reloc_symbol.debug_name
+                                    }
+                                    AnyRelocationEntry::Type(_) => "<type>",
+                                };
                                 hexdump::Ref {
                                     range: reloc.relocation_range(),
-                                    name: &reloc_symbol.debug_name,
+                                    name: name,
                                 }
                             })
                             .collect();

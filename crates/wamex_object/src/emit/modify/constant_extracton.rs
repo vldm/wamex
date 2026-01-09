@@ -10,18 +10,23 @@ use std::ops::Range;
 use anyhow::{Result, bail, ensure};
 use cranelift_entity::EntityRef;
 use wasm_encoder::{Encode, Instruction};
-use wasmparser::{Operator, RelocationType};
+use wasmparser::Operator;
 
 use super::{ModifyContext, StoreType};
-use crate::emit::modify::{
-    CustomModify, RelocationContext, SymbolOffset, SymbolOp,
-    relocation::{DataSymbolTag, FunctionIndexTag},
+use crate::{
+    emit::modify::{
+        CustomModify, RelocationContext, SymbolOffset, SymbolOp,
+        relocation::{DataSymbolTag, FunctionIndexTag},
+    },
+    symbols::reloc::{
+        AnyRelocationEntry, Encoding, Relative, RelocationEntry, RelocationWidth, SymbolType,
+    },
 };
 
 // Represents a data relocation entry with additional information about global variable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstantExtractionEntry {
-    pub(super) entry: wasmparser::RelocationEntry,
+    pub(super) entry: RelocationEntry,
 }
 
 impl ConstantExtractionEntry {
@@ -56,8 +61,7 @@ impl ConstantExtractionEntry {
 
         let result_ix = Instruction::GlobalGet(got_global_index.index() as u32);
         log::trace!(
-            "Replacing func[{name}:{range:?}] {src_ix:?} with {result_ix:?}, addend {addend}",
-            addend = self.entry.addend,
+            "Replacing func[{name}:{range:?}] {src_ix:?} with {result_ix:?}",
             range = self.range(),
             name = ctx.function_name,
             src_ix = ctx.instruction
@@ -193,31 +197,18 @@ impl ConstantExtractionEntry {
     }
 
     // Check that relocation entry is supported
-    fn check_whitelisted_code_relocation(entry: &wasmparser::RelocationEntry) -> Result<()> {
-        match entry.ty {
-            RelocationType::MemoryAddrLeb64
-            | RelocationType::MemoryAddrSleb64
-            | RelocationType::MemoryAddrI64
-            | RelocationType::MemoryAddrRelSleb64
-            | RelocationType::MemoryAddrTlsSleb64
-            | RelocationType::TableIndexSleb64
-            | RelocationType::TableIndexI64
-            | RelocationType::FunctionOffsetI64
-            | RelocationType::TableIndexRelSleb64 => {
-                bail!("U64 memory pointers is currently not supported")
-            }
-            RelocationType::MemoryAddrTlsSleb
-            | RelocationType::MemoryAddrRelSleb
-            | RelocationType::MemoryAddrLocrelI32 => {
-                bail!("Relocation memory pointers is currently not supported")
-            }
-            // Function offsets are not supported yet
-            RelocationType::FunctionOffsetI32
-            | RelocationType::SectionOffsetI32
-            | RelocationType::TableIndexRelSleb => {
-                bail!("Unsupported relocation type {entry:?}");
-            }
-            _ => {}
+    fn check_whitelisted_code_relocation(entry: &RelocationEntry) -> Result<()> {
+        if matches!(entry.width, RelocationWidth::Bits64) {
+            bail!("U64 memory pointers is currently not supported")
+        }
+        if !matches!(entry.relation, Relative::None) {
+            bail!("Relocation memory pointers is currently not supported")
+        }
+        if matches!(
+            entry.symbol_type,
+            SymbolType::SectionOffset | SymbolType::FunctionOffset | SymbolType::MemoryAddrLocrel
+        ) {
+            bail!("Non supported symbol type for code relocation")
         }
         Ok(())
     }
@@ -229,24 +220,27 @@ impl CustomModify for ConstantExtractionEntry {
     where
         'src: 'any;
     fn try_from_entry(
-        entry: &wasmparser::RelocationEntry,
+        entry: &AnyRelocationEntry,
         context: &RelocationContext,
     ) -> Result<Option<Self>> {
-        Self::check_whitelisted_code_relocation(entry)?;
-        Ok(match entry.ty {
-            RelocationType::MemoryAddrLeb
-            | RelocationType::MemoryAddrSleb
-            | RelocationType::TableIndexSleb if context.dyn_base =>{
-                Some(Self {
-                    entry: *entry,
-                })
+        Ok(match entry {
+            AnyRelocationEntry::Linkage(entry) => {
+                Self::check_whitelisted_code_relocation(entry)?;
+                match (entry.symbol_type, entry.encoding) {
+                    (SymbolType::TableIndex, Encoding::Sleb)
+                    | (SymbolType::MemoryAddr, Encoding::Sleb)
+                    | (SymbolType::MemoryAddr, Encoding::Leb)
+                        if context.dyn_base =>
+                    {
+                        Some(Self { entry: *entry })
+                    }
+                    _ => None,
+                }
             }
-            RelocationType::TableIndexI32  // in instruction Sleb or Leb are used I32 is used only in data segment ?
-            | RelocationType::MemoryAddrI32
-            => {
-                panic!("BUG: Relocation type {entry:?} not supported")
+            AnyRelocationEntry::Type(_) => {
+                // bail!("Type relocations are not supported for constant extraction");
+                None
             }
-            _ => return Ok(None),
         })
     }
 
@@ -255,20 +249,20 @@ impl CustomModify for ConstantExtractionEntry {
     }
 
     fn try_apply(&self, ctx: ModifyContext<'_, '_>) -> Result<()> {
-        match self.entry.ty {
-            RelocationType::MemoryAddrLeb => {
+        match (self.entry.symbol_type, self.entry.encoding) {
+            (SymbolType::MemoryAddr, Encoding::Leb) => {
                 let symbol_offset = ctx
                     .relocation_state
                     .get_entry_symbol_op::<DataSymbolTag>(&self.entry)?;
                 self.replace_memory_offset_with_global_get(symbol_offset, ctx)?
             }
-            RelocationType::MemoryAddrSleb => {
+            (SymbolType::MemoryAddr, Encoding::Sleb) => {
                 let symbol_offset = ctx
                     .relocation_state
                     .get_entry_symbol_op::<DataSymbolTag>(&self.entry)?;
                 self.replace_const_get_with_global_get(symbol_offset, ctx)?
             }
-            RelocationType::TableIndexSleb => {
+            (SymbolType::TableIndex, Encoding::Sleb) => {
                 let symbol_offset = ctx
                     .relocation_state
                     .get_entry_symbol_op::<FunctionIndexTag>(&self.entry)?;
