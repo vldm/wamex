@@ -3334,7 +3334,7 @@ expression: dep_graph_output
 865 func[90] <core::panicking::assert_failed::h38eb03705053ebb7>
   <- 771 func[28] <std::sync::poison::mutex::Mutex<T>::lock::h21f886f1174a0319>
   -> 900 func[106] <core::panicking::assert_failed_inner::hbc821832ff9b282b>
-  -> 1018 data[0:1227+1] <.Lanon.51aa6f4db30a08e7412a135b574a635e.2>
+  -> 1087 data[0:1132+96] <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.6>
 
 866 func[91] <<&T as core::fmt::Debug>::fmt::h61c41d29e55a25bc>
   <- 893 func[103] <<async_once_cell::QuickInitGuard as core::fmt::Debug>::fmt::h1035a711cfb7884a>
@@ -4562,7 +4562,6 @@ expression: dep_graph_output
   <- 1012 func[662] <std::panicking::rust_panic_with_hook::h040aa1598efd68d7>
 
 1018 data[0:1227+1] <.Lanon.51aa6f4db30a08e7412a135b574a635e.2>
-  <- 865 func[90] <core::panicking::assert_failed::h38eb03705053ebb7>
 
 1019 func[664] <<&T as core::fmt::Debug>::fmt::h8667e4ebc2e9bb0f>
   <- 901 data[0:2680+16] <.Lanon.34e2a803857b49632d1110a535995711.21>
@@ -4902,6 +4901,7 @@ expression: dep_graph_output
   <- 1029 data[0:2960+8] <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.5>
 
 1087 data[0:1132+96] <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.6>
+  <- 865 func[90] <core::panicking::assert_failed::h38eb03705053ebb7>
   <- 1030 data[0:2968+16] <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.7>
   <- 1033 data[0:3008+16] <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.10>
 

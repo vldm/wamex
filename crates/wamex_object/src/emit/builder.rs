@@ -24,7 +24,7 @@ use crate::{
     index::{GappedMap, IdVec},
     read::{
         raw::DataSegmentId,
-        typed::{CompoundList, EntitiesFromInput},
+        typed::{CompoundList, EntitiesFromInput, data::DataLocation},
     },
     symbols::SymbolId,
 };
@@ -97,7 +97,11 @@ impl<'src> ObjectBuilder<'src> {
                 .next()
                 .expect("There should be at least one data segment")
                 .1;
-            first_segment.memory_offset()
+            // TODO: replace layout handling with hardcoded layout: [.rodata, .data, .bss]
+            let DataLocation::ActiveOffset(v) = first_segment.memory_location() else {
+                panic!("First data segment in main module should be active");
+            };
+            v as usize
         } else {
             0
         };

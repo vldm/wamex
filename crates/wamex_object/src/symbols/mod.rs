@@ -1,5 +1,4 @@
 use std::{
-    any::Any,
     borrow::Cow,
     collections::{BTreeMap, BTreeSet, VecDeque},
     ops::Range,

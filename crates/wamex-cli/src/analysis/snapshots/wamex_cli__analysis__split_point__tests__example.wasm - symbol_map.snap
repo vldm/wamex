@@ -6368,7 +6368,7 @@ expression: symbol_map_output
   Relocations: 4
     GlobalIndex @ offset 4 -> __stack_pointer
     GlobalIndex @ offset 15 -> __stack_pointer
-    MemoryAddr @ offset 23 -> .Lanon.51aa6f4db30a08e7412a135b574a635e.2
+    MemoryAddr @ offset 23 -> .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.6
     FunctionIndex @ offset 51 -> core::panicking::assert_failed_inner::hbc821832ff9b282b
 866 func[91] <<&T as core::fmt::Debug>::fmt::h61c41d29e55a25bc> size=269
   Relocations: 19

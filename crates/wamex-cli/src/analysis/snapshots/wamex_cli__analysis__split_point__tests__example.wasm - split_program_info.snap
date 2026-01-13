@@ -5,7 +5,7 @@ expression: split_info_output
 === Split Program Structure ===
 
 Module #0: Single(Main)
-  Defined symbols: 808
+  Defined symbols: 807
     2 <memcmp>
     3 <__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static>
     4 <__wasm_split_00static_str00_import_776d8e51aac0782b17e57d45872c52d7_static_str>
@@ -746,7 +746,6 @@ Module #0: Single(Main)
     1008 <js_sys::Intl::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Intl::Collator>::describe::h8715297502656ea8>
     1009 <js_sys::Intl::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Intl::DateTimeFormat>::describe::he92f991da590c047>
     1010 <js_sys::Intl::_::<impl wasm_bindgen::describe::WasmDescribe for js_sys::Intl::NumberFormat>::describe::h7bff8cfa032c3ee2>
-    1018 <.Lanon.51aa6f4db30a08e7412a135b574a635e.2>
     1019 <<&T as core::fmt::Debug>::fmt::h8667e4ebc2e9bb0f>
     1020 <<std::thread::local::AccessError as core::fmt::Debug>::fmt::h61557c28914c1fe4>
     1021 <.Lanon.34e2a803857b49632d1110a535995711.103>

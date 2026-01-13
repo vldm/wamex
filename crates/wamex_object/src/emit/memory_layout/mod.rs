@@ -3,15 +3,20 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Debug,
     io::IsTerminal,
+    usize,
 };
 
 use anyhow::Result;
+use cranelift_entity::EntityRef;
 use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
     helpers::{RangeComp, RangeExt},
-    index::{GappedMap, ReservedValue},
-    read::raw::DataSegmentId,
+    index::{GappedMap, NonDefault, ReservedValue},
+    read::{
+        raw::DataSegmentId,
+        typed::data::{DataLocation, RawDataChunk as DataChunk},
+    },
     symbols::{self, SymbolId, SymbolKind, reloc::AnyRelocationEntry},
 };
 impl_entity_index! {
@@ -22,214 +27,60 @@ impl_entity_index! {
 
 mod hexdump;
 
-/// Describes how a data symbol relates to its neighboring symbols within a segment.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SymbolRelation<'a> {
-    /// A standalone symbol with no binding constraints.
-    Regular {
-        chunk: &'a [u8],
-        // true if data was properly aligned.
-        // If data was not aligned, it will not be aligned in output.
-        // It can report false-positive. But it is okay to align data on bigger alignment.
-        //
-        // Linking table does not contain information about symbol alignment.
-        // We use size + segment alignment to calculate if data was aligned properly.
-        aligned: bool,
-    },
+// Default is reserved value
+type Str<'a> = NonDefault<Cow<'a, str>>;
 
-    /// A symbol that must stay adjacent to the previous symbol
-    /// and cannot be moved or removed independently.
-    BoundToPrevious {
-        /// minus offset from end of previous symbol to start of this symbol.
-        offset: usize,
-        len: usize,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DataChunk<'a> {
-    name: Cow<'a, str>,
-    #[allow(dead_code)]
-    flags: SymbolFlags,
-    relation: SymbolRelation<'a>,
-    symbol_index: SymbolId,
-
-    // offset related to this symbol
-    relocations: Vec<AnyRelocationEntry>,
-}
-
-impl DataChunk<'_> {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-    pub fn relocations(&self) -> &[AnyRelocationEntry] {
-        &self.relocations
-    }
-    //TODO: Don't expose in public API
-    pub fn symbol_relation(&self) -> &SymbolRelation<'_> {
-        &self.relation
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SegmentLayout<'a> {
     data_parts: Vec<DataChunk<'a>>,
-    alignment: usize,
-    kind: DataKind<'a>,
-    mem_offset: usize,
+    segment_name: Str<'a>,
+    location: DataLocation,
+    pow2align: usize,
 }
 
 impl ReservedValue for SegmentLayout<'_> {
     fn reserved_value() -> Self {
         Self {
-            alignment: 1,
+            pow2align: usize::MAX,
+            segment_name: Str::reserved_value(),
             data_parts: Vec::new(),
-            kind: DataKind::Passive,
-            mem_offset: 0,
+            location: DataLocation::Passive,
         }
     }
     fn is_reserved_value(&self) -> bool {
-        self.data_parts.is_empty() && matches!(self.kind, DataKind::Passive) && self.mem_offset == 0
-    }
-}
-
-impl Debug for SegmentLayout<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let kind = match &self.kind {
-            DataKind::Passive => "Passive".to_string(),
-            DataKind::Active {
-                offset_expr,
-                memory_index,
-            } => {
-                let offset_expr = offset_expr.get_operators_reader().into_iter().fold(
-                    String::new(),
-                    |mut val, op| {
-                        let operator = op.expect("Expected operator in offset expression");
-                        if !val.is_empty() {
-                            val.push(' ');
-                        }
-                        val.push_str(&format!("{:?}", operator));
-                        val
-                    },
-                );
-                format!("Active(memory:{memory_index}, offset:{})", offset_expr)
-            }
-        };
-        write!(
-            f,
-            "DataSegment {{ data_parts: {:?}, kind: {} }}",
-            self.data_parts, kind
-        )
+        self.data_parts.is_empty()
+            && self.pow2align == usize::MAX
+            && matches!(self.location, DataLocation::Passive)
     }
 }
 
 impl<'src> SegmentLayout<'src> {
-    pub fn new_inner<'a>(
-        data: &Data<'src>,
-        segment_info: &wasmparser::Segment<'src>,
-        data_symbols: impl Iterator<Item = (SymbolId, &'a symbols::SymbolRecord<'src>)>,
-    ) -> Result<SegmentLayout<'src>>
-    where
-        'src: 'a,
-    {
+    pub fn new_from_module(
+        module: &crate::InputObject<'src>,
+        data_segment_id: DataSegmentId,
+    ) -> Result<SegmentLayout<'src>> {
+        // Original segment info
+        let segment = &module.wasm_reader.data.data_segments[data_segment_id];
+        let segment_info = &module.wasm_reader.linking.segments_info[data_segment_id.index()];
+        let cow_name: Cow<'_, str> = segment_info.name.into();
         let alignment = (2usize).pow(segment_info.alignment);
 
-        let mem_offset = match &data.kind {
-            DataKind::Passive => panic!("Passive data is not currently supported"),
-            DataKind::Active { offset_expr, .. } => {
-                crate::InputObject::read_const_expr(offset_expr)?
-            }
-        };
+        let mem_location = DataLocation::from_data_kind(&segment.kind)?;
 
-        log::debug!("Memory offset is {}", mem_offset);
-        log::debug!(
-            "Segment alignment is {}, aligned = {}",
-            alignment,
-            mem_offset % alignment as i32 == 0
-        );
+        log::debug!("Mem location is {:?}", mem_location);
 
-        let mut data_parts = vec![];
-        let mut last_regular = 0..0;
-        for (sym_id, sym) in data_symbols {
-            let SymbolKind::DataDefined { offset, length, .. } = &sym.kind else {
-                unreachable!("Expected DataDefined symbol kind for data segment symbol");
-            };
-
-            let symbol_in_data = offset.clone()..(offset + length);
-            let field_alignment = Self::data_symbol_alignment(alignment, symbol_in_data.len());
-
-            let relation = if last_regular.end > symbol_in_data.start {
-                log::warn!(
-                    "DataSymbol intersects with previous, this is currently in testing: {:?} range:{:?} prev_range: {:?}",
-                    sym,
-                    symbol_in_data,
-                    last_regular
-                );
-                assert!(matches!(
-                    last_regular.cmp_range(&symbol_in_data),
-                    RangeComp::Overlap | RangeComp::Equal
-                ));
-                let offset = last_regular.end - symbol_in_data.start;
-                SymbolRelation::BoundToPrevious {
-                    offset,
-                    len: symbol_in_data.len(),
-                }
-            } else {
-                if last_regular.end < symbol_in_data.start {
-                    let gap_range = last_regular.end..symbol_in_data.start;
-
-                    if gap_range.len() >= alignment {
-                        log::error!(
-                            "Data segment has gap larger than alignment: {:?} > {} before {}",
-                            gap_range,
-                            alignment,
-                            sym.debug_name
-                        );
-                    } else {
-                        log::debug!(
-                            "Data segment has gap: {:?} ({} bytes) before {}",
-                            gap_range,
-                            gap_range.len(),
-                            sym.debug_name
-                        );
-                    }
-                }
-                let aligned =
-                    (symbol_in_data.start + mem_offset as usize).is_multiple_of(field_alignment);
-
-                log::trace!(
-                    "Data symbol {}: offset: {}, size: {}, aligned: {}, alignment: {}",
-                    sym.debug_name,
-                    symbol_in_data.start,
-                    symbol_in_data.len(),
-                    aligned,
-                    field_alignment
-                );
-                last_regular = symbol_in_data.clone();
-                SymbolRelation::Regular {
-                    chunk: &data.data[symbol_in_data.clone()],
-                    aligned,
-                }
-            };
-
-            let part = DataChunk {
-                name: sym.debug_name.clone(),
-                flags: sym.flags,
-                relocations: sym.relocs.clone(),
-                symbol_index: sym_id,
-                relation,
-            };
-            log::trace!("Data part: {part:?}");
-            data_parts.push(part)
-        }
-
-        let kind = data.kind.clone();
+        let data_parts = module
+            .data
+            .iter()
+            .filter(|(_, data)| data.segment_id == data_segment_id)
+            .map(|(_, chunk)| chunk.clone())
+            .collect::<Vec<_>>();
 
         Ok(SegmentLayout {
-            alignment,
+            segment_name: cow_name.into(),
+            pow2align: alignment,
             data_parts,
-            kind,
-            mem_offset: mem_offset as usize,
+            location: mem_location,
         })
     }
 
@@ -250,52 +101,45 @@ impl<'src> SegmentLayout<'src> {
                     "Data symbol [{i}.{index}]: {name}",
                     i = i,
                     index = symbol.symbol_index,
-                    name = symbol.name(),
+                    name = symbol.name,
                 )
                 .unwrap();
-                match symbol.symbol_relation() {
-                    SymbolRelation::Regular { chunk, .. } => {
-                        let input_symbol = symbol_table.get(symbol.symbol_index).unwrap();
-                        let refs = input_symbol
-                            .relocs
-                            .iter()
-                            .map(|reloc| {
-                                let name = match reloc {
-                                    AnyRelocationEntry::Linkage(r) => {
-                                        let reloc_symbol = symbol_table.get(r.symbol_id).unwrap();
-                                        &reloc_symbol.debug_name
-                                    }
-                                    AnyRelocationEntry::Type(_) => "<type>",
-                                };
-                                hexdump::Ref {
-                                    range: reloc.relocation_range(),
-                                    name: name,
-                                }
-                            })
-                            .collect();
-                        let part = hexdump::DataPart { bytes: chunk, refs };
-                        hexdump::render_part(
-                            &mut print_data_format,
-                            base,
-                            &part,
-                            std::io::stderr().is_terminal(),
-                        );
-                        // TODO: add padding
-                        base += chunk.len();
-                    }
-                    SymbolRelation::BoundToPrevious { offset, len } => writeln!(
-                        print_data_format,
-                        "<bound to previous> (offset: {}, len: {})",
-                        offset, len
-                    )
-                    .unwrap(),
-                };
+                let chunk = symbol.data;
+
+                let input_symbol = symbol_table.get(symbol.symbol_index).unwrap();
+                let refs = input_symbol
+                    .relocs
+                    .iter()
+                    .map(|reloc| {
+                        let name = match reloc {
+                            AnyRelocationEntry::Linkage(r) => {
+                                let reloc_symbol = symbol_table.get(r.symbol_id).unwrap();
+                                &reloc_symbol.debug_name
+                            }
+                            AnyRelocationEntry::Type(_) => "<type>",
+                        };
+                        hexdump::Ref {
+                            range: reloc.relocation_range(),
+                            name: name,
+                        }
+                    })
+                    .collect();
+                let part = hexdump::DataPart { bytes: chunk, refs };
+                hexdump::render_part(
+                    &mut print_data_format,
+                    base,
+                    &part,
+                    std::io::stderr().is_terminal(),
+                );
+                // TODO: add padding
+                base += chunk.len();
             }
         }
         println!("Data segments {print_data_format}");
     }
-    pub fn memory_offset(&self) -> usize {
-        self.mem_offset
+
+    pub fn memory_location(&self) -> DataLocation {
+        self.location
     }
 
     // Keeps only symbols with id is in `indexes`.
@@ -304,25 +148,8 @@ impl<'src> SegmentLayout<'src> {
 
         {
             let mut parts_iter = self.data_parts.drain(..).peekable();
-            let mut last_regular_removed = false;
             for item in &mut parts_iter {
                 let remove = !indexes.contains(&item.symbol_index);
-
-                match item.relation {
-                    SymbolRelation::BoundToPrevious { .. } => {
-                        if remove != last_regular_removed {
-                            // TODO: Add dep in DepGraph for BoundToPrevious symbol
-                            log::error!(
-                                "BUG: Data segment symbol {} has bound to symbol that was removed, but previous symbol removed: {}",
-                                item.symbol_index,
-                                last_regular_removed
-                            );
-                        }
-                    }
-                    SymbolRelation::Regular { .. } => {
-                        last_regular_removed = remove;
-                    }
-                }
                 if remove {
                     continue;
                 }
@@ -334,29 +161,6 @@ impl<'src> SegmentLayout<'src> {
         self
     }
 
-    pub fn data_len(&self, segment_offset: usize) -> usize {
-        let mut len = 0;
-
-        for data_part in &self.data_parts {
-            let SymbolRelation::Regular { chunk, aligned } = data_part.relation else {
-                // BoundToPrevious symbols are not counted in data length
-                continue;
-            };
-            let current_offset = segment_offset + len;
-
-            // If we're not aligned, add padding
-            if aligned {
-                let field_alignment = Self::data_symbol_alignment(self.alignment, chunk.len());
-                let padding = Self::calculate_padding(current_offset, field_alignment);
-                len += padding;
-            }
-
-            len += chunk.len();
-        }
-
-        len
-    }
-
     /// Compute data init offset.
     /// Returns (offset_expr, segment_offset)
     fn segment_header(
@@ -365,13 +169,13 @@ impl<'src> SegmentLayout<'src> {
         mut segment_offset: usize,
         lib_base_global_id: Option<u32>,
     ) -> (Option<wasm_encoder::ConstExpr>, usize) {
-        match self.kind {
-            DataKind::Passive => (None, 0),
-            DataKind::Active { .. } => {
+        match self.location {
+            DataLocation::Passive => (None, 0),
+            DataLocation::ActiveOffset(_) => {
                 let offset_expr = match lib_base_global_id {
                     None => {
                         segment_offset +=
-                            Self::calculate_padding(mem_start + segment_offset, self.alignment);
+                            Self::calculate_padding(mem_start + segment_offset, self.pow2align);
                         wasm_encoder::ConstExpr::i32_const(
                             (mem_start + segment_offset).try_into().unwrap(),
                         )
@@ -380,7 +184,7 @@ impl<'src> SegmentLayout<'src> {
                         // submodules use lib_base_id
                         {
                             segment_offset +=
-                                Self::calculate_padding(segment_offset, self.alignment);
+                                Self::calculate_padding(segment_offset, self.pow2align);
                             wasm_encoder::ConstExpr::global_get(lib_base_global_id)
                                 .with_i32_const(segment_offset.try_into().unwrap())
                                 .with_i32_add()
@@ -390,14 +194,6 @@ impl<'src> SegmentLayout<'src> {
                 (Some(offset_expr), segment_offset)
             }
         }
-    }
-
-    fn data_symbol_alignment(segment_alignment: usize, chunk_size: usize) -> usize {
-        if chunk_size == 0 {
-            return 1;
-        }
-        let alignment = 1usize << chunk_size.trailing_zeros();
-        std::cmp::min(segment_alignment, alignment)
     }
 
     fn calculate_padding(starting_point: usize, alignment: usize) -> usize {
@@ -429,57 +225,40 @@ impl<'src> SegmentLayout<'src> {
         let mut globals = BTreeMap::new();
         let segment_in_mem_start = mem_start + segment_offset;
         for symbol in self.data_parts.iter() {
-            match symbol.relation {
-                SymbolRelation::BoundToPrevious { offset, .. } => {
-                    // BoundToPrevious symbols are not counted in data length
+            let chunk = symbol.data;
+            let field_alignment = 1 << symbol.pow2align;
+
+            let total_offset = data.len() + segment_in_mem_start;
+
+            // add padding to align data
+            {
+                let padding = Self::calculate_padding(total_offset, field_alignment);
+                if padding > 0 {
                     log::debug!(
-                        "BoundToPrevious symbol {}: {offset} is not counted in data length",
+                        "Add padding before data symbol {}: {padding} bytes",
                         symbol.name
                     );
 
-                    globals.insert(
-                        symbol.symbol_index,
-                        DataSymbolRefs {
-                            data_mem_offset: data.len() - offset,
-                        },
-                    );
-                }
-                SymbolRelation::Regular { chunk, aligned } => {
-                    let total_offset = data.len() + segment_in_mem_start;
-
-                    // add padding to align data
-                    if aligned {
-                        let field_alignment =
-                            Self::data_symbol_alignment(self.alignment, chunk.len());
-
-                        let padding = Self::calculate_padding(total_offset, field_alignment);
-                        if padding > 0 {
-                            log::debug!(
-                                "Add padding before data symbol {}: {padding} bytes",
-                                symbol.name
-                            );
-
-                            data.resize(data.len() + padding, BYTE_FILLER);
-                        }
-                    }
-                    log::trace!(
-                        "Data symbol {}: offset: {}, size: {}, aligned: {}",
-                        symbol.name,
-                        data.len(),
-                        chunk.len(),
-                        aligned
-                    );
-
-                    globals.insert(
-                        symbol.symbol_index,
-                        DataSymbolRefs {
-                            data_mem_offset: data.len(),
-                        },
-                    );
-                    data.extend_from_slice(chunk);
+                    data.resize(data.len() + padding, BYTE_FILLER);
                 }
             }
+            log::trace!(
+                "Data symbol {}: offset: {}, size: {}, aligned: {}",
+                symbol.name,
+                data.len(),
+                chunk.len(),
+                field_alignment
+            );
+
+            globals.insert(
+                symbol.symbol_index,
+                DataSymbolRefs {
+                    data_mem_offset: data.len(),
+                },
+            );
+            data.extend_from_slice(chunk);
         }
+
         (
             segment_offset,
             DataSegmentOutput {

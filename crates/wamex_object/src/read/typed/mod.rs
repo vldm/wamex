@@ -6,7 +6,7 @@
 //! 2.
 //!
 
-use std::{cmp::Ordering, fmt::Debug, ops::Range};
+use std::{cmp::Ordering, fmt::Debug, ops::Range, vec};
 
 use anyhow::{Context, Result, bail};
 use cranelift_entity::EntityRef;
@@ -15,7 +15,7 @@ pub use imports::*;
 use wasmparser::{ElementItems, TypeRef};
 
 use crate::{
-    index::NonDefault,
+    index::{IdVec, NonDefault},
     read::{
         self,
         raw::{DefinedFuncId, ElementId, FuncTypeId, ImportId},
@@ -23,7 +23,7 @@ use crate::{
     symbols::Symbols,
 };
 
-mod data;
+pub mod data;
 pub mod elements;
 mod entities;
 mod imports;
@@ -47,8 +47,10 @@ pub struct InputObject<'src> {
     pub memories: entities::Memories<'src>,
     pub globals: entities::Globals<'src>,
     pub tags: entities::Tags<'src>,
+
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
+    pub data: IdVec<data::RawDataChunk<'src>>,
 }
 
 impl<'src> InputObject<'src> {
@@ -158,11 +160,34 @@ impl<'src> InputObject<'src> {
             false, // remove duplicates from table
         )?;
 
+        // possible modifycations to symbols map
+        let mut symbols_map = symbols_map;
+
+        let data = 'slice: {
+            // todo: make it configurable
+            let slice_chunks = true;
+
+            let data = data::RawDataChunk::build_segments_reader(&module)?;
+            if !slice_chunks {
+                break 'slice data;
+            }
+            let mut sliced_chunks = IdVec::new();
+
+            for (_, segment) in data.into_inner().into_iter() {
+                let sliced = segment.slice_segment(&symbols_map);
+                let filtered = data::DataChunk::filter_bounds_in_table(sliced, &mut symbols_map);
+                sliced_chunks.extend(filtered.into_inner().into_iter().map(|(_, chunk)| chunk));
+            }
+
+            sliced_chunks
+        };
+
         Ok(InputObject {
             wasm_reader: module,
             symbols: symbols_map,
 
             indirect_function_table,
+            data,
 
             functions,
             tables,

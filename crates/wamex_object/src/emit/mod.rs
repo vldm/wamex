@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use cranelift_entity::EntityRef;
 use index_safety::OutputFuncId;
-pub use memory_layout::{DataChunk, DataSegmentOutput, SegmentLayout, SymbolRelation};
+pub use memory_layout::{DataSegmentOutput, SegmentLayout};
 use modify::{ModifyContext, StoreType};
 use wamex_types::{BumpVersion, dylink0::Dylink0Section, map_vec::MiniSet};
 
@@ -1072,29 +1072,14 @@ impl<'src> CommonEmitInfo<'src> {
             }
         }
 
-        // re-build data_segments (using only available symbols)
-        let data_segments_symbols = Self::chunk_by(
-            module.symbols.iter_data_symbols(),
-            |(left_segment, ..), (right_segment, ..)| left_segment == right_segment,
-        );
         let data_segments: GappedMap<DataSegmentId, SegmentLayout<'src>> = module
             .wasm_reader
             .data
             .section_payload
             .data_segments
             .iter()
-            .map(|(data_segment, data)| {
-                let data_symbols = data_segments_symbols
-                    .get(data_segment.index())
-                    .cloned()
-                    .expect("Symbols for data segment not found");
-                let segment_info = &module.wasm_reader.linking.segments_info[data_segment.index()];
-
-                let layout = SegmentLayout::new_inner(
-                    data,
-                    segment_info,
-                    data_symbols.into_iter().map(|(_, id, record)| (id, record)),
-                );
+            .map(|(data_segment, _data)| {
+                let layout = SegmentLayout::new_from_module(module, data_segment);
                 layout.map(|l| (data_segment, l))
             })
             .collect::<Result<GappedMap<DataSegmentId, SegmentLayout<'src>>>>()?;
