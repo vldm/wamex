@@ -17,7 +17,10 @@ use crate::{
         builder::{BuilderContextToBeRemoved, ObjectBuilder},
         globals::{DefinedGlobal, GlobalImport},
         index_safety::OutputGlobalId,
-        modify::{self, init_each_store_var},
+        modify::{
+            self, init_each_store_var,
+            newgen::{HandleReloc, ModuleConfig},
+        },
     },
     read::{
         ImportOrDefined,
@@ -314,6 +317,9 @@ struct SplitContext<'any, 'src> {
     main_module: bool,
 }
 impl<'src> SplitContext<'_, 'src> {
+    fn get_input_object_ref(&self) -> &InputObject<'src> {
+        self.module_info
+    }
     fn is_nonexportable(&self, symbol: SymbolId) -> bool {
         self.nonexported_symbols.contains(&symbol)
     }
@@ -330,10 +336,10 @@ pub struct Split<S> {
     state: S,
 }
 
-impl<'src> Split<ObjectBuilder<'src>> {
+impl<'any, 'src> Split<ObjectBuilder<'src>> {
     fn include_function_by_symbol(
         &mut self,
-        ctx: &SplitContext<'_, 'src>,
+        ctx: &SplitContext<'any, 'src>,
         sym: SymbolId,
         input_func_id: FunctionRef,
         export: bool,
@@ -370,26 +376,50 @@ impl<'src> Split<ObjectBuilder<'src>> {
                     });
                 }
             }
-            ImportOrDefined::Defined(_) => {
+            ImportOrDefined::Defined(func) => {
                 // Collect all relocation entries that modify something within this function.
                 let func_relocs = &*ctx.module_info.symbols.get(sym).unwrap().relocs;
 
-                let modification_list = func_relocs
-                    .iter()
-                    .map(|entry| {
-                        let dyn_base = !ctx.main_module
-                            && entry
-                                .symbol_id()
-                                .map(|id| !ctx.is_static_symbol(id))
-                                .unwrap_or(false);
-                        let relocation_context = modify::RelocationContext {
-                            dyn_base,
-                            containing_symbol: None,
-                        };
-                        modify::CodeModifyEntry::from_relocation_entry(&entry, &relocation_context)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
+                let input_module: &InputObject<'src> = ctx.get_input_object_ref();
+                let relocation_state = modify::newgen::ResolveSymbol { input_module };
+                let target = modify::newgen::RelocTarget {
+                    src_data: func.body.as_bytes(),
+                    entries: func_relocs,
+                };
+
+                // TODO: Replace this modification
+                let modifications = self
+                    .state
+                    .build_code_modifications(&relocation_state, target)
                     .unwrap();
+
+                let function_name: Cow<'_, str> = ctx
+                    .module_info
+                    .functions
+                    .names
+                    .get(input_func_id)
+                    .map(|name| (*name).into_inner().into())
+                    .unwrap_or_else(|| format!("func_{}", input_func_id.index()).into());
+                log::warn!(
+                    "generated modifications for function {function_name} [{input_func_id}] with {:?}",
+                    modifications
+                );
+                // let modification_list = func_relocs
+                //     .iter()
+                //     .map(|entry| {
+                //         let dyn_base = !ctx.main_module
+                //             && entry
+                //                 .symbol_id()
+                //                 .map(|id| !ctx.is_static_symbol(id))
+                //                 .unwrap_or(false);
+                //         let relocation_context = modify::RelocationContext {
+                //             dyn_base,
+                //             containing_symbol: None,
+                //         };
+                //         modify::CodeModifyEntry::from_relocation_entry(&entry, &relocation_context)
+                //     })
+                //     .collect::<Result<Vec<_>, _>>()
+                //     .unwrap();
 
                 // allow unsetting if trampoline is defined
                 let mut need_export = export;
@@ -409,7 +439,7 @@ impl<'src> Split<ObjectBuilder<'src>> {
                 self.state.add_defined_function(DefinedFunction {
                     export: need_export,
                     input_func_id,
-                    kind: DefinedFunctionKind::Copied { modification_list },
+                    kind: DefinedFunctionKind::Copied { modifications },
                 });
             }
         }
@@ -490,8 +520,8 @@ impl<'src> Split<ObjectBuilder<'src>> {
         }
     }
 }
-impl Split<()> {
-    pub fn build_split_object<'any, 'src>(
+impl<'src> Split<()> {
+    pub fn build_split_object<'any>(
         module_info: &'any InputObject<'src>,
         verbose: bool,
         emit_info: &CommonEmitInfo<'src>,
@@ -520,8 +550,13 @@ impl Split<()> {
         };
 
         let mut builder = Split {
-            state: ObjectBuilder::new(),
+            state: ObjectBuilder::new(ModuleConfig {
+                dyn_base: !main_module,
+            }),
         };
+        builder
+            .state
+            .register_code_modificator(modify::newgen::CodeRelocationHandler::new(static_symbols));
 
         // TODO: add abort function.
         // builder.state.add_defined_function(DefinedFunction {
@@ -725,6 +760,8 @@ impl Split<()> {
 
             data: builder.state.data,
             data_relocations: builder.state.data_relocations,
+            input_data_map: builder.state.input_data_map,
+            output_data_map: builder.state.output_data_map,
             functions: builder.state.functions,
             globals: builder.state.globals,
             //TODO: should be a part of builder state

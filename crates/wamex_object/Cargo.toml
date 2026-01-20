@@ -11,7 +11,7 @@ hex = "0.4.3"
 leb128fmt = "0.1.0"
 log = "0.4.20"
 rustc-demangle = "0.1.21"
-smallvec = "1.15"
+smallvec = { version = "1.15", features = ["write"] }
 vec_map = "0.8.2"
 wasm-encoder = { version = "0.238.0", features = ["wasmparser"] }
 wasmparser = "0.238.0"
@@ -19,6 +19,7 @@ wamex_types = { version = "0.1.0", path = "../wamex_types", features = [
     "full",
 ] }
 cranelift-entity = "0.126.1"
+fnv = "1.0.7"
 pub_if = "0.1"
 
 [features]

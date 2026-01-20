@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
     ops::Range,
 };
 
@@ -58,7 +58,7 @@ pub struct SymbolRecord<'a> {
     /// Except for TypeIndexLeb relocations, which is in type index space.
     pub relocs: Vec<reloc::AnyRelocationEntry>, //TODO: move out type of relocations?
     /// Map of symbols that use this symbol in their relocations.
-    pub reloc_users: MiniSet<SymbolId>, //TODO: Replace by `MiniSet`
+    pub reloc_users: fnv::FnvHashSet<SymbolId>, //TODO: Replace by `MiniSet`
 }
 
 impl SymbolRecord<'_> {
@@ -330,7 +330,7 @@ impl<'src> Symbols<'src> {
                 flags: sym.flags,
                 kind: sym.symbol_kind,
                 relocs: Vec::new(),
-                reloc_users: MiniSet::new(),
+                reloc_users: fnv::FnvHashSet::default(),
             });
             debug_assert_eq!(id, symbol_id)
         }

@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use cranelift_entity::EntityRef;
+use cranelift_entity::{EntityRef, PrimaryMap};
 use index_safety::OutputFuncId;
 pub use memory_layout::{DataSegmentOutput, SegmentLayout};
 use modify::{ModifyContext, StoreType};
@@ -15,7 +15,8 @@ use crate::{
     InputObject,
     emit::{
         globals::DefinedGlobal,
-        index_safety::OutputGlobalId,
+        index_safety::{OutputDataId, OutputGlobalId},
+        memory_layout::DataSymbolOffset,
         modify::{RelocateState, StartFnGen},
         split::{
             ModuleIdentifier, SharedModuleIdentifier, Split, SplitModuleIdentifier, SplitPoint,
@@ -27,7 +28,7 @@ use crate::{
     read::{
         EntitiesFromInput, MemoryRef,
         raw::{DataSegmentId, FuncTypeId},
-        typed::{FunctionRef, GlobalRef},
+        typed::{FunctionRef, GlobalRef, data::DataSymbolRef},
     },
     symbols::{SymbolId, reloc::AnyRelocationEntry},
 };
@@ -37,6 +38,7 @@ pub mod split;
 
 mod globals;
 mod memory_layout;
+mod wasm_emitter;
 
 mod functions;
 mod index_safety;
@@ -106,6 +108,9 @@ pub struct ModuleEmitState<'any, 'src> {
 
     // Data Section
     data: GappedMap<DataSegmentId, memory_layout::DataSegmentOutput>,
+    output_data_map: PrimaryMap<OutputDataId, (DataSegmentId, SymbolId)>,
+    input_data_map: GappedMap<DataSymbolRef, OutputDataId>,
+
     //TODO: Remove data_relocations, instead of DataSegmentOutput use SegmentLayout
     data_relocations: SecondaryMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
 
@@ -143,6 +148,15 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             nonexported_symbols,
             version,
         )
+    }
+    pub fn get_output_data_id(&self, data_ref: DataSymbolRef) -> Option<OutputDataId> {
+        self.input_data_map.get(data_ref).cloned()
+    }
+    pub fn get_output_data_sym(&self, output_data_id: OutputDataId) -> (DataSegmentId, SymbolId) {
+        self.output_data_map
+            .get(output_data_id)
+            .cloned()
+            .expect("Output data id should be valid")
     }
 
     // Return got info for a given dep or this module itself.
@@ -717,7 +731,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
         computed_modules: &'any ComputedModules<'any, 'src>,
         function_start_offset: usize,
         input_func_id: FunctionRef,
-        modification_list: &[modify::CodeModifyEntry],
+        modifications: &modify::newgen::CodeModifyResult<'src>,
         precise_modification: bool,
     ) -> Result<Vec<AnyRelocationEntry>> {
         let mut code_relocs = Vec::new();
@@ -727,27 +741,44 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
             .expect("Defined function expected");
 
         let global_id_mapper = |global_id: GlobalRef| self.globals.get_output_id(global_id);
+        let function_name = self
+            ._get_output_func_id(input_func_id)
+            .map(|output_func_id| self.get_function_name(output_func_id, false))
+            .unwrap_or_else(|| format!("if_func_{}", input_func_id.index()).into());
 
-        let modify_fn = if precise_modification {
-            ModifyContext::emit_code_with_changes
-        } else {
-            ModifyContext::emit_code_in_place
-        };
+        let mut writer = Vec::new();
+        log::debug!("Emitting function {function_name}");
 
-        let (result, modified_relocs) = modify_fn(
-            self,
+        // TODO: We can write bytes directly.
+        let modified_relocs = modifications.write_bytes(&mut writer)?;
+        let reloc_info = RelocateState {
+            input_module: &self.src,
             computed_modules,
-            global_id_mapper,
-            defined_id,
-            input_func_id,
-            modification_list,
-        )?;
+            emit_module: &self,
+            global_id_mapper: &global_id_mapper,
+        };
+        // process relocation
+        for relocation in &modified_relocs {
+            log::trace!(
+                "applying relocation {relocation:?} to function {function_name}",
+                function_name = function_name
+            );
+            reloc_info.apply_relocation2(&mut writer, relocation)?;
+        }
+        // let (result, modified_relocs) = ModifyContext::emit_code_in_place(
+        //     self,
+        //     computed_modules,
+        //     global_id_mapper,
+        //     defined_id,
+        //     input_func_id,
+        //     modifications,
+        // )?;
         for mut reloc in modified_relocs {
             code_relocs.push(reloc.shift_right(function_start_offset));
         }
-        section.raw(&result);
+        section.raw(&writer);
 
-        Ok(code_relocs)
+        Ok(vec![])
     }
 
     fn generate_code_section(
@@ -776,7 +807,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         output_func.input_func_id,
                         computed_modules.indirect_entrypoints_offset() + *table_index_offset,
                     ),
-                DefinedFunctionKind::Copied { modification_list } => {
+                DefinedFunctionKind::Copied { modifications } => {
                     let function_start_offset =
                         encoding_size(defined_functions_count) + section.byte_len();
                     self._generate_defined_function(
@@ -784,7 +815,7 @@ impl<'any, 'src> ModuleEmitState<'any, 'src> {
                         computed_modules,
                         function_start_offset,
                         output_func.input_func_id,
-                        modification_list,
+                        modifications,
                         precise_modification,
                     )
                 }

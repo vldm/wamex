@@ -250,6 +250,7 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
         result
     }
 
+
     // Looks similar to dedup in symbols table
     // TODO: unify logic?
     pub fn filter_bounds_in_table(

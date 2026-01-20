@@ -4,10 +4,10 @@ use super::modify;
 use crate::{emit::ImportedEntity, read::FunctionRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DefinedFunctionKind {
+pub enum DefinedFunctionKind<'src> {
     Copied {
         // List of modifications that should be applied to this function.
-        modification_list: Vec<modify::CodeModifyEntry>,
+        modifications: modify::newgen::CodeModifyResult<'src>,
     },
     IndirectTrampoline {
         /// Index of extra table entry after main module entries.
@@ -18,10 +18,10 @@ pub enum DefinedFunctionKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DefinedFunction {
+pub struct DefinedFunction<'src> {
     pub(crate) export: bool,
     pub(crate) input_func_id: FunctionRef,
-    pub(crate) kind: DefinedFunctionKind,
+    pub(crate) kind: DefinedFunctionKind<'src>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -76,7 +76,7 @@ impl ImportedFunction<'_> {
 }
 
 // ignore relocations field in order
-impl Ord for DefinedFunction {
+impl<'src> Ord for DefinedFunction<'src> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let tag = match self.kind {
             DefinedFunctionKind::Copied { .. } => 0,
@@ -95,7 +95,7 @@ impl Ord for DefinedFunction {
         }
     }
 }
-impl PartialOrd for DefinedFunction {
+impl<'src> PartialOrd for DefinedFunction<'src> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }

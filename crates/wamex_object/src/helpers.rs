@@ -5,7 +5,7 @@ use std::{
     ops::{Add, Range, Sub},
 };
 
-use crate::symbols::reloc::AnyRelocationEntry;
+use crate::symbols::reloc::{AnyRelocationEntry, RelocationEntry};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord, Hash)]
 pub enum RangeComp {
@@ -41,7 +41,16 @@ impl RangeComp {
 pub trait RangeExt {
     fn shift_left(&self, offset: usize) -> Self;
     fn shift_right(&self, offset: usize) -> Self;
-    fn shift(&self, offset: isize) -> Self;
+    fn shift(&self, offset: isize) -> Self
+    where
+        Self: Sized,
+    {
+        if offset >= 0 {
+            self.shift_right(offset as usize)
+        } else {
+            self.shift_left((-offset) as usize)
+        }
+    }
     fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp;
 }
 
@@ -57,14 +66,6 @@ impl RangeExt for Range<usize> {
         Range {
             start: self.start + offset,
             end: self.end + offset,
-        }
-    }
-
-    fn shift(&self, offset: isize) -> Self {
-        if offset >= 0 {
-            self.shift_right(offset as usize)
-        } else {
-            self.shift_left((-offset) as usize)
         }
     }
 
@@ -110,14 +111,22 @@ impl RangeExt for AnyRelocationEntry {
         modified
     }
 
-    fn shift(&self, offset: isize) -> Self {
-        if offset >= 0 {
-            self.shift_right(offset as usize)
-        } else {
-            self.shift_left((-offset) as usize)
-        }
+    fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp {
+        self.relocation_range().cmp_range(other)
     }
+}
 
+impl<Any: Clone> RangeExt for RelocationEntry<Any> {
+    fn shift_left(&self, offset: usize) -> Self {
+        let mut modified = self.clone();
+        modified.offset = modified.offset.checked_sub(offset as u32).unwrap();
+        modified
+    }
+    fn shift_right(&self, offset: usize) -> Self {
+        let mut modified = self.clone();
+        modified.offset += offset as u32;
+        modified
+    }
     fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp {
         self.relocation_range().cmp_range(other)
     }
@@ -220,6 +229,7 @@ where
     }
 }
 
+// TODO: add support usize offset.
 impl<Offset> ShiftMap<Offset>
 where
     Offset: Ord + Copy + Add<u32, Output = Offset> + Debug,

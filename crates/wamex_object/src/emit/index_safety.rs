@@ -12,15 +12,18 @@ impl_entity_index! {
     pub struct OutputFuncId;
     #[display = "output_global"]
     pub struct OutputGlobalId;
+    // Non wasm-entity type
+    #[display = "output_data"]
+    pub struct OutputDataId;
     // private types
-    pub struct OutputDefinedFuncId(DefinedFunction);
+    pub struct OutputDefinedFuncId(for<'a> DefinedFunction<'a>);
     pub struct OutputImportFuncId(for<'a> ImportedFunction<'a>);
     pub struct OutputDefinedGlobalId(for<'a> DefinedGlobal<'a>);
     pub struct OutputGlobalImportId(for<'a> GlobalImport<'a>);
 }
 
 impl CompoundRef for OutputFuncId {
-    type DefinedType<'src> = DefinedFunction;
+    type DefinedType<'src> = DefinedFunction<'src>;
     type ImportType<'src> = ImportedFunction<'src>;
 }
 impl CompoundRef for OutputGlobalId {
@@ -35,7 +38,7 @@ impl LinkedToInputRef for OutputGlobalId {
     type InputRef = crate::read::typed::GlobalRef;
 }
 
-impl GetInputRef<FunctionRef> for DefinedFunction {
+impl GetInputRef<FunctionRef> for DefinedFunction<'_> {
     fn get_input_index(&self) -> OutputMapType<FunctionRef> {
         if matches!(self.kind, DefinedFunctionKind::Trampoline { .. }) {
             // Import stubs is not a real function in input module.
@@ -71,5 +74,28 @@ impl GetInputRef<crate::read::typed::GlobalRef> for GlobalImport<'_> {
                 input_global_id, ..
             } => OutputMapType::bidirectional_from_option(*input_global_id),
         }
+    }
+}
+
+// Encode output index as `SymbolId` for storing in relocation entries.
+// Uses MSB to distinguish from symbols that can be found in symbols table.
+//
+// This is intended for use in places where we need to allocate new symbols, b
+// 1. Make sure to not use this SmbolID in SecondaryMap since it will allocate space for all gaps up to 2^31.
+// 2.
+trait OutputIndex {
+    fn as_u32(&self) -> u32;
+    fn from_u32(value: u32) -> Self
+    where
+        Self: Sized;
+
+    fn to_output_symbol_id(&self) -> crate::emit::SymbolId {
+        crate::emit::SymbolId::from_u32(self.as_u32() | 1 << 31)
+    }
+    fn from_output_symbol_id_unchecked(value: crate::emit::SymbolId) -> Self
+    where
+        Self: Sized,
+    {
+        Self::from_u32(value.as_u32() & !(1 << 31))
     }
 }

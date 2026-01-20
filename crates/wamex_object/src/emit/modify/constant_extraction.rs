@@ -197,7 +197,7 @@ impl ConstantExtractionEntry {
     }
 
     // Check that relocation entry is supported
-    fn check_whitelisted_code_relocation(entry: &RelocationEntry) -> Result<()> {
+    pub(crate) fn check_whitelisted_code_relocation(entry: &RelocationEntry) -> Result<()> {
         if matches!(entry.width, RelocationWidth::Bits64) {
             bail!("U64 memory pointers is currently not supported")
         }

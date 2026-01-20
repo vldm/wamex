@@ -3,21 +3,19 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Debug,
     io::IsTerminal,
-    usize,
+    mem, usize,
 };
 
 use anyhow::Result;
 use cranelift_entity::EntityRef;
-use wasmparser::{Data, DataKind, SymbolFlags};
 
 use crate::{
-    helpers::{RangeComp, RangeExt},
     index::{GappedMap, NonDefault, ReservedValue},
     read::{
         raw::DataSegmentId,
-        typed::data::{DataLocation, RawDataChunk as DataChunk},
+        typed::data::{DataLocation, DataSymbolRef, RawDataChunk as DataChunk},
     },
-    symbols::{self, SymbolId, SymbolKind, reloc::AnyRelocationEntry},
+    symbols::{self, SymbolId, reloc::AnyRelocationEntry},
 };
 impl_entity_index! {
 
@@ -36,6 +34,9 @@ pub struct SegmentLayout<'a> {
     segment_name: Str<'a>,
     location: DataLocation,
     pow2align: usize,
+    // Temp field for refactoring
+    // Map from original input DataSymbolRef to index in data_parts
+    input_data_map: Vec<(DataSymbolRef, usize)>,
 }
 
 impl ReservedValue for SegmentLayout<'_> {
@@ -45,10 +46,12 @@ impl ReservedValue for SegmentLayout<'_> {
             segment_name: Str::reserved_value(),
             data_parts: Vec::new(),
             location: DataLocation::Passive,
+            input_data_map: Vec::new(),
         }
     }
     fn is_reserved_value(&self) -> bool {
         self.data_parts.is_empty()
+            && self.input_data_map.is_empty()
             && self.pow2align == usize::MAX
             && matches!(self.location, DataLocation::Passive)
     }
@@ -65,6 +68,8 @@ impl<'src> SegmentLayout<'src> {
         let cow_name: Cow<'_, str> = segment_info.name.into();
         let alignment = (2usize).pow(segment_info.alignment);
 
+        let mut input_data_map = Vec::new();
+
         let mem_location = DataLocation::from_data_kind(&segment.kind)?;
 
         log::debug!("Mem location is {:?}", mem_location);
@@ -73,7 +78,10 @@ impl<'src> SegmentLayout<'src> {
             .data
             .iter()
             .filter(|(_, data)| data.segment_id == data_segment_id)
-            .map(|(_, chunk)| chunk.clone())
+            .map(|(symbol_index, chunk)| {
+                input_data_map.push((symbol_index, input_data_map.len()));
+                chunk.clone()
+            })
             .collect::<Vec<_>>();
 
         Ok(SegmentLayout {
@@ -81,6 +89,7 @@ impl<'src> SegmentLayout<'src> {
             pow2align: alignment,
             data_parts,
             location: mem_location,
+            input_data_map,
         })
     }
 
@@ -145,19 +154,26 @@ impl<'src> SegmentLayout<'src> {
     // Keeps only symbols with id is in `indexes`.
     pub fn new_with_whitelist(mut self, indexes: &BTreeSet<SymbolId>) -> Self {
         let mut result = vec![];
-
+        let mut new_input_data_map = Vec::new();
         {
-            let mut parts_iter = self.data_parts.drain(..).peekable();
-            for item in &mut parts_iter {
+            for (item, (id, _idx)) in mem::take(&mut self.data_parts)
+                .into_iter()
+                .zip(mem::take(&mut self.input_data_map))
+            {
                 let remove = !indexes.contains(&item.symbol_index);
                 if remove {
                     continue;
                 }
+                let new_index = result.len();
                 result.push(item);
+
+                // rebuild input_data_map
+                new_input_data_map.push((id, new_index));
             }
         }
 
         self.data_parts = result;
+        self.input_data_map = new_input_data_map;
         self
     }
 
@@ -223,8 +239,14 @@ impl<'src> SegmentLayout<'src> {
 
         log::debug!("Segment offset is {}", mem_start + segment_offset);
         let mut globals = BTreeMap::new();
+        let mut input_data_map = BTreeMap::new();
+
         let segment_in_mem_start = mem_start + segment_offset;
-        for symbol in self.data_parts.iter() {
+        for (symbol, data_ref) in self
+            .data_parts
+            .iter()
+            .zip(self.input_data_map.iter().map(|(id, _)| *id))
+        {
             let chunk = symbol.data;
             let field_alignment = 1 << symbol.pow2align;
 
@@ -250,9 +272,10 @@ impl<'src> SegmentLayout<'src> {
                 field_alignment
             );
 
+            input_data_map.insert(data_ref, symbol.symbol_index);
             globals.insert(
                 symbol.symbol_index,
-                DataSymbolRefs {
+                DataSymbolOffset {
                     data_mem_offset: data.len(),
                 },
             );
@@ -265,6 +288,7 @@ impl<'src> SegmentLayout<'src> {
                 data_init: data_init.expect("Active data segment should have offset"),
                 data,
                 data_symbols: globals,
+                input_data_map,
                 memory_offset: mem_start + segment_offset,
             },
         )
@@ -272,7 +296,7 @@ impl<'src> SegmentLayout<'src> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DataSymbolRefs {
+pub struct DataSymbolOffset {
     // Relative to lib_base for submodules
     pub data_mem_offset: usize,
 }
@@ -287,7 +311,9 @@ pub struct DataSegmentOutput {
     memory_offset: usize,
 
     data: Vec<u8>,
-    data_symbols: BTreeMap<SymbolId, DataSymbolRefs>,
+    data_symbols: BTreeMap<SymbolId, DataSymbolOffset>,
+    // Temp, replace with Map<IDX -> offset>
+    pub input_data_map: BTreeMap<DataSymbolRef, SymbolId>,
 }
 impl ReservedValue for DataSegmentOutput {
     fn reserved_value() -> Self {
@@ -296,6 +322,7 @@ impl ReservedValue for DataSegmentOutput {
             memory_offset: usize::MAX,
             data: Vec::new(),
             data_symbols: BTreeMap::new(),
+            input_data_map: BTreeMap::new(),
         }
     }
     fn is_reserved_value(&self) -> bool {
@@ -320,7 +347,7 @@ impl DataSegmentOutput {
     pub fn memory_offset(&self) -> usize {
         self.memory_offset
     }
-    pub fn symbols(&self) -> &BTreeMap<SymbolId, DataSymbolRefs> {
+    pub fn symbols(&self) -> &BTreeMap<SymbolId, DataSymbolOffset> {
         &self.data_symbols
     }
 }

@@ -7,26 +7,30 @@
 //!
 //!
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, fmt::Debug};
 
 use anyhow::Result;
-use cranelift_entity::SecondaryMap;
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 
 use crate::{
-    InputObject,
+    InputObject, SVec, Symbols,
     emit::{
         DefinedFunction, ImportedFunction, SegmentLayout, SubModuleExtra,
         globals::{DefinedGlobal, GlobalImport},
-        index_safety::{OutputFuncId, OutputGlobalId},
-        memory_layout, modify,
+        index_safety::{OutputDataId, OutputFuncId, OutputGlobalId},
+        memory_layout,
+        modify::{self, newgen::HandleRelocErased},
     },
     helpers::RangeExt,
     index::{GappedMap, IdVec},
     read::{
         raw::DataSegmentId,
-        typed::{CompoundList, EntitiesFromInput, data::DataLocation},
+        typed::{
+            CompoundList, EntitiesFromInput,
+            data::{DataLocation, DataSymbolRef},
+        },
     },
-    symbols::SymbolId,
+    symbols::{SymbolId, SymbolRecord},
 };
 
 ///
@@ -41,15 +45,52 @@ use crate::{
 pub struct ObjectBuilder<'src> {
     pub globals: CompoundList<'src, OutputGlobalId>,
     pub functions: CompoundList<'src, OutputFuncId>,
+    // TODO: Use chunks instead of full segments
     pub data: GappedMap<DataSegmentId, SegmentLayout<'src>>,
+
+    pub module_config: modify::newgen::ModuleConfig,
+
+    pub code_modificator: Option<Box<dyn modify::newgen::HandleRelocErased<'src> + 'src>>,
+    pub data_modificator: Option<Box<dyn modify::newgen::HandleRelocErased<'src> + 'src>>,
 }
 
 impl<'src> ObjectBuilder<'src> {
-    pub fn new() -> Self {
+    pub fn new(module_config: modify::newgen::ModuleConfig) -> Self {
         Self {
             globals: CompoundList::new(IdVec::new(), IdVec::new()),
             functions: CompoundList::new(IdVec::new(), IdVec::new()),
             data: GappedMap::new(),
+            module_config,
+            code_modificator: None,
+            data_modificator: None,
+        }
+    }
+
+    /// Registers code modificator that will be used to process function bodies before emitting them.
+    pub fn register_code_modificator<C>(&mut self, handler: C) -> anyhow::Result<()>
+    where
+        C: modify::newgen::HandleReloc<'src> + 'src,
+        C::ExtraData: Debug,
+    {
+        let mut handler = modify::newgen::SequencedHandler::new(self.module_config, handler);
+        handler.setup(&mut *self)?;
+
+        self.code_modificator = Some(Box::new(handler));
+        Ok(())
+    }
+
+    pub fn build_code_modifications(
+        &mut self,
+        resolve_symbol: &modify::newgen::ResolveSymbol<'_, 'src>,
+        reloc_target: modify::newgen::RelocTarget<'_, 'src>,
+    ) -> Result<modify::newgen::CodeModifyResult<'src>> {
+        if let Some(ref mut c) = self.code_modificator {
+            c.build_modifications(resolve_symbol, reloc_target)
+        } else {
+            Ok(modify::newgen::CodeModifyResult::no_modifications(
+                resolve_symbol,
+                reloc_target,
+            ))
         }
     }
 
@@ -64,7 +105,7 @@ impl<'src> ObjectBuilder<'src> {
     }
 
     /// Adds new function within this module.
-    pub fn add_defined_function(&mut self, func: DefinedFunction) {
+    pub fn add_defined_function(&mut self, func: DefinedFunction<'src>) {
         self.functions.defined.push(func);
     }
 
@@ -88,6 +129,9 @@ impl<'src> ObjectBuilder<'src> {
         // TO remove this context data segment filling should change.
         ctx: BuilderContextToBeRemoved<'_, 'src>,
     ) -> Object<'src> {
+        let mut input_data_map = GappedMap::new();
+        let mut output_data_map = PrimaryMap::new();
+
         let mut data_segment_outputs = GappedMap::new();
 
         let data_segments = &self.data;
@@ -121,6 +165,14 @@ impl<'src> ObjectBuilder<'src> {
         }
         // collect all relocations
         let mut data_relocations = SecondaryMap::<_, Vec<modify::DataModifyEntry>>::new();
+
+        // build input_data_map and output_data_map
+        for (segment_id, data_segment) in data_segment_outputs.iter() {
+            for (data_ref, symbol_index) in &data_segment.input_data_map {
+                input_data_map.insert(*data_ref, OutputDataId::new(output_data_map.len()));
+                output_data_map.push((segment_id, *symbol_index));
+            }
+        }
 
         // TODO: move shift in previous (segment_id, segment) in data_segments.iter()
         for (segment_id, data_segment) in data_segment_outputs.iter() {
@@ -160,6 +212,8 @@ impl<'src> ObjectBuilder<'src> {
             functions: EntitiesFromInput::new(self.functions),
             data: data_segment_outputs,
             data_relocations,
+            input_data_map,
+            output_data_map,
         }
     }
 }
@@ -190,6 +244,8 @@ pub struct Object<'src> {
     pub globals: EntitiesFromInput<'src, OutputGlobalId>,
     pub functions: EntitiesFromInput<'src, OutputFuncId>,
     pub data: GappedMap<DataSegmentId, memory_layout::DataSegmentOutput>,
+    pub output_data_map: PrimaryMap<OutputDataId, (DataSegmentId, SymbolId)>,
+    pub input_data_map: GappedMap<DataSymbolRef, OutputDataId>,
     //TODO: Remove data_relocations, instead of DataSegmentOutput use SegmentLayout
     pub data_relocations: SecondaryMap<DataSegmentId, Vec<modify::DataModifyEntry>>,
     // custom_sections: Vec<CustomSection>,

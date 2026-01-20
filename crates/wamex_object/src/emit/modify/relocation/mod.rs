@@ -8,15 +8,19 @@ use cranelift_entity::EntityRef;
 use crate::{
     InputObject,
     emit::{
-        ComputedModules, GotBase, ModuleEmitState, index_safety::OutputGlobalId, modify::SymbolOp,
+        ComputedModules, GotBase, ModuleEmitState,
+        index_safety::{OutputDataId, OutputFuncId, OutputGlobalId},
+        modify::{SymbolOp, newgen::ErasedEntityId},
     },
     read::{
         raw::DataSegmentId,
-        typed::{FunctionRef, GlobalRef},
+        typed::{FunctionRef, GlobalRef, data::DataSymbolRef},
     },
     symbols::{
         SymbolId, SymbolKind,
-        reloc::{AnyRelocationEntry, Encoding, RelocationEntry, RelocationWidth, SymbolType},
+        reloc::{
+            AnyRelocationEntry, Encoding, Relative, RelocationEntry, RelocationWidth, SymbolType,
+        },
     },
 };
 
@@ -28,6 +32,10 @@ pub(crate) trait EntryTypeTag {
         state: &ModuleEmitState,
         src_symbol: SymbolId,
     ) -> Option<Self::OutputValue>;
+    // fn get_mapped_value2(
+    //     state: &ModuleEmitState,
+    //     src_symbol: ErasedEntityId,
+    // ) -> Option<Self::OutputValue>;
     fn get_got(got_base: &GotBase) -> OutputGlobalId;
 }
 
@@ -41,6 +49,21 @@ impl FunctionIndexTag {
         };
         Some(input_id)
     }
+    // fn get_input_function_id2(
+    //     state: &ModuleEmitState,
+    //     src_symbol: ErasedEntityId,
+    // ) -> Option<FunctionRef> {
+    //     let input_func_id = match src_symbol.unpack_id() {
+    //         UnpackedEntityId::Input(i) => FunctionRef::from_u32(i),
+    //         UnpackedEntityId::Output(o) => {
+    //             // already resolved
+    //             let output_func_id = OutputFuncId::from_u32(o);
+
+    //             state.functions.get_input_id(output_func_id)?
+    //         }
+    //     };
+    //     return Some(input_func_id);
+    // }
 }
 
 impl EntryTypeTag for FunctionIndexTag {
@@ -57,6 +80,18 @@ impl EntryTypeTag for FunctionIndexTag {
             .get(&input_func_id)
             .copied()
     }
+    // fn get_mapped_value2(
+    //     state: &ModuleEmitState,
+    //     src_symbol: ErasedEntityId,
+    // ) -> Option<Self::OutputValue> {
+    //     let input_func_id = FunctionIndexTag::get_input_function_id2(state, src_symbol)?;
+    //     // TODO: use output function id instead of input function id?
+    //     state
+    //         .indirect_functions
+    //         .function_table_index
+    //         .get(&input_func_id)
+    //         .copied()
+    // }
     fn get_got(got_base: &GotBase) -> OutputGlobalId {
         got_base.table_base_id
     }
@@ -90,6 +125,12 @@ impl EntryTypeTag for DataSymbolTag {
 
         DataSymbolTag::get_symbol_offset(state, segment_id, src_symbol)
     }
+    // fn get_mapped_value2(
+    //     state: &ModuleEmitState,
+    //     src_symbol: ErasedEntityId,
+    // ) -> Option<Self::OutputValue> {
+    //     todo!()
+    // }
     fn get_got(got_base: &GotBase) -> OutputGlobalId {
         got_base.lib_base_id
     }
@@ -113,7 +154,7 @@ impl Debug for RelocateState<'_, '_> {
     }
 }
 
-impl RelocateState<'_, '_> {
+impl<'any, 'src> RelocateState<'any, 'src> {
     fn _get_symbol_op<T: EntryTypeTag, U>(
         &self,
         getter: impl Fn(&ModuleEmitState) -> Option<U>,
@@ -188,7 +229,7 @@ impl RelocateState<'_, '_> {
         )
     }
 
-    fn ensure_empty_addend(relocation: &RelocationEntry) -> Result<()> {
+    fn ensure_empty_addend<Any: Debug>(relocation: &RelocationEntry<Any>) -> Result<()> {
         if relocation.addend != 0 {
             bail!(
                 "Relocation {relocation:?} has non-zero addend {}, which is not supported",
@@ -276,6 +317,9 @@ impl RelocateState<'_, '_> {
                     // skip relocation.
                     return Ok(());
                 }
+                SymbolType::TypeIndex => {
+                    unreachable!("BUG: TypeId relocation cannot use linkage entry")
+                }
             },
             AnyRelocationEntry::Type(relocation) => {
                 log::warn!("TypeId relocation is not supported yet: {relocation:?}");
@@ -324,5 +368,185 @@ impl RelocateState<'_, '_> {
                 encode_leb128_i64_10byte(value as i64, target.try_into().unwrap())
             }
         }
+    }
+
+    fn get_relocated_function_index2(
+        &self,
+        relocation: &RelocationEntry<ErasedEntityId>,
+    ) -> Result<usize> {
+        Self::ensure_empty_addend(relocation)?;
+        debug_assert_eq!(relocation.symbol_type, SymbolType::FunctionIndex);
+
+        let output_func_id = match relocation.symbol_id {
+            ErasedEntityId::Input(i) => {
+                let input_func_id = FunctionRef::from_u32(i);
+                let Some(output_func_id) = self.emit_module.functions.get_output_id(input_func_id)
+                else {
+                    bail!(
+                        "Cannot find output function for input function {input_func_id} referenced by relocation {relocation:?}"
+                    )
+                };
+                output_func_id
+            }
+            ErasedEntityId::Output(o) => {
+                // already resolved
+                OutputFuncId::from_u32(o)
+            }
+        };
+
+        Ok(output_func_id.index())
+    }
+    fn get_relocated_function_table_index2(
+        &self,
+        relocation: &RelocationEntry<ErasedEntityId>,
+    ) -> Result<usize> {
+        Self::ensure_empty_addend(relocation)?;
+        debug_assert_eq!(relocation.symbol_type, SymbolType::TableIndex);
+
+        let input_func_id = match relocation.symbol_id {
+            ErasedEntityId::Input(i) => FunctionRef::from_u32(i),
+            ErasedEntityId::Output(o) => {
+                // already resolved
+                let output_func_id = OutputFuncId::from_u32(o);
+
+                self.static_module()
+                    .functions
+                    .get_input_id(output_func_id)
+                    .unwrap_or_else(|| panic!("output function {output_func_id} should have input id, required for relocation: {relocation:?}"))
+            }
+        };
+
+        // TODO: use output function id instead of input function id?
+        let table_index = self
+            .static_module()
+            .indirect_functions
+            .function_table_index
+            .get(&input_func_id)
+            .copied();
+
+        table_index.ok_or_else(||
+            anyhow!("failed to find indirect table index for function {input_func_id}, required for relocation: {relocation:?}")
+        )
+    }
+    fn get_relocated_memory_offset2(
+        &self,
+        relocation: &RelocationEntry<ErasedEntityId>,
+    ) -> Result<usize> {
+        let output_data_ref = match relocation.symbol_id {
+            ErasedEntityId::Input(i) => {
+                let input_data_id = DataSymbolRef::from_u32(i);
+                self.static_module()
+                    .get_output_data_id(input_data_id)
+                    .ok_or_else(|| {
+                        anyhow!("failed to get symbol reference {input_data_id:?} in output module")
+                    })?
+            }
+            ErasedEntityId::Output(o) => OutputDataId::from_u32(o),
+        };
+        let (segment_id, symbol_id) = self.static_module().get_output_data_sym(output_data_ref);
+        let segment = self.static_module().data.get(segment_id).ok_or_else(|| {
+            anyhow!(
+                "failed to get data segment {segment_id:?} for output data symbol {output_data_ref:?}"
+            )
+        })?;
+        let Some(symbol) = segment.symbols().get(&symbol_id) else {
+            bail!(
+                "failed to get data symbol {symbol_id:?} in segment {segment_id:?} for output data symbol {output_data_ref:?}"
+            );
+        };
+
+        Ok(
+            (segment.memory_offset() as i64 + symbol.data_mem_offset as i64)
+                .try_into()
+                .unwrap(),
+        )
+    }
+
+    fn get_relocated_global_index2(
+        &self,
+        relocation: &RelocationEntry<ErasedEntityId>,
+    ) -> Result<usize> {
+        let output_global_id = match relocation.symbol_id {
+            ErasedEntityId::Input(i) => {
+                let input_global_id = GlobalRef::from_u32(i);
+                (self.global_id_mapper)(input_global_id)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Dependency analysis error: No output global for input global {input_global_id} referenced by relocation {relocation:?}"
+                    )
+                })?
+            }
+            ErasedEntityId::Output(o) => {
+                // already resolved
+                let output_global_id = OutputGlobalId::from_u32(o);
+                output_global_id
+            }
+        };
+        Ok(output_global_id.index())
+    }
+    pub fn apply_relocation2(
+        &self,
+        data: &mut [u8],
+        relocation: &RelocationEntry<ErasedEntityId>,
+    ) -> Result<()> {
+        let relocation_range = relocation.relocation_range();
+        let target = &mut data[relocation_range];
+        if relocation.relation != Relative::None {
+            log::warn!(
+                "Relocation with non relation to global is not supported yet: {relocation:?}"
+            );
+            // skip relocation.
+            return Ok(());
+        }
+        let relocated_value = match relocation.symbol_type {
+            SymbolType::FunctionIndex => self.get_relocated_function_index2(&relocation)? as u32,
+            SymbolType::TableIndex => self.get_relocated_function_table_index2(&relocation)? as u32,
+            SymbolType::MemoryAddr => self.get_relocated_memory_offset2(relocation)? as u32,
+            SymbolType::GlobalIndex => self.get_relocated_global_index2(relocation)? as u32,
+            SymbolType::TableNumber
+            | SymbolType::SectionOffset
+            | SymbolType::MemoryAddrLocrel
+            | SymbolType::FunctionOffset
+            | SymbolType::EventIndex => {
+                log::warn!("This type of relocation is not supported yet: {relocation:?}");
+                // skip relocation.
+                return Ok(());
+            }
+            SymbolType::TypeIndex => {
+                log::warn!("TypeId relocation is not supported yet: {relocation:?}");
+                // return original type index as-is
+                match relocation.symbol_id {
+                    ErasedEntityId::Input(i) => i,
+                    ErasedEntityId::Output(o) => o,
+                }
+            }
+        };
+
+        Self::encode(
+            target,
+            relocated_value,
+            relocation.encoding,
+            relocation.width,
+        );
+        // match relocation {
+        //     AnyRelocationEntry::Linkage(relocation) => Self::encode(
+        //         target,
+        //         relocated_value,
+        //         relocation.encoding,
+        //         relocation.width,
+        //     ),
+        //     AnyRelocationEntry::Type(_) => Self::encode(
+        //         target,
+        //         relocated_value,
+        //         Encoding::Leb,
+        //         RelocationWidth::Bits32,
+        //     ),
+        // }
+
+        Ok(())
+    }
+
+    fn static_module(&self) -> &ModuleEmitState<'any, 'src> {
+        &self.computed_modules.main_module
     }
 }

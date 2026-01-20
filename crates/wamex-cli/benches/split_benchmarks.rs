@@ -54,8 +54,8 @@ fn get_memory_usage() -> Option<u64> {
 }
 
 fn benchmark_parse_module(c: &mut Criterion) {
-    let lazy_routes_wasm = load_lazy_routes_wasm();
     c.bench_function("parse_lazy_routes", |b| {
+        let lazy_routes_wasm = load_lazy_routes_wasm();
         b.iter(|| {
             let module = ObjectReader::parse(black_box(&lazy_routes_wasm)).unwrap();
             hint_black_box(module);
@@ -64,8 +64,8 @@ fn benchmark_parse_module(c: &mut Criterion) {
 }
 
 fn benchmark_parse_object_module(c: &mut Criterion) {
-    let lazy_routes_wasm = load_lazy_routes_wasm();
     c.bench_function("parse_lazy_routes_object", |b| {
+        let lazy_routes_wasm = load_lazy_routes_wasm();
         b.iter_custom(|iters| {
             let mut total_duration = std::time::Duration::ZERO;
             for _ in 0..iters {
@@ -81,11 +81,10 @@ fn benchmark_parse_object_module(c: &mut Criterion) {
 }
 
 fn benchmark_dependency_analysis(c: &mut Criterion) {
-    let lazy_routes_wasm = load_lazy_routes_wasm();
-    let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
-    let info = InputObject::from_raw_module(module).unwrap();
-
     c.bench_function("get_dependencies", |b| {
+        let lazy_routes_wasm = load_lazy_routes_wasm();
+        let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
+        let info = InputObject::from_raw_module(module).unwrap();
         b.iter(|| {
             let dep_graph = analysis::dep_graph::get_dependencies(black_box(&info)).unwrap();
             hint_black_box(dep_graph);
@@ -94,14 +93,13 @@ fn benchmark_dependency_analysis(c: &mut Criterion) {
 }
 
 fn benchmark_compute_split_modules(c: &mut Criterion) {
-    let lazy_routes_wasm = load_lazy_routes_wasm();
-    let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
-    let info = InputObject::from_raw_module(module).unwrap();
-    let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
-    let wbg_fns = split_point::wbg_closures(&info, &dep_graph);
-    let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
-
     c.bench_function("compute_split_modules", |b| {
+        let lazy_routes_wasm = load_lazy_routes_wasm();
+        let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
+        let info = InputObject::from_raw_module(module).unwrap();
+        let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
+        let wbg_fns = split_point::wbg_closures(&info, &dep_graph);
+        let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
         b.iter(|| {
             let split_program_info = split_point::compute_split_modules(
                 black_box(&info),
@@ -116,20 +114,19 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
 }
 
 fn benchmark_emit_modules(c: &mut Criterion) {
-    let lazy_routes_wasm = load_lazy_routes_wasm();
-    let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
-    let info = InputObject::from_raw_module(module).unwrap();
-    let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
-    let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
-    let wbg_fns = split_point::wbg_closures(&info, &dep_graph);
-    let mut split_program_info =
-        split_point::compute_split_modules(&info, &dep_graph, &split_points, &wbg_fns).unwrap();
-
-    // Apply the same optimizations as the main split function
-    emit::merge_main_shared(&mut split_program_info);
-
     let mut group = c.benchmark_group("emit_module");
     group.bench_function("in_place", |b| {
+        let lazy_routes_wasm = load_lazy_routes_wasm();
+        let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
+        let info = InputObject::from_raw_module(module).unwrap();
+        let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
+        let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
+        let wbg_fns = split_point::wbg_closures(&info, &dep_graph);
+        let mut split_program_info =
+            split_point::compute_split_modules(&info, &dep_graph, &split_points, &wbg_fns).unwrap();
+
+        // Apply the same optimizations as the main split function
+        emit::merge_main_shared(&mut split_program_info);
         b.iter(|| {
             let mut output_counter = 0;
             let result = emit::emit_modules(
@@ -151,33 +148,33 @@ fn benchmark_emit_modules(c: &mut Criterion) {
             hint_black_box(output_counter);
         })
     });
-    group.bench_function("precise", |b| {
-        b.iter(|| {
-            let mut output_counter = 0;
-            let result = emit::emit_modules(
-                black_box(&info),
-                false,
-                black_box(&split_program_info),
-                black_box(&wbg_fns),
-                true,
-                None,
-                Default::default(),
-                |_identifier, data| {
-                    // Just count outputs instead of writing to disk
-                    output_counter += 1;
-                    hint_black_box(data);
-                    Ok(())
-                },
-            );
-            hint_black_box(result.unwrap());
-            hint_black_box(output_counter);
-        })
-    });
+    // group.bench_function("precise", |b| {
+    //     b.iter(|| {
+    //         let mut output_counter = 0;
+    //         let result = emit::emit_modules(
+    //             black_box(&info),
+    //             false,
+    //             black_box(&split_program_info),
+    //             black_box(&wbg_fns),
+    //             true,
+    //             None,
+    //             Default::default(),
+    //             |_identifier, data| {
+    //                 // Just count outputs instead of writing to disk
+    //                 output_counter += 1;
+    //                 hint_black_box(data);
+    //                 Ok(())
+    //             },
+    //         );
+    //         hint_black_box(result.unwrap());
+    //         hint_black_box(output_counter);
+    //     })
+    // });
 }
 
 fn benchmark_full_split_pipeline(c: &mut Criterion) {
-    let lazy_routes_wasm = load_lazy_routes_wasm();
     c.bench_function("full_split_lazy_routes", |b| {
+        let lazy_routes_wasm = load_lazy_routes_wasm();
         b.iter(|| {
             // Use the CLI API with dry_run to avoid file I/O
             let result = wamex_cli::split_inner(
@@ -190,24 +187,37 @@ fn benchmark_full_split_pipeline(c: &mut Criterion) {
             hint_black_box(result.unwrap());
         })
     });
+    c.bench_function("full_roundtrip", |b| {
+        let lazy_routes_wasm = load_lazy_routes_wasm();
+        b.iter(|| {
+            let result = wamex_cli::split_inner(
+                black_box(&lazy_routes_wasm),
+                false,
+                true,
+                SplitPointExtractor::Wamex, // HACK: Because original file was produced using Legacy extractor, this effectively does roundtrip (but without writing to a file)
+                |_, _| Ok(()),
+            );
+            hint_black_box(result.unwrap());
+        })
+    });
 }
 
 fn benchmark_incremental_split_pipeline(c: &mut Criterion) {
-    let src_wasm = load_lazy_routes_diff_wasm(false);
-    let mut state = wamex_cli::IncrementalSplitState::new();
-    let _result = state
-        .split_incremental(
-            black_box(&src_wasm),
-            false,
-            true,
-            SplitPointExtractor::Wamex,
-            |_, _| Ok(()),
-        )
-        .unwrap();
-    let src_state = state.clone();
-
-    let changed_wasm = load_lazy_routes_diff_wasm(true);
     c.bench_function("incremental_split_lazy_routes_second_run", |b| {
+        let src_wasm = load_lazy_routes_diff_wasm(false);
+
+        let changed_wasm = load_lazy_routes_diff_wasm(true);
+        let mut state = wamex_cli::IncrementalSplitState::new();
+        let _result = state
+            .split_incremental(
+                black_box(&src_wasm),
+                false,
+                true,
+                SplitPointExtractor::Wamex,
+                |_, _| Ok(()),
+            )
+            .unwrap();
+        let src_state = state.clone();
         b.iter_custom(|iters| {
             let mut total_duration = std::time::Duration::ZERO;
             assert!(!src_state.is_empty());
@@ -234,8 +244,8 @@ fn benchmark_incremental_split_pipeline(c: &mut Criterion) {
 }
 
 fn benchmark_memory_usage_patterns(c: &mut Criterion<MemUsage>) {
-    let lazy_routes_wasm = load_lazy_routes_wasm();
     c.bench_function("memory_usage_full_pipeline", |b| {
+        let lazy_routes_wasm = load_lazy_routes_wasm();
         b.iter_custom(|iters| {
             let mut accumulated_mem_usage = 0;
 

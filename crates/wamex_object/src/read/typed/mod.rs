@@ -6,7 +6,7 @@
 //! 2.
 //!
 
-use std::{cmp::Ordering, fmt::Debug, ops::Range, vec};
+use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug, ops::Range, vec};
 
 use anyhow::{Context, Result, bail};
 use cranelift_entity::EntityRef;
@@ -20,13 +20,14 @@ use crate::{
         self,
         raw::{DefinedFuncId, ElementId, FuncTypeId, ImportId},
     },
-    symbols::Symbols,
+    symbols::{SymbolId, Symbols},
 };
 
 pub mod data;
 pub mod elements;
 mod entities;
 mod imports;
+
 /// Partially parsed wasm object.
 /// It expects that module has valid structure and contains additional custom sections:
 /// - name section with function and global names
@@ -51,6 +52,7 @@ pub struct InputObject<'src> {
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
     pub data: IdVec<data::RawDataChunk<'src>>,
+    pub data_symbols: BTreeMap<SymbolId, data::DataSymbolRef>,
 }
 
 impl<'src> InputObject<'src> {
@@ -181,6 +183,10 @@ impl<'src> InputObject<'src> {
 
             sliced_chunks
         };
+        let data_symbols = data
+            .iter()
+            .map(|(id, chunk)| (chunk.symbol_index, id))
+            .collect::<BTreeMap<SymbolId, data::DataSymbolRef>>();
 
         Ok(InputObject {
             wasm_reader: module,
@@ -188,6 +194,7 @@ impl<'src> InputObject<'src> {
 
             indirect_function_table,
             data,
+            data_symbols,
 
             functions,
             tables,

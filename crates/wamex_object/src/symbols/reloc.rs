@@ -99,15 +99,15 @@ pub struct TypeRelocationEntry {
 
 ///
 /// Implementation of relocation entry type defined in linker symbols table.
-/// Generic index is used because type relocations has no `SymbolId`
+/// Generic index type allows to split resolution of symbol index to typed entity id from the relocation application.
 ///
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct RelocationEntry {
+pub struct RelocationEntry<Index = SymbolId> {
     /// Optional addend to be added to the resulting value.
     pub addend: i64,
     /// Index of symbol in `Symbols` table that store information about relocated symbol.
     /// This is generic due to fact that type relocations has no `SymbolId`
-    pub symbol_id: SymbolId,
+    pub symbol_id: Index,
     /// Offset in bytes from the start of the symbol definition
     /// targeted by this relocation.
     pub offset: u32,
@@ -122,7 +122,7 @@ pub struct RelocationEntry {
     pub width: RelocationWidth,
 }
 
-impl RelocationEntry {
+impl<Index> RelocationEntry<Index> {
     pub fn relocation_range(&self) -> std::ops::Range<usize> {
         let start = self.offset as usize;
         let len = self.extent();
@@ -152,6 +152,8 @@ pub enum SymbolType {
     SectionOffset,
     EventIndex,
     MemoryAddrLocrel,
+    // Not supported in `AnyRelocationEntry::Linkage` because type is not placed as symbol in symbols table.
+    TypeIndex,
 }
 
 // == Extra typed indexes ==
