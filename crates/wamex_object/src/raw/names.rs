@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     index::{GappedMap, NonDefault},
-    read::typed::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef},
+    typed::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef},
 };
 
 type Str<'a> = NonDefault<&'a str>;

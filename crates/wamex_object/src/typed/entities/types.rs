@@ -6,8 +6,8 @@ use wasmparser::TypeRef;
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
-    read::{FuncTypeId, common_index::ErasedEntityRef},
-    symbols::reloc::RelocationEntry,
+    linkage::reloc::RelocationEntry,
+    typed::{FnTypeRef, common_index::ErasedEntityRef},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -29,7 +29,7 @@ pub struct DefinedEntity<'src, Type> {
     pub body: EntityDefinition<'src>,
 }
 
-pub type ImportedFunction<'a> = ImportedEntity<'a, FuncTypeId>;
+pub type ImportedFunction<'a> = ImportedEntity<'a, FnTypeRef>;
 pub type ImportedTable<'a> = ImportedEntity<'a, wasmparser::TableType>;
 pub type ImportedMemory<'a> = ImportedEntity<'a, wasmparser::MemoryType>;
 pub type ImportedGlobal<'a> = ImportedEntity<'a, wasmparser::GlobalType>;
@@ -48,7 +48,7 @@ struct Rewrite {
 /// For tables/memories/globals/tags it's the initializers.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EntityDefinition<'src> {
-    // Copy of original entity with patches.
+    // Copy of original entity with optilan applied patches.
     Copied {
         body: &'src [u8],
         patches: Vec<Rewrite>,
@@ -73,7 +73,7 @@ pub enum EntityDefinition<'src> {
 // }
 
 pub fn read_imports<'a>(
-    reader: &crate::read::raw::ObjectReader<'a>,
+    reader: &crate::raw::ObjectReader<'a>,
 ) -> crate::Result<(
     Vec<ImportedFunction<'a>>,
     Vec<ImportedTable<'a>>,
@@ -92,7 +92,7 @@ pub fn read_imports<'a>(
                 imported_funcs.push(ImportedFunction {
                     module: import.module.into(),
                     name: import.name.into(),
-                    entity_type: FuncTypeId::from_u32(num),
+                    entity_type: FnTypeRef::from_u32(num),
                 });
             }
             TypeRef::Table(ref table_type) => {
@@ -135,7 +135,7 @@ pub fn read_imports<'a>(
 }
 
 pub fn read_exports<'a>(
-    reader: &crate::read::raw::ObjectReader<'a>,
+    reader: &crate::raw::ObjectReader<'a>,
 ) -> crate::Result<(
     Vec<ExportEntry<'a, FunctionRef>>,
     Vec<ExportEntry<'a, TableRef>>,

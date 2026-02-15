@@ -9,12 +9,14 @@ pub mod index;
 
 // pub mod emit;
 pub mod helpers;
-pub mod read;
-pub mod symbols;
+pub mod raw;
+// pub mod symbols;
+pub mod linkage;
+pub mod typed;
 
 pub use anyhow::Result;
 // pub use emit::split::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
-pub use read::{Module, ObjectReader};
+pub use raw::ObjectReader;
 // pub use symbols::Symbols;
 // pub use symbols::StaticModuleInfo;
 

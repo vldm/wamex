@@ -2,7 +2,7 @@ use anyhow::{Result, bail, ensure};
 pub use wasmparser::FunctionBody;
 
 use super::{Ind, indexes::FuncTypeId};
-use crate::{index::IdVec, read::FunctionRef};
+use crate::{index::IdVec, typed::FunctionRef};
 
 #[derive(Debug)]
 pub enum InputFunction<'a> {

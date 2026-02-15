@@ -626,6 +626,10 @@ impl<Ref, I, D> CompoundList<Ref, I, D, Finished>
 where
     Ref: TempIndex,
 {
+    // Convert temporary index to stable index.
+    pub fn stable_id(&self, idx: Temp<Ref>) -> Ref {
+        idx.to_stable(self.imports.len())
+    }
     /// Returns iterator over imported entities.
     /// The returned iterator yields pairs of (compound index, import reference).
     pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &I)> {

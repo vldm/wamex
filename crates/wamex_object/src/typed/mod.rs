@@ -1,65 +1,60 @@
 //!
-//! Wasm high-level API for simplification of structured reading.
+//! Wasm module high-level API for simplification of structured reading.
 //! The root is `InputObject` struct which gives access to wasm entities in structured way.
 //!
 //! 1. `ElementTable` provides a way to access wasm table with elements corresponding to this table.
 //! 2.
 //!
 
-use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug, ops::Range, vec};
+use std::fmt::Debug;
 
-use anyhow::{Context, Result, bail};
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
+use anyhow::{Result, bail};
+use cranelift_entity::EntityRef;
 pub use entities::*;
 use log::warn;
-use wasmparser::{ElementItems, SymbolInfo, TypeRef};
+use wasmparser::{ElementItems, TableType, TypeRef};
 
 use crate::{
-    index::{Building, CompoundList, Finished, GappedMap, IdVec, ImportOrDefined, NonDefault},
-    read::{
-        self,
-        common_index::{AnyEntityRef, EntitiesSnapshot, TaggedEntityRef},
-        raw::{DefinedFuncId, ElementId, FuncTypeId, ImportId},
-        typed::{
-            data::DataSymbolRef,
-            name_resolver::{LinkageInfo, Relocations},
-        },
+    index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, NonDefault},
+    linkage::{
+        LinkageInfo,
+        file_db::{self, FileRelocs},
     },
-    symbols::SymbolId,
+    raw::{self, DefinedFuncId, ElementId, FuncTypeId, ImportId},
+    typed::common_index::EntitiesSnapshot,
 };
 
 pub mod common_index;
 pub mod data;
 pub mod elements;
 mod entities;
-mod name_resolver;
-
-type Bytes = Vec<u8>;
-
 impl_entity_index! {
     pub struct FileId;
+
+    #[display = ""] // Basic symbol no need prefix for display
+    pub struct SymbolId; //(for<'a> SymbolRecord<'a>);
 }
 
 //
 // Wasm module + extra information required for applying relocations of symbols from this module.
 //
 struct LinkingFile<'src> {
-    wasm_reader: read::ObjectReader<'src>,
-    pub file_symbol_db: name_resolver::FileSymbolDb,
-    pub relocs: Relocations,
+    wasm_reader: raw::ObjectReader<'src>,
+    pub file_symbol_db: file_db::FileSymbolDb,
+    pub relocs: FileRelocs,
     pub module: Module<'src>,
 }
 
 impl<'src> LinkingFile<'src> {
     pub fn from_wasm_bytes(wasm_bytes: &'src [u8]) -> Result<Self> {
-        let reader = read::ObjectReader::parse(&wasm_bytes)?;
+        let reader = raw::ObjectReader::parse(&wasm_bytes)?;
         Self::from_raw_module(reader)
     }
-    pub fn from_raw_module(reader: read::ObjectReader<'src>) -> Result<Self> {
+    pub fn from_raw_module(reader: raw::ObjectReader<'src>) -> Result<Self> {
         let (module, file_symbol_db) = Module::from_raw_module(&reader)?;
         let file_relocs = LinkageInfo::collect_ordered_relocs(&reader);
         let owners = LinkageInfo::build_owners(&module, EntitiesSnapshot::new(&module));
-        let relocs = Relocations::build_relocs(file_relocs, &file_symbol_db, owners)?;
+        let relocs = FileRelocs::build_relocs(file_relocs, &file_symbol_db, owners)?;
 
         Ok(Self {
             wasm_reader: reader,
@@ -100,8 +95,8 @@ pub struct Module<'src, BuilderState = Finished> {
 
 impl<'src> Module<'src> {
     pub fn from_raw_module(
-        reader: &read::ObjectReader<'src>,
-    ) -> Result<(Self, name_resolver::FileSymbolDb)> {
+        reader: &raw::ObjectReader<'src>,
+    ) -> Result<(Self, file_db::FileSymbolDb)> {
         //TODO: Maybe we should use `IdMap` here?
         let mut imported_funcs: Vec<ImportId> = Vec::new();
         let mut imported_globals: Vec<ImportId> = Vec::new();
@@ -342,14 +337,41 @@ impl<'src> Module<'src> {
 
 impl<'src> Module<'src, Building> {
     pub fn new() -> Self {
+        let mut tables = entities::Tables::new();
+        let _table_ref = tables.items.push_defined(raw::Table {
+            ty: TableType {
+                table64: false,
+                shared: false,
+                initial: 0,
+                maximum: None,
+                element_type: wasmparser::RefType::FUNCREF,
+            },
+            // initialized using element segments later aka <indirect_function_table>
+            init: wasmparser::TableInit::RefNull,
+        });
+
         Module {
             functions: entities::Functions::new(),
-            tables: entities::Tables::new(),
             memories: entities::Memories::new(),
             globals: entities::Globals::new(),
             tags: entities::Tags::new(),
             data: IdVec::new(),
+            tables,
+            // TODO: When building IndirectFunctionTable we need Temp<TableRef> instead of TableRef.
             indirect_function_table: elements::IndirectFunctionTable::new(TableRef::from_u32(0)),
+        }
+    }
+
+    /// Finalize building module, converting all entities to finished state and making them ready for use.
+    pub fn into_finished(self) -> Module<'src, Finished> {
+        Module {
+            functions: self.functions.into_finished(),
+            tables: self.tables.into_finished(),
+            memories: self.memories.into_finished(),
+            globals: self.globals.into_finished(),
+            tags: self.tags.into_finished(),
+            data: self.data,
+            indirect_function_table: self.indirect_function_table,
         }
     }
 }

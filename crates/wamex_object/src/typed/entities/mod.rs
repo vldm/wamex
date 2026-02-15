@@ -1,4 +1,4 @@
-use crate::index::TempIndex;
+use crate::{index::TempIndex, raw};
 
 mod collections;
 mod types;
@@ -18,6 +18,7 @@ impl_entity_index! {
     #[display = "tag"]
     pub struct TagRef;
 }
+pub type FnTypeRef = raw::FuncTypeId;
 
 impl TempIndex for FunctionRef {
     fn as_u32(&self) -> u32 {

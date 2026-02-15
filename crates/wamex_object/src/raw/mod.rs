@@ -1,3 +1,5 @@
+//! A thin layer over wasmparser that provide array like access to wasm file sections.
+
 use std::fmt::Debug;
 
 use anyhow::{Result, anyhow, bail};
@@ -7,8 +9,10 @@ use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, Payload};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use super::typed::FunctionRef;
-use crate::index::{IdVec, IndexedSection};
+use crate::{
+    index::{IdVec, IndexedSection},
+    typed::FunctionRef,
+};
 
 pub mod code;
 pub mod data;

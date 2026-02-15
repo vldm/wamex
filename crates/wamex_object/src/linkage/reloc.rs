@@ -31,9 +31,9 @@
 use std::{fmt::Debug, hash::Hash};
 
 use crate::{
+    helpers::RangeExt,
     index::SectionId,
-    read::{FuncTypeId, FunctionRef},
-    symbols::SymbolId,
+    typed::{FnTypeRef, FunctionRef, SymbolId},
 };
 
 /// Lossless representation of `wasmparser::RelocationEntry` with type-safe disamiguation of symbol types.
@@ -90,7 +90,7 @@ impl AnyRelocationEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct TypeRelocationEntry {
     pub offset: u32,
-    pub index: FuncTypeId,
+    pub index: FnTypeRef,
     // pub addend: i64, // not applicable for type relocations
     // pub relation: Relative, // not applicable for type relocations
     // pub encoding: Encoding, // leb
@@ -99,7 +99,10 @@ pub struct TypeRelocationEntry {
 
 ///
 /// Implementation of relocation entry type defined in linker symbols table.
-/// Generic index type allows to split resolution of symbol index to typed entity id from the relocation application.
+/// Generic Index allows to map SymbolId to EntityId and
+/// decompose work with relocation into two parts:
+/// - resolution of symbol index to typed entity_id
+/// - application of symbol offset.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct RelocationEntry<Index = SymbolId> {
@@ -251,7 +254,7 @@ impl AnyRelocationEntry {
             TypeIndexLeb => {
                 return AnyRelocationEntry::Type(TypeRelocationEntry {
                     offset: entry.offset - symbol_start,
-                    index: FuncTypeId::from_u32(entry.index),
+                    index: FnTypeRef::from_u32(entry.index),
                 });
             }
             EventIndexLeb => SymbolType::EventIndex,
@@ -314,6 +317,35 @@ impl AnyRelocationEntry {
             encoding,
             width,
         })
+    }
+}
+
+impl RangeExt for AnyRelocationEntry {
+    fn shift_left(&self, offset: usize) -> Self {
+        let mut modified = *self;
+        let new_offset = self.offset().checked_sub(offset as u32).unwrap();
+        modified.set_offset(new_offset);
+        modified
+    }
+
+    fn shift_right(&self, offset: usize) -> Self {
+        let mut modified = *self;
+        let new_offset = modified.offset() + offset as u32;
+        modified.set_offset(new_offset);
+        modified
+    }
+}
+
+impl<Any: Clone> RangeExt for RelocationEntry<Any> {
+    fn shift_left(&self, offset: usize) -> Self {
+        let mut modified = self.clone();
+        modified.offset = modified.offset.checked_sub(offset as u32).unwrap();
+        modified
+    }
+    fn shift_right(&self, offset: usize) -> Self {
+        let mut modified = self.clone();
+        modified.offset += offset as u32;
+        modified
     }
 }
 

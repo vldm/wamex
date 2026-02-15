@@ -5,8 +5,6 @@ use std::{
     ops::{Add, Range, Sub},
 };
 
-use crate::symbols::reloc::{AnyRelocationEntry, RelocationEntry};
-
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord, Hash)]
 pub enum RangeComp {
     // This range is fully left to Other range.
@@ -95,35 +93,6 @@ impl RangeExt for Range<usize> {
             start: self.start + offset,
             end: self.end + offset,
         }
-    }
-}
-
-impl RangeExt for AnyRelocationEntry {
-    fn shift_left(&self, offset: usize) -> Self {
-        let mut modified = *self;
-        let new_offset = self.offset().checked_sub(offset as u32).unwrap();
-        modified.set_offset(new_offset);
-        modified
-    }
-
-    fn shift_right(&self, offset: usize) -> Self {
-        let mut modified = *self;
-        let new_offset = modified.offset() + offset as u32;
-        modified.set_offset(new_offset);
-        modified
-    }
-}
-
-impl<Any: Clone> RangeExt for RelocationEntry<Any> {
-    fn shift_left(&self, offset: usize) -> Self {
-        let mut modified = self.clone();
-        modified.offset = modified.offset.checked_sub(offset as u32).unwrap();
-        modified
-    }
-    fn shift_right(&self, offset: usize) -> Self {
-        let mut modified = self.clone();
-        modified.offset += offset as u32;
-        modified
     }
 }
 

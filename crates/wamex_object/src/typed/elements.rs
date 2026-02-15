@@ -4,12 +4,10 @@ use wasmparser::ElementKind;
 
 use super::{ElementId, ElementItems, Result};
 use crate::{
-    Module, SVec,
+    SVec,
     index::GappedMap,
-    read::{
-        FunctionRef, TableRef,
-        raw::{self},
-    },
+    raw,
+    typed::{FunctionRef, Module, TableRef},
 };
 
 impl_entity_index! {
@@ -17,6 +15,7 @@ impl_entity_index! {
     pub struct ElementItemId;
 }
 pub trait ElementType<'a> {
+    // Provides a hint for the number of items in the element segment, allowing to pre-allocate the map capacity.
     fn hint_size(items: &ElementItems<'a>) -> Option<u32>;
     fn for_item(
         items: ElementItems<'a>,

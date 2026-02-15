@@ -26,11 +26,6 @@
 // // mod diff;
 pub mod reloc;
 
-impl_entity_index! {
-    #[display = ""] // Basic symbol no need prefix for display
-    pub struct SymbolId; //(for<'a> SymbolRecord<'a>);
-}
-
 // #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 // pub enum SymbolKind {
 //     Func {

@@ -9,18 +9,19 @@ use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 use wasmparser::{DataKind, SymbolFlags};
 
 use crate::{
-    Module, ObjectReader, Result,
+    ObjectReader, Result,
     helpers::{RangeComp, RangeExt, cmp_range},
     index::{GappedMap, IdVec, NonDefault},
-    read::{
-        DataSegmentId,
-        typed::name_resolver::{FileSymbolDb, Relocations},
+    linkage::{
+        file_db::{FileRelocs, FileSymbolDb},
+        reloc::AnyRelocationEntry,
     },
-    symbols::{SymbolId, reloc::AnyRelocationEntry},
+    raw::DataSegmentId,
+    typed::{Module, SymbolId},
 };
 
 #[derive(Debug)]
-pub(crate) struct DataDefined {
+pub struct DataDefined {
     pub segment_id: DataSegmentId,
     // Range of bytes in data segment related to this symbol
     pub range: Range<u32>,
@@ -59,14 +60,6 @@ impl DataLocation {
             DataKind::Passive => Ok(DataLocation::Passive),
         }
     }
-}
-
-type Str<'a> = Cow<'a, str>;
-
-struct RelocRef<'a> {
-    // Symbol start
-    start: usize,
-    pub relocations: &'a [AnyRelocationEntry],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

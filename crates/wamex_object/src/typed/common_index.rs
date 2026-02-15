@@ -1,8 +1,5 @@
-use cranelift_entity::packed_option::ReservedValue;
-
-use crate::{
-    Module,
-    read::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef, typed::data::DataSymbolRef},
+use crate::typed::{
+    FunctionRef, GlobalRef, MemoryRef, Module, TableRef, TagRef, data::DataSymbolRef,
 };
 
 impl_entity_index! {
