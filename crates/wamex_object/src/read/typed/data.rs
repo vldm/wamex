@@ -9,12 +9,30 @@ use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 use wasmparser::{DataKind, SymbolFlags};
 
 use crate::{
-    InputObject, ObjectReader, Result,
-    helpers::{RangeComp, RangeExt},
-    index::{IdVec, NonDefault},
-    read::DataSegmentId,
-    symbols::{SymbolId, SymbolKind, reloc::AnyRelocationEntry},
+    Module, ObjectReader, Result,
+    helpers::{RangeComp, RangeExt, cmp_range},
+    index::{GappedMap, IdVec, NonDefault},
+    read::{
+        DataSegmentId,
+        typed::name_resolver::{FileSymbolDb, Relocations},
+    },
+    symbols::{SymbolId, reloc::AnyRelocationEntry},
 };
+
+#[derive(Debug)]
+pub(crate) struct DataDefined {
+    pub segment_id: DataSegmentId,
+    // Range of bytes in data segment related to this symbol
+    pub range: Range<u32>,
+}
+impl From<&wasmparser::DefinedDataSymbol> for DataDefined {
+    fn from(value: &wasmparser::DefinedDataSymbol) -> Self {
+        Self {
+            segment_id: DataSegmentId::from_u32(value.index),
+            range: value.offset..(value.offset + value.size),
+        }
+    }
+}
 
 /// Memory location of data chunk
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -32,7 +50,7 @@ impl DataLocation {
                 offset_expr,
                 memory_index: _,
             } => {
-                let offset = InputObject::read_const_expr(&offset_expr)?;
+                let offset = Module::read_const_expr(&offset_expr)?;
                 offset
                     .try_into()
                     .map(DataLocation::ActiveOffset)
@@ -45,75 +63,47 @@ impl DataLocation {
 
 type Str<'a> = Cow<'a, str>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DataChunk<'a, D: 'a> {
-    pub segment_id: DataSegmentId,
+struct RelocRef<'a> {
+    // Symbol start
+    start: usize,
+    pub relocations: &'a [AnyRelocationEntry],
+}
 
-    pub name: Str<'a>,
-    pub flags: SymbolFlags,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataChunk<D> {
+    /// offset of this chunk in wasm file
+    pub original_offset: usize,
     pub data: D,
-    // offset related to this symbol
-    pub relocations: Vec<AnyRelocationEntry>,
-    // associated symbol index
-    // Can be `reserved_value` if created from data segment without symbol info
-    pub symbol_index: SymbolId,
     pub pow2align: u8,
 }
 
-pub type RawDataChunk<'a> = DataChunk<'a, &'a [u8]>;
+pub type RawDataChunk<'a> = DataChunk<&'a [u8]>;
 
 /// Describes how a data symbol relates to its neighboring symbols within a segment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SymbolRelation<'a> {
     /// A standalone symbol with no binding constraints.
-    Regular { bytes: &'a [u8] },
+    Regular {
+        bytes: &'a [u8],
+        symbol_id: SymbolId,
+    },
 
     /// A symbol that must stay adjacent to the previous symbol
     /// and cannot be moved or removed independently.
     BoundToPrevious {
         /// offset from start of previous regular symbol
-        offset: usize,
+        offset: u32,
+        symbol_id: SymbolId,
     },
 }
 
 impl<'a> RawDataChunk<'a> {
-    /// Builds data chunks from data segments defined in the module.
-    pub fn build_segments_reader(reader: &ObjectReader<'a>) -> Result<IdVec<RawDataChunk<'a>>> {
-        let res = reader
-            .data
-            .data_segments
-            .iter()
-            .map(|(id, _)| Self::from_segment(reader, id));
-
-        Ok(res.collect::<Result<IdVec<RawDataChunk<'a>>>>()?)
-    }
-
-    /// Creates a `RawDataChunk` from a data segment in the module.
-    pub fn from_segment(reader: &ObjectReader<'a>, segment_id: DataSegmentId) -> Result<Self> {
-        let segment = reader
-            .data
-            .data_segments
-            .get(segment_id)
-            .ok_or_else(|| anyhow::anyhow!("Data segment ID {segment_id} not found"))?;
-        let info = reader
-            .linking
-            .segments_info
-            .get(segment_id.index())
-            .ok_or_else(|| {
-                anyhow::anyhow!("Linking segment info for data segment ID {segment_id} not found")
-            })?;
-        let name = info.name;
-        Ok(Self {
-            segment_id,
-            data: segment.data.into(),
-            flags: SymbolFlags::empty(),
-            pow2align: info.alignment.try_into().map_err(|_| {
-                anyhow::anyhow!("Data segment alignment {} is too large", info.alignment)
-            })?,
-            relocations: Vec::new(),
-            name: name.into(),
-            symbol_index: SymbolId::reserved_value(),
-        })
+    pub fn from_segment(segment_data: &'a [u8], pow2align: u8, original_offset: usize) -> Self {
+        Self {
+            data: segment_data,
+            pow2align,
+            original_offset,
+        }
     }
     /// Extracts data chunks defined in linking table as separate symbol.
     ///
@@ -122,88 +112,100 @@ impl<'a> RawDataChunk<'a> {
     /// Returns list of data chunks sliced from segment.
     /// Some returned chunks can be marked as `BoundToPrevious` if they offset overlaps with previous symbol.
     /// To filter these symbols use `filter_bound_symbols` method.
-    pub fn slice_segment(
+    pub fn slice_segment<'o>(
         self,
-        symbol_table: &crate::symbols::Symbols<'a>,
-    ) -> IdVec<DataChunk<'a, SymbolRelation<'a>>> {
-        let segment_align = 1 << self.pow2align;
+        // Iterator over defined data symbols in this segment
+        // symbol_id is used for debugging and later cleanup of bound symbols
+        defined_data_symbols: impl IntoIterator<Item = (SymbolId, &'o DataDefined)>,
+    ) -> IdVec<DataChunk<SymbolRelation<'a>>> {
+        let pow2align = self.pow2align;
+        let segment_align = 1 << pow2align;
 
+        #[cfg(debug_assertions)]
+        let mut segment_id = None;
+
+        let mut original_offset = self.original_offset;
         let mut data_parts = IdVec::new();
         let mut last_regular = 0..0;
-        for (sym_id, sym) in symbol_table.iter_data_symbols_for_segment(self.segment_id) {
-            let SymbolKind::DataDefined { offset, length, .. } = &sym.kind else {
-                unreachable!("Expected DataDefined symbol kind for data segment symbol");
-            };
+        for (symbol_id, d) in defined_data_symbols.into_iter() {
+            #[cfg(debug_assertions)]
+            {
+                if let Some(id) = segment_id {
+                    assert_eq!(
+                        id, d.segment_id,
+                        "All data symbols should belong to the same segment"
+                    );
+                } else {
+                    segment_id = Some(d.segment_id);
+                }
+            }
 
-            let symbol_in_data = offset.clone()..(offset + length);
-            let field_alignment =
-                Self::data_symbol_alignment(self.pow2align.into(), symbol_in_data.clone());
+            let symbol_in_data = d.range.clone();
+            let field_alignment = Self::data_symbol_alignment(pow2align, symbol_in_data.clone());
 
             let relation = if last_regular.end > symbol_in_data.start {
                 log::warn!(
                     "DataSymbol intersects with previous, this is currently in testing: {:?} range:{:?} prev_range: {:?}",
-                    sym,
+                    d,
                     symbol_in_data,
                     last_regular
                 );
                 // Don't allow intersecting ranges
                 assert!(matches!(
-                    last_regular.cmp_range(&symbol_in_data),
+                    cmp_range(&last_regular, &symbol_in_data),
                     RangeComp::Overlap | RangeComp::Equal
                 ));
                 let offset = symbol_in_data.start - last_regular.start;
-                SymbolRelation::BoundToPrevious { offset }
+                SymbolRelation::BoundToPrevious { offset, symbol_id }
             } else {
                 if last_regular.end < symbol_in_data.start {
                     let gap_range = last_regular.end..symbol_in_data.start;
 
                     if gap_range.len() >= segment_align {
                         log::error!(
-                            "Data segment has gap larger than segment alignment: {:?} > {} before {}",
+                            "Data segment has gap larger than segment alignment: {:?} > {}",
                             gap_range,
                             segment_align,
-                            sym.debug_name
                         );
                     } else {
                         // debug alignment
                         log::trace!(
-                            "Data segment has gap: {:?} ({} bytes) before {}",
+                            "Data segment has gap: {:?} ({} bytes) ",
                             gap_range,
                             gap_range.len(),
-                            sym.debug_name
                         );
                     }
                 }
                 log::trace!(
-                    "Data symbol {}: offset: {}, size: {}, alignment: {}",
-                    sym.debug_name,
+                    "Data symbol: offset: {}, size: {}, alignment: {}",
                     symbol_in_data.start,
                     symbol_in_data.len(),
                     field_alignment
                 );
                 last_regular = symbol_in_data.clone();
                 SymbolRelation::Regular {
-                    bytes: self.data.get(symbol_in_data.clone()).unwrap(),
+                    bytes: self
+                        .data
+                        .get(symbol_in_data.start as usize..symbol_in_data.end as usize)
+                        .unwrap(),
+                    symbol_id,
                 }
             };
 
             let part = DataChunk {
-                segment_id: self.segment_id,
                 pow2align: field_alignment,
-                name: sym.debug_name.clone(),
-                flags: sym.flags,
-                relocations: sym.relocs.clone(),
-                symbol_index: sym_id,
                 data: relation,
+                original_offset,
             };
             log::trace!("Data part: {part:?}");
             data_parts.push(part);
+            original_offset += symbol_in_data.len();
         }
 
         data_parts
     }
 
-    fn data_symbol_alignment(segment_alignment: u8, chunk_range: Range<usize>) -> u8 {
+    fn data_symbol_alignment(pow2align: u8, chunk_range: Range<u32>) -> u8 {
         let start_align = chunk_range
             .start
             .trailing_zeros()
@@ -211,37 +213,33 @@ impl<'a> RawDataChunk<'a> {
             .unwrap_or(u8::MAX);
 
         // Can't exceed the segment's alignment
-        segment_alignment.min(start_align)
+        pow2align.min(start_align)
     }
 }
 
-impl<'a> DataChunk<'a, SymbolRelation<'a>> {
+impl<'a> DataChunk<SymbolRelation<'a>> {
     /// Removes bound symbols from the list, calling cleanup handler for each removed symbol.
     fn filter_bounds_with_cleanup(
         this: IdVec<Self>,
         // external cleanup handler
         // return map of RemovedSymbol to -> (BoundSymbol, offset_within_symbol)
         mut cleanup_symbol: impl FnMut(SymbolId, (SymbolId, u32)),
-    ) -> IdVec<DataChunk<'a, &'a [u8]>> {
+    ) -> IdVec<DataChunk<&'a [u8]>> {
         let mut result = IdVec::new();
         let mut last_regular_data = (&[] as &[u8], SymbolId::reserved_value());
         for (_, chunk) in this.into_inner().into_iter() {
             match chunk.data {
-                SymbolRelation::Regular { bytes } => {
-                    last_regular_data = (bytes, chunk.symbol_index);
+                SymbolRelation::Regular { bytes, symbol_id } => {
+                    last_regular_data = (bytes, symbol_id);
                     result.push(DataChunk {
-                        segment_id: chunk.segment_id,
-                        name: chunk.name.clone(),
-                        flags: chunk.flags,
                         data: bytes,
-                        relocations: chunk.relocations.clone(),
-                        symbol_index: chunk.symbol_index,
                         pow2align: chunk.pow2align,
+                        original_offset: chunk.original_offset,
                     });
                 }
-                SymbolRelation::BoundToPrevious { offset } => {
+                SymbolRelation::BoundToPrevious { offset, symbol_id } => {
                     let prev_symbol = last_regular_data.1;
-                    cleanup_symbol(prev_symbol, (chunk.symbol_index, offset as u32));
+                    cleanup_symbol(prev_symbol, (symbol_id, offset as u32));
                     // added as part of previous symbol, so skip
                     continue;
                 }
@@ -250,32 +248,19 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
         result
     }
 
-
-    // Looks similar to dedup in symbols table
-    // TODO: unify logic?
+    /// Removes bound symbols from the list, updating symbol table accordingly.
     pub fn filter_bounds_in_table(
         this: IdVec<Self>,
-        table: &mut crate::symbols::Symbols<'a>,
-    ) -> IdVec<DataChunk<'a, &'a [u8]>> {
-        let mut to_be_removed = BTreeSet::new();
+        table: &mut FileSymbolDb,
+    ) -> IdVec<DataChunk<&'a [u8]>> {
         Self::filter_bounds_with_cleanup(this, |real_id, (removed, offset)| {
-            // replace usage of this symbol
-            table.replace_usage(removed, real_id, offset.into());
-            // take relocations of this symbol
-            let sym_record = table.get_mut(removed).expect("Symbol must exist");
-            let mut relocs = std::mem::take(&mut sym_record.relocs);
-            // modify their offsets
-            for reloc in &mut relocs {
-                *reloc = reloc.shift_right(offset as usize);
-            }
+            // Replace entity_ref in table.
+            let mut new_entry = table.symbols[real_id].clone();
 
-            // Add relocs to real symbol
-            let real_sym = table.get_mut(real_id).expect("Symbol must exist");
-            real_sym.relocs.extend(relocs);
-            // order relocs by offset
-            real_sym.relocs.sort_by_key(|r| r.offset());
+            assert!(new_entry.offset_in_entity == 0, "should be regular symbol");
+            new_entry.offset_in_entity = offset;
 
-            to_be_removed.insert(removed);
+            table.symbols[removed] = new_entry;
         })
     }
 }
@@ -286,7 +271,7 @@ impl_entity_index! {
 }
 
 // impl generic over `D`
-impl<'lf, D> crate::index::PrimaryKey for DataChunk<'lf, D> {
+impl<D> crate::index::PrimaryKey for DataChunk<D> {
     type EntityRef = DataSymbolRef;
 }
 

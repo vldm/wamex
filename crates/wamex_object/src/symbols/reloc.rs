@@ -87,7 +87,7 @@ impl AnyRelocationEntry {
 }
 
 /// Implementation of relocation entry for function `type` index.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct TypeRelocationEntry {
     pub offset: u32,
     pub index: FuncTypeId,
@@ -101,7 +101,7 @@ pub struct TypeRelocationEntry {
 /// Implementation of relocation entry type defined in linker symbols table.
 /// Generic index type allows to split resolution of symbol index to typed entity id from the relocation application.
 ///
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct RelocationEntry<Index = SymbolId> {
     /// Optional addend to be added to the resulting value.
     pub addend: i64,
@@ -139,7 +139,7 @@ impl<Index> RelocationEntry<Index> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 /// Enumeration of all symbols that can be stored in `Symbols` table.
 pub enum SymbolType {
     MemoryAddr,
@@ -161,32 +161,32 @@ pub enum SymbolType {
 // therefore don't need actual fields, but if at any future development we would need some of this type - we will have them (but probably in other places).
 
 /// Wrapper around `FunctionRef`, that instead of giving function index - gives index function in `__indirect_function_table`
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct IndirectFunctionIndex(pub FunctionRef);
 
 /// Representation of wasm `event` index
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct EventIndex {
     pub index: u32,
 }
 
 /// Addr of Chunk in memory
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct MemoryAddr {
     pub mem_chunk_id: u32, // data chunk ref?
 }
 
 /// Addr of Chunk in segment?
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct MemoryAddrLoc(MemoryAddr);
 
 /// Place in function code
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct FunctionOffset {
     pub function: FunctionRef,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 #[repr(packed)] // always first element, so can be unaligned
 pub struct SectionOffset {
     pub section: SectionId,
@@ -196,13 +196,14 @@ pub struct SectionOffset {
 /// For functions/globals/events - addend is not applicable.
 /// For memory addresses and offsets - addend is either
 /// 32 or 64 bit integer that added to resulting address.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct Addend {
     pub value: i64,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum Encoding {
     // 4-byte little-endian integer
     // e.g. `uint32` or `int32`
@@ -217,7 +218,8 @@ pub enum Encoding {
 
 /// Base of addr/index is stored can be stored in global variable.
 /// This enum indicates which variable stores this base.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum Relative {
     /// Absolute address
     None,
@@ -227,7 +229,7 @@ pub enum Relative {
     Tls,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum RelocationWidth {
     Bits32,
     Bits64,

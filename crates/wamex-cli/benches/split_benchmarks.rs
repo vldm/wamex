@@ -12,7 +12,7 @@ use wamex_cli::{
     emit,
     read::ObjectReader,
 };
-use wamex_object::InputObject;
+use wamex_object::Module;
 
 fn load_lazy_routes_wasm() -> Vec<u8> {
     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
@@ -71,7 +71,7 @@ fn benchmark_parse_object_module(c: &mut Criterion) {
             for _ in 0..iters {
                 let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
                 let start = std::time::Instant::now();
-                let info = InputObject::from_raw_module(black_box(module)).unwrap();
+                let info = Module::from_raw_module(black_box(module)).unwrap();
                 hint_black_box(info);
                 total_duration += start.elapsed();
             }
@@ -84,7 +84,7 @@ fn benchmark_dependency_analysis(c: &mut Criterion) {
     c.bench_function("get_dependencies", |b| {
         let lazy_routes_wasm = load_lazy_routes_wasm();
         let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
-        let info = InputObject::from_raw_module(module).unwrap();
+        let info = Module::from_raw_module(module).unwrap();
         b.iter(|| {
             let dep_graph = analysis::dep_graph::get_dependencies(black_box(&info)).unwrap();
             hint_black_box(dep_graph);
@@ -96,7 +96,7 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
     c.bench_function("compute_split_modules", |b| {
         let lazy_routes_wasm = load_lazy_routes_wasm();
         let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
-        let info = InputObject::from_raw_module(module).unwrap();
+        let info = Module::from_raw_module(module).unwrap();
         let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
         let wbg_fns = split_point::wbg_closures(&info, &dep_graph);
         let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
@@ -118,7 +118,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
     group.bench_function("in_place", |b| {
         let lazy_routes_wasm = load_lazy_routes_wasm();
         let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
-        let info = InputObject::from_raw_module(module).unwrap();
+        let info = Module::from_raw_module(module).unwrap();
         let dep_graph = analysis::dep_graph::get_dependencies(&info).unwrap();
         let split_points = analysis::split_point::find_split_points_legacy(&info).unwrap();
         let wbg_fns = split_point::wbg_closures(&info, &dep_graph);

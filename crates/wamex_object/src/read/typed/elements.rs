@@ -4,7 +4,7 @@ use wasmparser::ElementKind;
 
 use super::{ElementId, ElementItems, Result};
 use crate::{
-    InputObject, SVec,
+    Module, SVec,
     index::GappedMap,
     read::{
         FunctionRef, TableRef,
@@ -104,7 +104,7 @@ impl<'a, T: ElementType<'a> + ReservedValue + Clone> ElementTable<T> {
             }
 
             // Multisegment support
-            let offset = InputObject::read_const_expr(offset_expr)
+            let offset = Module::read_const_expr(offset_expr)
                 .with_context(|| format!("Failed to read offset expression for element {id:?}"))?;
 
             ensure!(

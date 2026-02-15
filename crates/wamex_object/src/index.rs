@@ -26,9 +26,11 @@ pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::R
 macro_rules! impl_entity_index {
     ( $(
         $(#[display = $display:literal])?
+        $(#[doc = $doc:literal])*
         $visability:vis struct $entity:ident $(($( $type:tt)*))?
     );* $(;)? ) => {$(
 
+        $(#[doc = $doc])*
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[repr(transparent)]
         $visability struct $entity(u32);
@@ -242,6 +244,9 @@ impl<T: PrimaryKey> IdVec<T> {
     pub fn into_inner(self) -> PrimaryMap<T::EntityRef, T> {
         self.0
     }
+    pub fn into_iter(self) -> impl Iterator<Item = (T::EntityRef, T)> {
+        self.0.into_iter()
+    }
 }
 
 impl<T> Deref for IdVec<T>
@@ -430,6 +435,250 @@ impl<T: Debug> Debug for NonDefault<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.value, f)
     }
+}
+pub trait TempIndex: EntityRef {
+    fn from_u32(value: u32) -> Self;
+    fn as_u32(&self) -> u32;
+}
+/// Temporary index type that gives packed representation of import|defined index.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Temp<Idx: TempIndex>(u32, std::marker::PhantomData<Idx>);
+impl<Idx: TempIndex> Temp<Idx> {
+    const DEFINED_FLAG: u32 = 1 << 31;
+    const MAX_VALUE: u32 = Self::DEFINED_FLAG - 1;
+
+    pub fn from_import(index: usize) -> Self {
+        debug_assert!(index <= (Self::MAX_VALUE as usize));
+        Self(index as u32, std::marker::PhantomData)
+    }
+    pub fn from_defined(index: usize) -> Self {
+        debug_assert!(index <= (Self::MAX_VALUE as usize));
+        Self(
+            (index as u32) | Self::DEFINED_FLAG,
+            std::marker::PhantomData,
+        )
+    }
+
+    #[inline]
+    pub fn as_import(&self) -> Option<Idx> {
+        if (self.0 & Self::DEFINED_FLAG) == 0 {
+            Some(Idx::from_u32(self.0))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn as_defined(&self) -> Option<Idx> {
+        if (self.0 & Self::DEFINED_FLAG) != 0 {
+            Some(Idx::from_u32(self.0 & !Self::DEFINED_FLAG))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn to_stable(self, num_imports: usize) -> Idx {
+        if (self.0 & Self::DEFINED_FLAG) != 0 {
+            let defined_index = (self.0 & !Self::DEFINED_FLAG) as usize;
+            Idx::from_u32((num_imports + defined_index) as u32)
+        } else {
+            Idx::from_u32(self.0)
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Finished {}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+
+pub enum Building {}
+///
+/// One place for storing imports and defined entities.
+///
+/// It can have two states:
+/// - `Building` - allows adding new entities, and returns temporary `Temp<Ref>` index.
+/// - `Finished` - works with fixed structure, and returns/receives stable `Ref` index.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CompoundList<Ref, I, D, Builder = Finished> {
+    pub imports: Vec<I>,
+    pub defined: Vec<D>,
+    _pd: std::marker::PhantomData<Ref>,
+    _state: std::marker::PhantomData<Builder>,
+}
+
+impl<Ref, I, D> CompoundList<Ref, I, D, Building> {
+    pub fn empty() -> Self {
+        Self {
+            imports: Vec::new(),
+            defined: Vec::new(),
+            _pd: std::marker::PhantomData,
+            _state: std::marker::PhantomData,
+        }
+    }
+
+    pub fn new(imports: Vec<I>, defined: Vec<D>) -> Self {
+        Self {
+            imports,
+            defined,
+            _pd: std::marker::PhantomData,
+            _state: std::marker::PhantomData,
+        }
+    }
+
+    pub fn imports_slice(&self) -> &[I] {
+        self.imports.as_slice()
+    }
+    pub fn defined_slice(&self) -> &[D] {
+        self.defined.as_slice()
+    }
+    pub fn into_finished(self) -> CompoundList<Ref, I, D, Finished> {
+        CompoundList {
+            imports: self.imports,
+            defined: self.defined,
+            _pd: std::marker::PhantomData,
+            _state: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<Ref, I, D> CompoundList<Ref, I, D, Building>
+where
+    Ref: TempIndex,
+{
+    /// Pushes new imported entity and returns its compound index.
+    /// This is differ from `push_defined`, since later index is "shifted" by imports count.
+    pub fn push_import(&mut self, import: I) -> Temp<Ref> {
+        self.imports.push(import);
+        Temp::from_import(self.imports.len() - 1)
+    }
+
+    /// Pushes new defined entity and returns its "defined" index.
+    /// This defined index can be converted to compound by calling `get_compound_index`.
+    pub fn push_defined(&mut self, defined: D) -> Temp<Ref> {
+        self.defined.push(defined);
+        Temp::from_defined(self.defined.len() - 1)
+    }
+
+    /// Returns iterator over imported entities.
+    /// The returned iterator yields pairs of (compound index, import reference).
+    pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Temp<Ref>, &I)> {
+        self.imports
+            .iter()
+            .enumerate()
+            // import index is same as compound
+            .map(|(import_id, import)| (Temp::from_import(import_id), import))
+    }
+
+    /// Returns iterator over defined entities.
+    /// The returned iterator yields pairs of (compound index, defined reference).
+    pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Temp<Ref>, &D)> {
+        self.defined
+            .iter()
+            .enumerate()
+            .map(move |(defined_id, defined)| {
+                (
+                    // defined index is shifted by imports count
+                    Temp::from_defined(defined_id),
+                    defined,
+                )
+            })
+    }
+
+    /// Returns iterator over all entities, both imported and defined.
+    /// The returned iterator yields pairs of (compound index, entity reference).
+    /// Entity reference is wrapped in `ImportOrDefined` enum.
+    pub fn iter(&self) -> impl Iterator<Item = (Temp<Ref>, ImportOrDefined<&I, &D>)> {
+        let imports = self
+            .imports_iter()
+            .map(|(id, import)| (id, ImportOrDefined::Import(import)));
+        let defined = self
+            .defined_iter()
+            .map(|(id, defined)| (id, ImportOrDefined::Defined(defined)));
+        imports.chain(defined)
+    }
+
+    /// Returns imported entity by index, if index is in imports range.
+    /// For import by import index use `imports` field directly.
+    pub fn get_import(&self, idx: Temp<Ref>) -> Option<&I> {
+        let import_idx = idx.as_import()?;
+        Some(&self.imports[import_idx.index()])
+    }
+
+    /// Returns defined entity by index, if index is in defined range.
+    /// For import by defined index use `defined` field directly.
+    pub fn get_defined(&self, idx: Temp<Ref>) -> Option<&D> {
+        let defined_idx = idx.as_defined()?;
+        Some(&self.defined[defined_idx.index()])
+    }
+
+    /// Returns either imported or defined entity by compound index.
+    pub fn get_entity(&self, idx: Temp<Ref>) -> ImportOrDefined<&I, &D> {
+        if idx.0 & Temp::<Ref>::DEFINED_FLAG == 0 {
+            let import_id = idx.0 as usize;
+            ImportOrDefined::Import(&self.imports[import_id])
+        } else {
+            let defined_id = (idx.0 & !Temp::<Ref>::DEFINED_FLAG) as usize;
+            ImportOrDefined::Defined(&self.defined[defined_id])
+        }
+    }
+}
+impl<Ref, I, D> CompoundList<Ref, I, D, Finished>
+where
+    Ref: TempIndex,
+{
+    /// Returns iterator over imported entities.
+    /// The returned iterator yields pairs of (compound index, import reference).
+    pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &I)> {
+        self.imports
+            .iter()
+            .enumerate()
+            // import index is same as compound
+            .map(|(import_id, import)| (Ref::new(import_id), import))
+    }
+
+    /// Returns iterator over defined entities.
+    /// The returned iterator yields pairs of (compound index, defined reference).
+    pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &D)> {
+        self.defined
+            .iter()
+            .enumerate()
+            .map(move |(defined_id, defined)| {
+                (
+                    // defined index is shifted by imports count
+                    Ref::new(defined_id + self.imports.len()),
+                    defined,
+                )
+            })
+    }
+
+    /// Returns iterator over all entities, both imported and defined.
+    /// The returned iterator yields pairs of (compound index, entity reference).
+    /// Entity reference is wrapped in `ImportOrDefined` enum.
+    pub fn iter(&self) -> impl Iterator<Item = (Ref, ImportOrDefined<&I, &D>)> {
+        let imports = self
+            .imports_iter()
+            .map(|(id, import)| (id, ImportOrDefined::Import(import)));
+        let defined = self
+            .defined_iter()
+            .map(|(id, defined)| (id, ImportOrDefined::Defined(defined)));
+        imports.chain(defined)
+    }
+    /// Same as get_entry but using stable index, for cases where CompoundList will not change in size.
+    pub fn get_entity(&self, stable_index: Ref) -> ImportOrDefined<&I, &D> {
+        let num_imports = self.imports.len();
+        if stable_index.index() < num_imports {
+            ImportOrDefined::Import(&self.imports[stable_index.index()])
+        } else {
+            ImportOrDefined::Defined(&self.defined[stable_index.index() - num_imports])
+        }
+    }
+}
+
+/// Either imported or defined entity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum ImportOrDefined<Import, Defined> {
+    Import(Import),
+    Defined(Defined),
 }
 
 #[cfg(test)]

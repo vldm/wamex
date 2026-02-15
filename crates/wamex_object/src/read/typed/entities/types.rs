@@ -1,20 +1,13 @@
-//!
-//! Imports for wasm entities.
-//!
-//! as bonus it contains export entries representation =)
-//!
-
 use std::borrow::Cow;
 
 use cranelift_entity::EntityRef;
 use wasmparser::TypeRef;
 
+use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
-    index::IdVec,
-    read::{
-        FuncTypeId,
-        typed::entities::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef},
-    },
+    SVec,
+    read::{FuncTypeId, common_index::ErasedEntityRef},
+    symbols::reloc::RelocationEntry,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -24,106 +17,110 @@ pub struct ExportEntry<'a, IDX: EntityRef> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct ImportedFunction<'a> {
-    pub module_name: Cow<'a, str>,
-    pub func_name: Cow<'a, str>,
-    pub type_id: FuncTypeId,
+pub struct ImportedEntity<'a, Type> {
+    pub module: Cow<'a, str>,
+    pub name: Cow<'a, str>,
+    pub entity_type: Type,
 }
 
-// No Ord in wasmparser::TableType
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ImportedTable<'a> {
-    pub module_name: Cow<'a, str>,
-    pub table_name: Cow<'a, str>,
-    pub table_type: wasmparser::TableType,
+pub struct DefinedEntity<'src, Type> {
+    pub entity_type: Type,
+    pub body: EntityDefinition<'src>,
 }
 
-// No Ord in wasmparser::GlobalType
+pub type ImportedFunction<'a> = ImportedEntity<'a, FuncTypeId>;
+pub type ImportedTable<'a> = ImportedEntity<'a, wasmparser::TableType>;
+pub type ImportedMemory<'a> = ImportedEntity<'a, wasmparser::MemoryType>;
+pub type ImportedGlobal<'a> = ImportedEntity<'a, wasmparser::GlobalType>;
+pub type ImportedTag<'a> = ImportedEntity<'a, wasmparser::TagType>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ImportedMemory<'a> {
-    pub module_name: Cow<'a, str>,
-    pub memory_name: Cow<'a, str>,
-    pub memory_type: wasmparser::MemoryType,
+struct Rewrite {
+    pub old_range: std::ops::Range<usize>,
+    // TODO: Maybe put in common pool?
+    pub new_relocs: SVec<RelocationEntry<ErasedEntityRef>, 2>,
+    pub new_bytes: SVec<u8, 16>,
 }
 
-// No Ord in wasmparser::GlobalType
+/// Body of a defined entity
+/// For functions it's locals + instructions.
+/// For tables/memories/globals/tags it's the initializers.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ImportedGlobal<'a> {
-    pub module_name: Cow<'a, str>,
-    pub global_name: Cow<'a, str>,
-    pub global_type: wasmparser::GlobalType,
+pub enum EntityDefinition<'src> {
+    // Copy of original entity with patches.
+    Copied {
+        body: &'src [u8],
+        patches: Vec<Rewrite>,
+        // TODO: Consider using &[..] with bitmask to indicate which relocations should be ignored.
+        original_relocs: Vec<RelocationEntry<ErasedEntityRef>>,
+    },
+    // IndirectTrampoline to import | or regular Trampoline
+    New {
+        // just one big patch that generates the entire function body.
+        body: Rewrite,
+    },
 }
 
-// No Ord and Hash in wasmparser::TagType
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ImportedTag<'a> {
-    pub module_name: Cow<'a, str>,
-    pub tag_name: Cow<'a, str>,
-    pub tag_type: wasmparser::TagType,
-}
-
-impl_entity_index! {
-    #[display = "if"]
-    pub struct ImportedFuncId(for<'a> ImportedFunction<'a>);
-    #[display = "it"]
-    pub struct ImportedTableId(for<'a> ImportedTable<'a>);
-    #[display = "im"]
-    pub struct ImportedMemoryId(for<'a> ImportedMemory<'a>);
-    #[display = "ig"]
-    pub struct ImportedGlobalId(for<'a> ImportedGlobal<'a>);
-    #[display = "it"]
-    pub struct ImportedTagId(for<'a> ImportedTag<'a>);
-}
+// impl DefinedFunction {
+//     pub fn generate_function(
+//         &self,
+//         function_type_id: FuncTypeId,
+//         section: &mut wasm_encoder::CodeSection,
+//     ) -> crate::Result<()> {
+//         todo!()
+//     }
+// }
 
 pub fn read_imports<'a>(
     reader: &crate::read::raw::ObjectReader<'a>,
 ) -> crate::Result<(
-    IdVec<ImportedFunction<'a>>,
-    IdVec<ImportedTable<'a>>,
-    IdVec<ImportedMemory<'a>>,
-    IdVec<ImportedGlobal<'a>>,
-    IdVec<ImportedTag<'a>>,
+    Vec<ImportedFunction<'a>>,
+    Vec<ImportedTable<'a>>,
+    Vec<ImportedMemory<'a>>,
+    Vec<ImportedGlobal<'a>>,
+    Vec<ImportedTag<'a>>,
 )> {
-    let mut imported_funcs: IdVec<ImportedFunction<'a>> = IdVec::new();
-    let mut imported_tables: IdVec<ImportedTable<'a>> = IdVec::new();
-    let mut imported_memories: IdVec<ImportedMemory<'a>> = IdVec::new();
-    let mut imported_globals: IdVec<ImportedGlobal<'a>> = IdVec::new();
-    let mut imported_tags: IdVec<ImportedTag<'a>> = IdVec::new();
+    let mut imported_funcs: Vec<ImportedFunction<'a>> = Vec::new();
+    let mut imported_tables: Vec<ImportedTable<'a>> = Vec::new();
+    let mut imported_memories: Vec<ImportedMemory<'a>> = Vec::new();
+    let mut imported_globals: Vec<ImportedGlobal<'a>> = Vec::new();
+    let mut imported_tags: Vec<ImportedTag<'a>> = Vec::new();
     for (_import_id, import) in reader.imports.iter() {
         match import.ty {
             TypeRef::Func(num) => {
                 imported_funcs.push(ImportedFunction {
-                    module_name: import.module.into(),
-                    func_name: import.name.into(),
-                    type_id: FuncTypeId::from_u32(num),
+                    module: import.module.into(),
+                    name: import.name.into(),
+                    entity_type: FuncTypeId::from_u32(num),
                 });
             }
             TypeRef::Table(ref table_type) => {
                 imported_tables.push(ImportedTable {
-                    module_name: import.module.into(),
-                    table_name: import.name.into(),
-                    table_type: table_type.clone(),
+                    module: import.module.into(),
+                    name: import.name.into(),
+                    entity_type: table_type.clone(),
                 });
             }
             TypeRef::Memory(ref memory_type) => {
                 imported_memories.push(ImportedMemory {
-                    module_name: import.module.into(),
-                    memory_name: import.name.into(),
-                    memory_type: memory_type.clone(),
+                    module: import.module.into(),
+                    name: import.name.into(),
+                    entity_type: memory_type.clone(),
                 });
             }
             TypeRef::Global(ref global_type) => {
                 imported_globals.push(ImportedGlobal {
-                    module_name: import.module.into(),
-                    global_name: import.name.into(),
-                    global_type: global_type.clone(),
+                    module: import.module.into(),
+                    name: import.name.into(),
+                    entity_type: global_type.clone(),
                 });
             }
             TypeRef::Tag(ref tag_type) => {
                 imported_tags.push(ImportedTag {
-                    module_name: import.module.into(),
-                    tag_name: import.name.into(),
-                    tag_type: tag_type.clone(),
+                    module: import.module.into(),
+                    name: import.name.into(),
+                    entity_type: tag_type.clone(),
                 });
             }
         }
@@ -192,4 +189,14 @@ pub fn read_exports<'a>(
         global_exports,
         tag_exports,
     ))
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn size_of_defined_entity_body() {
+        use super::{EntityDefinition, Rewrite};
+        // assert_eq!(std::mem::size_of::<Rewrite>(), 48);
+        assert_eq!(std::mem::size_of::<EntityDefinition>(), 48);
+    }
 }

@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Result;
-use wamex_object::{InputObject, index::SecondaryMap};
+use wamex_object::{Module, index::SecondaryMap};
 use wamex_types::{BumpVersion, ModuleId, map_vec::MiniSet};
 
 use crate::{
@@ -63,7 +63,7 @@ impl IncrementalSplitState {
     ) -> Result<SplitResult> {
         // 1. Analyze new module.
         let module = crate::ObjectReader::parse(input_wasm)?;
-        let info = InputObject::from_raw_module(module)?;
+        let info = Module::from_raw_module(module)?;
         let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
         let split_points = analysis::split_point::find_split_points(&info, split_point_extractor)?;
         let wbg_closures = analysis::split_point::wbg_closures(&info, &dep_graph);
@@ -342,7 +342,7 @@ impl StructureDiffResult {
         old_module_structure: &[(SplitModuleIdentifier, OutputModuleInfo)],
         old_module_info: &StaticModuleInfo,
         new_module_structure: &[(SplitModuleIdentifier, OutputModuleInfo)],
-        new_module_info: &InputObject<'_>,
+        new_module_info: &Module<'_>,
     ) -> Self {
         let old_entrypoits = Self::entrypoint_list(old_module_structure);
         let new_entrypoints = Self::entrypoint_list(new_module_structure);

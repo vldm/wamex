@@ -1,4 +1,4 @@
-use wamex_object::InputObject;
+use wamex_object::Module;
 
 use crate::{
     analysis::{
@@ -10,7 +10,7 @@ use crate::{
 
 pub(crate) fn print_deps_inner(
     module_name: &str,
-    info: &InputObject,
+    info: &Module,
     reachable: &DepSet,
     graph: &DepGraph,
 ) {
@@ -89,7 +89,7 @@ pub(crate) fn print_deps_inner(
 }
 
 /// Format a DepGraph into a human-readable string for snapshot testing
-pub fn format_dep_graph(graph: &DepGraph, info: &InputObject) -> String {
+pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
     use std::fmt::Write;
 
     let mut output = String::new();
@@ -146,7 +146,7 @@ pub fn format_dep_graph(graph: &DepGraph, info: &InputObject) -> String {
 /// Format a SplitProgramInfo into a human-readable string for snapshot testing
 pub fn format_split_program_info(
     split_info: &wamex_object::emit::split::SplitProgramInfo,
-    info: &InputObject,
+    info: &Module,
 ) -> String {
     use std::fmt::Write;
 
@@ -212,7 +212,7 @@ pub fn format_split_program_info(
 }
 
 /// Format a SymbolMap into a human-readable string for snapshot testing
-pub fn format_symbol_map(info: &InputObject) -> String {
+pub fn format_symbol_map(info: &Module) -> String {
     use std::fmt::Write;
 
     let mut output = String::new();

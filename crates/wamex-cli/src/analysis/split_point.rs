@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Context;
 use wamex_object::{
-    InputObject,
+    Module,
     emit::split::{
         ModuleIdentifier, OutputModuleInfo, SharedModuleIdentifier, SplitModuleIdentifier,
         SplitPoint, SplitProgramInfo,
@@ -49,10 +49,7 @@ where
 pub(crate) const SPLIT_IMPORT_POSTFIX: &str = "00_import_";
 pub(crate) const SPLIT_EXPORT_POSTFIX: &str = "00_export_";
 
-fn find_split_points_with_prefix(
-    info: &InputObject,
-    prefix: &str,
-) -> anyhow::Result<Vec<SplitPoint>> {
+fn find_split_points_with_prefix(info: &Module, prefix: &str) -> anyhow::Result<Vec<SplitPoint>> {
     let import_map = parse_entries(
         prefix,
         SPLIT_IMPORT_POSTFIX,
@@ -90,18 +87,18 @@ fn find_split_points_with_prefix(
     Ok(split_points)
 }
 
-pub fn find_split_points_legacy(info: &InputObject) -> anyhow::Result<Vec<SplitPoint>> {
+pub fn find_split_points_legacy(info: &Module) -> anyhow::Result<Vec<SplitPoint>> {
     find_split_points_with_prefix(info, "__wasm_split_00")
 }
 
 pub(crate) const WAMEX_ENTRY_PREFIX: &str = "__wamex_00";
 
-fn find_split_points_wamex(info: &InputObject) -> anyhow::Result<Vec<SplitPoint>> {
+fn find_split_points_wamex(info: &Module) -> anyhow::Result<Vec<SplitPoint>> {
     find_split_points_with_prefix(info, WAMEX_ENTRY_PREFIX)
 }
 
 pub fn find_split_points(
-    info: &InputObject,
+    info: &Module,
     split_point_type: SplitPointExtractor,
 ) -> anyhow::Result<Vec<SplitPoint>> {
     match split_point_type {
@@ -116,7 +113,7 @@ fn is_wasm_bindgen_cast(name: &str) -> bool {
         || name == "__wbindgen_describe"
 }
 
-pub fn wbg_closures(module: &InputObject, graph: &DepGraph) -> MiniSet<SymbolId> {
+pub fn wbg_closures(module: &Module, graph: &DepGraph) -> MiniSet<SymbolId> {
     let mut wbg_closures = std::collections::BTreeSet::new();
 
     let mut wbg_all = std::collections::BTreeSet::new();
@@ -165,7 +162,7 @@ pub fn merge_split_points_by_name(
 }
 
 pub fn main_roots(
-    info: &InputObject,
+    info: &Module,
     split_points: &[SplitPoint],
     wbg_descriptors: &MiniSet<SymbolId>,
 ) -> DepSet {
@@ -227,7 +224,7 @@ pub fn main_roots(
 }
 
 pub fn compute_split_modules(
-    info: &InputObject,
+    info: &Module,
     dep_graph: &DepGraph,
     split_points: &[SplitPoint],
     wbg_descriptors: &MiniSet<SymbolId>,
@@ -352,7 +349,7 @@ mod tests {
     }
 
     fn test_snapshot_split_structure_for_file(name: &str, wasm_bytes: &[u8]) {
-        let info = InputObject::from_wasm_bytes(wasm_bytes).expect("Failed to parse wasm file");
+        let info = Module::from_wasm_bytes(wasm_bytes).expect("Failed to parse wasm file");
 
         // Snapshot the symbol map
         let symbol_map_output = super::super::debug::format_symbol_map(&info);

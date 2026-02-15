@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use wamex_object::InputObject;
+use wamex_object::Module;
 
 use crate::emit::CommonEmitInfo;
 
@@ -127,7 +127,7 @@ pub fn main(args: Cli) -> Result<()> {
 pub fn roundtrip(args: Roundtrip) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
     let module = ObjectReader::parse(&input_wasm)?;
-    let info = InputObject::from_raw_module(module)?;
+    let info = Module::from_raw_module(module)?;
     let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
 
     let split_program_info =
@@ -259,8 +259,8 @@ pub fn diff(args: Diff) -> Result<()> {
     let right = std::fs::read(&args.right)?;
     let left_module = ObjectReader::parse(&left)?;
     let right_module = ObjectReader::parse(&right)?;
-    let left_module_info = InputObject::from_raw_module(left_module)?;
-    let right_module_info = InputObject::from_raw_module(right_module)?;
+    let left_module_info = Module::from_raw_module(left_module)?;
+    let right_module_info = Module::from_raw_module(right_module)?;
 
     let diff = diff::Compare::new(&left_module_info, &right_module_info, args.structural);
     diff.print_diff()?;
@@ -271,7 +271,7 @@ pub fn diff(args: Diff) -> Result<()> {
 pub fn debug(args: Debug) -> Result<()> {
     let input = std::fs::read(&args.input)?;
     let module = ObjectReader::parse(&input)?;
-    let info = InputObject::from_raw_module(module)?;
+    let info = Module::from_raw_module(module)?;
 
     let program_info = SplitProgramInfo::default();
     // verbose flag will print debug info as side effect.

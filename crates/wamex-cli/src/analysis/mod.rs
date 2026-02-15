@@ -1,5 +1,5 @@
 pub use wamex_object::{
-    InputObject,
+    Module,
     symbols::{StaticModuleInfo, Symbols},
 };
 

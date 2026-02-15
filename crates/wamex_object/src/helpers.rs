@@ -37,6 +37,35 @@ impl RangeComp {
     }
 }
 
+/// Compares two ranges and returns their relationship.
+///
+/// Precedence/order of checks:
+/// 1. If self starts at or after other's end, self is fully to the right.
+/// 2. If self ends at or before other's start, self is fully to the left.
+/// 3. If self fully contains other (starts before or at other's start and ends after or at other's end), it's Overlap Or Equal.
+/// 4. Otherwise, ranges partially intersect (NonComparable).
+pub fn cmp_range<V>(some: &Range<V>, other: impl Borrow<Range<V>>) -> RangeComp
+where
+    V: Ord,
+{
+    let other = other.borrow();
+    {
+        if some.start == other.start && some.end == other.end {
+            RangeComp::Equal
+        } else if some.start <= other.start && some.end >= other.end {
+            RangeComp::Overlap
+        } else if some.start >= other.start && some.end <= other.end {
+            RangeComp::Within
+        } else if some.start >= other.end {
+            RangeComp::Right
+        } else if some.end <= other.start {
+            RangeComp::Left
+        } else {
+            RangeComp::NonComparable
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub trait RangeExt {
     fn shift_left(&self, offset: usize) -> Self;
@@ -51,7 +80,6 @@ pub trait RangeExt {
             self.shift_left((-offset) as usize)
         }
     }
-    fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp;
 }
 
 impl RangeExt for Range<usize> {
@@ -66,32 +94,6 @@ impl RangeExt for Range<usize> {
         Range {
             start: self.start + offset,
             end: self.end + offset,
-        }
-    }
-
-    /// Compares two ranges and returns their relationship.
-    ///
-    /// Precedence/order of checks:
-    /// 1. If self starts at or after other's end, self is fully to the right.
-    /// 2. If self ends at or before other's start, self is fully to the left.
-    /// 3. If self fully contains other (starts before or at other's start and ends after or at other's end), it's Overlap Or Equal.
-    /// 4. Otherwise, ranges partially intersect (NonComparable).
-    fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp {
-        let other = other.borrow();
-        {
-            if self.start == other.start && self.end == other.end {
-                RangeComp::Equal
-            } else if self.start <= other.start && self.end >= other.end {
-                RangeComp::Overlap
-            } else if self.start >= other.start && self.end <= other.end {
-                RangeComp::Within
-            } else if self.start >= other.end {
-                RangeComp::Right
-            } else if self.end <= other.start {
-                RangeComp::Left
-            } else {
-                RangeComp::NonComparable
-            }
         }
     }
 }
@@ -110,10 +112,6 @@ impl RangeExt for AnyRelocationEntry {
         modified.set_offset(new_offset);
         modified
     }
-
-    fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp {
-        self.relocation_range().cmp_range(other)
-    }
 }
 
 impl<Any: Clone> RangeExt for RelocationEntry<Any> {
@@ -126,9 +124,6 @@ impl<Any: Clone> RangeExt for RelocationEntry<Any> {
         let mut modified = self.clone();
         modified.offset += offset as u32;
         modified
-    }
-    fn cmp_range(&self, other: impl Borrow<Range<usize>>) -> RangeComp {
-        self.relocation_range().cmp_range(other)
     }
 }
 
@@ -468,6 +463,7 @@ where
 mod tests {
 
     use super::{RangeExt, ShiftMap, ShiftPoint};
+    use crate::helpers::cmp_range;
     #[test]
     fn test_shift_range() {
         let range = 10..20;
@@ -479,19 +475,19 @@ mod tests {
     fn test_cmp_range() {
         let range1 = 10..20;
 
-        assert_eq!(range1.cmp_range(0..5), super::RangeComp::Right);
-        assert_eq!(range1.cmp_range(0..10), super::RangeComp::Right);
-        assert_eq!(range1.cmp_range(0..11), super::RangeComp::NonComparable);
-        assert_eq!(range1.cmp_range(5..15), super::RangeComp::NonComparable);
-        assert_eq!(range1.cmp_range(10..11), super::RangeComp::Overlap);
-        assert_eq!(range1.cmp_range(10..20), super::RangeComp::Equal);
-        assert_eq!(range1.cmp_range(15..20), super::RangeComp::Overlap);
-        assert_eq!(range1.cmp_range(19..20), super::RangeComp::Overlap);
-        assert_eq!(range1.cmp_range(15..25), super::RangeComp::NonComparable);
-        assert_eq!(range1.cmp_range(20..35), super::RangeComp::Left);
-        assert_eq!(range1.cmp_range(25..35), super::RangeComp::Left);
+        assert_eq!(cmp_range(&range1, 0..5), super::RangeComp::Right);
+        assert_eq!(cmp_range(&range1, 0..10), super::RangeComp::Right);
+        assert_eq!(cmp_range(&range1, 0..11), super::RangeComp::NonComparable);
+        assert_eq!(cmp_range(&range1, 5..15), super::RangeComp::NonComparable);
+        assert_eq!(cmp_range(&range1, 10..11), super::RangeComp::Overlap);
+        assert_eq!(cmp_range(&range1, 10..20), super::RangeComp::Equal);
+        assert_eq!(cmp_range(&range1, 15..20), super::RangeComp::Overlap);
+        assert_eq!(cmp_range(&range1, 19..20), super::RangeComp::Overlap);
+        assert_eq!(cmp_range(&range1, 15..25), super::RangeComp::NonComparable);
+        assert_eq!(cmp_range(&range1, 20..35), super::RangeComp::Left);
+        assert_eq!(cmp_range(&range1, 25..35), super::RangeComp::Left);
 
-        assert_eq!(range1.cmp_range(2..40), super::RangeComp::Within);
+        assert_eq!(cmp_range(&range1, 2..40), super::RangeComp::Within);
     }
 
     #[test]
@@ -499,7 +495,7 @@ mod tests {
         let range = 8916..8917;
         let other = 8916..8916;
 
-        assert_eq!(range.cmp_range(other), super::RangeComp::Overlap);
+        assert_eq!(cmp_range(&range, other), super::RangeComp::Overlap);
     }
 
     #[test]
@@ -507,50 +503,50 @@ mod tests {
         let range = 10..20;
 
         assert_eq!(
-            range.cmp_range(0..5).as_partial_ordering(),
+            cmp_range(&range, 0..5).as_partial_ordering(),
             Some(std::cmp::Ordering::Greater)
         );
         assert_eq!(
-            range.cmp_range(0..10).as_partial_ordering(),
+            cmp_range(&range, 0..10).as_partial_ordering(),
             Some(std::cmp::Ordering::Greater)
         );
-        assert_eq!(range.cmp_range(0..11).as_partial_ordering(), None);
-        assert_eq!(range.cmp_range(5..15).as_partial_ordering(), None);
+        assert_eq!(cmp_range(&range, 0..11).as_partial_ordering(), None);
+        assert_eq!(cmp_range(&range, 5..15).as_partial_ordering(), None);
         assert_eq!(
-            range.cmp_range(10..22).as_partial_ordering(),
+            cmp_range(&range, 10..22).as_partial_ordering(),
             Some(std::cmp::Ordering::Greater)
         );
         assert_eq!(
-            range.cmp_range(10..11).as_partial_ordering(),
+            cmp_range(&range, 10..11).as_partial_ordering(),
             Some(std::cmp::Ordering::Less)
         );
         assert_eq!(
-            range.cmp_range(15..17).as_partial_ordering(),
+            cmp_range(&range, 15..17).as_partial_ordering(),
             Some(std::cmp::Ordering::Less)
         );
         assert_eq!(
-            range.cmp_range(15..20).as_partial_ordering(),
+            cmp_range(&range, 15..20).as_partial_ordering(),
             Some(std::cmp::Ordering::Less)
         );
         assert_eq!(
-            range.cmp_range(10..20).as_partial_ordering(),
+            cmp_range(&range, 10..20).as_partial_ordering(),
             Some(std::cmp::Ordering::Equal)
         );
 
         assert_eq!(
-            range.cmp_range(20..21).as_partial_ordering(),
+            cmp_range(&range, 20..21).as_partial_ordering(),
             Some(std::cmp::Ordering::Less)
         );
 
         assert_eq!(
-            range.cmp_range(35..40).as_partial_ordering(),
+            cmp_range(&range, 35..40).as_partial_ordering(),
             Some(std::cmp::Ordering::Less)
         );
 
         let ranges = vec![0..5, 5..15, 6..11, 15..20, 20..35, 35..45];
         let mut res = ranges.clone();
         res.sort_by(|a, b| {
-            a.cmp_range(b)
+            cmp_range(a, b)
                 .as_partial_ordering()
                 .expect("Failed to compare ranges")
         });
