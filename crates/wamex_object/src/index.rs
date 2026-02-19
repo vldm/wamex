@@ -687,6 +687,21 @@ pub enum ImportOrDefined<Import, Defined> {
     Defined(Defined),
 }
 
+impl<Import, Defined> ImportOrDefined<Import, Defined> {
+    pub fn to_defined(self) -> Option<Defined> {
+        match self {
+            ImportOrDefined::Defined(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn to_imported(self) -> Option<Import> {
+        match self {
+            ImportOrDefined::Import(i) => Some(i),
+            _ => None,
+        }
+    }
+}
+
 impl<'any, ImportInner>
     ImportOrDefined<&'any ImportedEntity<'_, ImportInner>, &'any DefinedEntity<'_, ImportInner>>
 {

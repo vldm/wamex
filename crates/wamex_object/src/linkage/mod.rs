@@ -7,7 +7,7 @@ pub mod file_db;
 pub mod name_resolver;
 pub mod reloc;
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, ops::Range};
 
 use cranelift_entity::PrimaryMap;
 use file_db::FileSymbolDb;
@@ -149,41 +149,33 @@ impl LinkageInfo {
         }
 
         code.into_iter()
-            .map(|entry| AnyRelocationEntry::from_raw(*entry, 0)) // save original offset
-            .chain(
-                data.into_iter()
-                    .map(|entry| AnyRelocationEntry::from_raw(*entry, 0)),
-            )
+            .map(|entry| AnyRelocationEntry::from_raw(*entry, input.code.starting_offset as isize)) // save original offset
+            .chain(data.into_iter().map(|entry| {
+                AnyRelocationEntry::from_raw(*entry, input.data.starting_offset as isize)
+            }))
     }
 
-    // Returns pair of maps of relocation owners:
-    // - for each functions body
-    // - for each data chunks
-    pub fn build_owners(
+    /// Returns regions of code and data symbols in the original module:
+    /// - for each functions body
+    /// - for each data chunks
+    pub fn build_regions(
         input: &Module,
     ) -> (
-        GappedMap<FunctionRef, RelocRange>,
-        GappedMap<DataSymbolRef, RelocRange>,
+        Vec<(Range<usize>, FunctionRef)>,
+        Vec<(Range<usize>, DataSymbolRef)>,
     ) {
-        let mut code_owners = GappedMap::new();
-        let mut data_owners = GappedMap::new();
+        let mut code_owners = Vec::with_capacity(input.functions.items.defined.len());
+        let mut data_owners = Vec::with_capacity(input.data.len());
 
         for (func_ref, func) in input.functions.defined_iter() {
-            code_owners.insert(
-                func_ref,
-                RelocRange {
-                    relocs: func.original_range(),
-                },
-            );
+            code_owners.push((func.original_range(), func_ref));
         }
 
         for (data_ref, data) in input.data.iter() {
-            data_owners.insert(
+            data_owners.push((
+                data.original_offset..data.original_offset + data.data.len(),
                 data_ref,
-                RelocRange {
-                    relocs: data.original_offset..data.original_offset + data.data.len(),
-                },
-            );
+            ));
         }
 
         (code_owners, data_owners)

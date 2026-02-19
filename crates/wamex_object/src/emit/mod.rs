@@ -19,7 +19,29 @@ pub struct ModuleConfig {
 
 impl<'src> Module<'src> {
     pub fn generate(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
+        // self.generate_dylink0_section(output_module)?;
         let fn_type_map = self.generate_type_section(output_module)?;
+        // self.generate_import_section(computed_modules, output_module);
+        // self.generate_function_section(output_module);
+        // if self.is_main() {
+        //     // for submodules this is imported
+        //     self.generate_table_element_sections(output_module)?;
+        //     self.generate_memory_section(output_module);
+        // }
+        // self.generate_global_section(output_module)?;
+        // self.generate_export_section(output_module);
+        // self.generate_start_function_section(output_module)?;
+        // self.generate_element_section(output_module)?;
+
+        // let code_relocs =
+        //     self.generate_code_section(computed_modules, output_module, precise_modification)?;
+        // let data_relocs = self.generate_data_section(computed_modules, output_module)?;
+
+        // // self.generate_wasm_bindgen_sections(output_module);
+        // // Names + Linking + Relocations
+        // self.generate_compiler_tools_sections(output_module, code_relocs, data_relocs)?;
+        // self.generate_target_features_section(output_module)?;
+        // self.generate_custom_sections(output_module)?;
         todo!()
     }
     /// Generate type section, return map from FunctionId to type index.

@@ -20,7 +20,8 @@ use crate::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
-    raw::{self, DefinedFuncId, ElementId, FuncTypeId, ImportId},
+    raw::{self, DefinedFuncId, ElementId, ImportId},
+    typed::common_index::EntityKind,
 };
 
 pub mod common_index;
@@ -38,7 +39,7 @@ impl_entity_index! {
 //
 // Wasm module + extra information required for applying relocations of symbols from this module.
 //
-struct LinkingFile<'src> {
+pub struct LinkingFile<'src> {
     wasm_reader: raw::ObjectReader<'src>,
     pub file_symbol_db: file_db::FileSymbolDb,
     pub relocs: FileRelocs,
@@ -48,12 +49,13 @@ struct LinkingFile<'src> {
 impl<'src> LinkingFile<'src> {
     pub fn from_wasm_bytes(wasm_bytes: &'src [u8]) -> Result<Self> {
         let reader = raw::ObjectReader::parse(&wasm_bytes)?;
+
         Self::from_raw_module(reader)
     }
     pub fn from_raw_module(reader: raw::ObjectReader<'src>) -> Result<Self> {
         let (module, file_symbol_db) = Module::from_raw_module(&reader)?;
         let file_relocs = LinkageInfo::collect_ordered_relocs(&reader);
-        let owners = LinkageInfo::build_owners(&module);
+        let owners = LinkageInfo::build_regions(&module);
         let relocs = FileRelocs::build_relocs(file_relocs, &file_symbol_db, owners)?;
 
         Ok(Self {
@@ -228,8 +230,10 @@ impl<'src> Module<'src> {
                     .alignment
                     .try_into()
                     .unwrap();
+                // Range.start is point to <length> field of data segment.
+                let data_start = d.range.end - d.data.len();
                 let segment_chunk =
-                    data::RawDataChunk::from_segment(d.data, pow2align, d.range.start);
+                    data::RawDataChunk::from_segment(segment_id, d.data, pow2align, data_start);
 
                 if !slice_chunks {
                     warn!("Skipping data segment slicing - working with one chunk per segment");
@@ -301,6 +305,18 @@ impl<'src> Module<'src> {
             op => bail!("Expected End after I32.const: {:?}", op),
         }
         val
+    }
+    // Get entity name
+    pub fn get_name(&self, entity: EntityKind) -> Option<&str> {
+        match entity {
+            EntityKind::Function(func_id) => self.functions.names.get(func_id).map(|n| &n[..]),
+            EntityKind::Global(global_id) => self.globals.names.get(global_id).map(|n| &n[..]),
+            EntityKind::Table(table_id) => self.tables.names.get(table_id).map(|n| &n[..]),
+            EntityKind::Memory(mem_id) => self.memories.names.get(mem_id).map(|n| &n[..]),
+            EntityKind::Tag(tag_id) => self.tags.names.get(tag_id).map(|n| &n[..]),
+            EntityKind::Type(_) => None, // types don't have names in name section
+            EntityKind::DataSymbol(d) => None, // TODO: add names for data symbols
+        }
     }
     pub fn function_id_iter<'any>(
         &'any self,
@@ -407,7 +423,7 @@ mod tests {
     use wasmparser::FuncType;
 
     use super::{LinkingFile, Module};
-    use crate::{raw::FuncTypeId, typed::ImportedFunction};
+    use crate::typed::ImportedFunction;
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
     #[test]
@@ -432,8 +448,10 @@ mod tests {
             name: "bar".into(),
             entity_type: FuncType::new(None, None), // void type
         });
-        todo!();
-        // push_function();
-        // finalize();
+        let module = module.into_finished();
+
+        assert_eq!(module.functions.len(), 1);
+
+        todo!("Add data and defined function/global");
     }
 }

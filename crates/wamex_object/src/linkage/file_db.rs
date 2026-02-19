@@ -1,9 +1,10 @@
-use std::ops::Range;
+use std::{fmt::Debug, ops::Range};
 
 use anyhow::Result;
-use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 
 use crate::{
+    helpers::{RangeComp, cmp_range},
     index::GappedMap,
     linkage::reloc::{
         AnyRelocationEntry, Encoding, Relative, RelocationEntry, RelocationWidth, SymbolType,
@@ -49,13 +50,14 @@ pub struct FileRelocs {
 }
 
 impl FileRelocs {
-    // Resolve relocations symbols (to corresponding entities).
+    /// Resolve relocations symbols (to corresponding entities).
+    /// code_owners and data_owners should contain regions in original file that belongs to each symbol.
     pub fn build_relocs(
         file_relocs: impl IntoIterator<Item = AnyRelocationEntry>,
         file_db: &FileSymbolDb,
-        (code_owners, data_owners): (
-            GappedMap<FunctionRef, RelocRange>,
-            GappedMap<DataSymbolRef, RelocRange>,
+        regions: (
+            Vec<(Range<usize>, FunctionRef)>,
+            Vec<(Range<usize>, DataSymbolRef)>,
         ),
     ) -> Result<Self> {
         let mut array = file_relocs
@@ -96,11 +98,102 @@ impl FileRelocs {
 
         array.sort_by_key(|e| e.offset);
 
+        let (code_owners, data_owners) = Self::build_owners(&array, regions);
         Ok(Self {
             array,
             code_owners,
             data_owners,
         })
+    }
+
+    // Convert region based ranges to ranges in relocs array.
+    fn build_owners(
+        relocs: &[RelocationEntry<ErasedEntityRef>],
+        (mut code_regions, mut data_regions): (
+            Vec<(Range<usize>, FunctionRef)>,
+            Vec<(Range<usize>, DataSymbolRef)>,
+        ),
+    ) -> (
+        GappedMap<FunctionRef, RelocRange>,
+        GappedMap<DataSymbolRef, RelocRange>,
+    ) {
+        /// Move relocations from flat list to symbols.
+        ///
+        fn move_relocs<'a, U: EntityRef + Debug>(
+            map: &mut GappedMap<U, RelocRange>,
+            symbol_regions: impl IntoIterator<Item = (Range<usize>, U)>,
+            start: &mut usize,
+            relocs: &[RelocationEntry<ErasedEntityRef>],
+        ) {
+            let mut end = *start;
+            'next_sym: for (region, sym) in symbol_regions {
+                'more_relocs: while let Some(reloc) = relocs.get(end) {
+                    match cmp_range(&region, reloc.relocation_range()) {
+                        RangeComp::NonComparable | RangeComp::Within => {
+                            panic!(
+                                "BUG: Relocation entry is not related to symbols: {sym:?} {region:?} and {reloc:?}",
+                            );
+                        }
+                        RangeComp::Equal | RangeComp::Overlap => {
+                            end += 1;
+                            continue 'more_relocs;
+                        } // its our symbol, keep going
+                        RangeComp::Right => {
+                            panic!(
+                                "BUG: Unprocessed relocation range {reloc:?} for symbol {sym:?} {region:?}"
+                            )
+                        }
+                        RangeComp::Left => {} // its next symbol - save range and go to next symbol
+                    };
+                    if end != *start {
+                        map.insert(
+                            sym,
+                            RelocRange {
+                                relocs: *start..end,
+                            },
+                        );
+                        *start = end;
+                    }
+                    continue 'next_sym;
+                }
+
+                // No more relocs, but we still have symbols - just save existing range for them.
+                if end != *start {
+                    map.insert(
+                        sym,
+                        RelocRange {
+                            relocs: *start..end,
+                        },
+                    );
+                    *start = end;
+                }
+            }
+        }
+
+        code_regions.sort_by_key(|(r, _)| r.start);
+        data_regions.sort_by_key(|(r, _)| r.start);
+        let mut code_owners = GappedMap::new();
+        let mut data_owners = GappedMap::new();
+        let ref mut start = 0;
+
+        move_relocs(&mut code_owners, code_regions.into_iter(), start, relocs);
+        move_relocs(&mut data_owners, data_regions.into_iter(), start, relocs);
+
+        (code_owners, data_owners)
+    }
+
+    /// Iter over code and data relocs.
+    pub fn iter_relocs(
+        &self,
+    ) -> impl Iterator<Item = (EntityKind, &[RelocationEntry<ErasedEntityRef>])> {
+        self.code_owners
+            .iter()
+            .map(|(k, v)| (EntityKind::Function(k), &self.array[v.relocs.clone()]))
+            .chain(
+                self.data_owners
+                    .iter()
+                    .map(|(k, v)| (EntityKind::DataSymbol(k), &self.array[v.relocs.clone()])),
+            )
     }
 
     /// Convert enum to erased form.

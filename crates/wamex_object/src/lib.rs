@@ -7,11 +7,11 @@
 #[macro_use]
 pub mod index;
 
+pub mod analysis;
 pub mod emit;
 pub mod helpers;
-pub mod raw;
-// pub mod symbols;
 pub mod linkage;
+pub mod raw;
 pub mod typed;
 
 pub use anyhow::Result;

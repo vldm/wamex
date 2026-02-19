@@ -7,17 +7,17 @@ use std::{
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord, Hash)]
 pub enum RangeComp {
-    // This range is fully left to Other range.
+    /// This range is fully left to Other range.
     Left,
-    // This range is equal to other range.
+    /// This range is equal to other range.
     Equal,
-    // This range fully overlaps other range.
+    /// This range fully overlaps other range.
     Overlap,
-    // This range is within other range.
+    /// This range is within other range.
     Within,
-    // This range is only partially intersects other range.
+    /// This range is only partially intersects other range.
     NonComparable,
-    // This range is fully right to Other range.
+    /// This range is fully right to Other range.
     Right,
 }
 

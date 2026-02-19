@@ -142,6 +142,20 @@ pub enum EntityBody<'src> {
     },
 }
 
+impl EntityBody<'_> {
+    pub fn len(&self) -> usize {
+        match self {
+            EntityBody::Copied { bytes, patches, .. } => {
+                let start_len = bytes.len() as isize;
+                patches
+                    .iter()
+                    .fold(start_len, |len, patch| len + patch.size()) as usize
+            }
+            EntityBody::New { new_bytes, .. } => new_bytes.len(),
+        }
+    }
+}
+
 pub fn read_imports<'a>(
     reader: &crate::raw::ObjectReader<'a>,
 ) -> crate::Result<(

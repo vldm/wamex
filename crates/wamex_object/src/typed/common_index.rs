@@ -1,5 +1,6 @@
 use crate::{
     linkage::reloc::SymbolType,
+    raw::FuncTypeId,
     typed::{FunctionRef, GlobalRef, MemoryRef, Module, TableRef, TagRef, data::DataSymbolRef},
 };
 
@@ -16,7 +17,7 @@ impl_entity_index! {
     /// - MemoryRef => FlatEntityRef::from_u32(memory_ref + num_function_refs + num_global_refs + num_table_refs)
     /// - TagRef => FlatEntityRef::from_u32(tag_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs)
     /// - DataSymbolRef => FlatEntityRef::from_u32(data_symbol_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs + num_tag_refs)
-    /// DataSymbolRef is placed last because unlike others they count can be retrieved only after parsing linking section.
+    /// - FuncTypeId => FlatEntityRef::from_u32(type_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs + num_tag_refs + num_data_symbol_refs)
     pub struct FlatEntityRef;
 
     #[display = "entity"]
@@ -41,6 +42,7 @@ impl ErasedEntityRef {
             SymbolType::MemoryAddr => {
                 EntityKind::DataSymbol(DataSymbolRef::from_u32(self.as_u32()))
             }
+            SymbolType::TypeIndex => EntityKind::Type(FuncTypeId::from_u32(self.as_u32())),
             SymbolType::EventIndex => EntityKind::Tag(TagRef::from_u32(self.as_u32())),
             _ => panic!("Unsupported symbol type for entity reference: {:?}", tag),
         }
@@ -78,10 +80,13 @@ pub enum EntityKind {
     Table(TableRef),
     Memory(MemoryRef),
     Tag(TagRef),
+    Type(FuncTypeId),
 }
 
 /// A snapshot of the number of entities in a WebAssembly module.
 /// Used to convert between `TaggedEntityRef` and `FlatEntityRef`.
+///
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntitiesSnapshot {
     num_function_refs: u32,
     num_data_symbol_refs: u32,
@@ -92,6 +97,17 @@ pub struct EntitiesSnapshot {
 }
 
 impl EntitiesSnapshot {
+    /// Create a snapshot with arbitrary numbers for testing purposes.
+    pub fn for_testing() -> Self {
+        Self {
+            num_function_refs: 10,
+            num_data_symbol_refs: 5,
+            num_global_refs: 3,
+            num_table_refs: 2,
+            num_memory_refs: 1,
+            num_tag_refs: 4,
+        }
+    }
     pub fn new(object: &Module<'_>) -> Self {
         Self {
             num_function_refs: object.functions.len() as u32,
@@ -129,6 +145,15 @@ impl EntitiesSnapshot {
                     + self.num_memory_refs
                     + self.num_tag_refs,
             ),
+            EntityKind::Type(t) => FlatEntityRef::from_u32(
+                t.as_u32()
+                    + self.num_function_refs
+                    + self.num_global_refs
+                    + self.num_table_refs
+                    + self.num_memory_refs
+                    + self.num_tag_refs
+                    + self.num_data_symbol_refs,
+            ),
         }
     }
     pub fn unpack_ref(&self, any_ref: FlatEntityRef) -> EntityKind {
@@ -163,13 +188,29 @@ impl EntitiesSnapshot {
                     - self.num_table_refs
                     - self.num_memory_refs,
             ))
-        } else {
+        } else if idx
+            < self.num_function_refs
+                + self.num_global_refs
+                + self.num_table_refs
+                + self.num_memory_refs
+                + self.num_tag_refs
+                + self.num_data_symbol_refs
+        {
             EntityKind::DataSymbol(DataSymbolRef::from_u32(
                 idx - self.num_function_refs
                     - self.num_global_refs
                     - self.num_table_refs
                     - self.num_memory_refs
                     - self.num_tag_refs,
+            ))
+        } else {
+            EntityKind::Type(FuncTypeId::from_u32(
+                idx - self.num_function_refs
+                    - self.num_global_refs
+                    - self.num_table_refs
+                    - self.num_memory_refs
+                    - self.num_tag_refs
+                    - self.num_data_symbol_refs,
             ))
         }
     }

@@ -248,12 +248,12 @@ pub enum RelocationWidth {
 // }
 
 impl AnyRelocationEntry {
-    pub fn from_raw(entry: wasmparser::RelocationEntry, symbol_start: u32) -> Self {
+    pub fn from_raw(entry: wasmparser::RelocationEntry, entry_offset: isize) -> Self {
         use wasmparser::RelocationType::*;
         let symbol_type = match entry.ty {
             TypeIndexLeb => {
                 return AnyRelocationEntry::Type(TypeRelocationEntry {
-                    offset: entry.offset - symbol_start,
+                    offset: (entry.offset as isize + entry_offset) as u32,
                     index: FnTypeRef::from_u32(entry.index),
                 });
             }
@@ -309,7 +309,7 @@ impl AnyRelocationEntry {
         };
 
         Self::Linkage(RelocationEntry {
-            offset: entry.offset - symbol_start,
+            offset: (entry.offset as isize + entry_offset) as u32,
             addend: entry.addend,
             symbol_id: SymbolId::from_u32(entry.index),
             symbol_type,
