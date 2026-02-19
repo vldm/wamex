@@ -12,16 +12,15 @@ use anyhow::{Result, bail};
 use cranelift_entity::EntityRef;
 pub use entities::*;
 use log::warn;
-use wasmparser::{ElementItems, TableType, TypeRef};
+use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
 
 use crate::{
-    index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, NonDefault},
+    index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, NonDefault, Temp},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
     raw::{self, DefinedFuncId, ElementId, FuncTypeId, ImportId},
-    typed::common_index::EntitiesSnapshot,
 };
 
 pub mod common_index;
@@ -29,6 +28,7 @@ pub mod data;
 pub mod elements;
 mod entities;
 impl_entity_index! {
+    #[display = "file"]
     pub struct FileId;
 
     #[display = ""] // Basic symbol no need prefix for display
@@ -53,7 +53,7 @@ impl<'src> LinkingFile<'src> {
     pub fn from_raw_module(reader: raw::ObjectReader<'src>) -> Result<Self> {
         let (module, file_symbol_db) = Module::from_raw_module(&reader)?;
         let file_relocs = LinkageInfo::collect_ordered_relocs(&reader);
-        let owners = LinkageInfo::build_owners(&module, EntitiesSnapshot::new(&module));
+        let owners = LinkageInfo::build_owners(&module);
         let relocs = FileRelocs::build_relocs(file_relocs, &file_symbol_db, owners)?;
 
         Ok(Self {
@@ -65,6 +65,7 @@ impl<'src> LinkingFile<'src> {
     }
 }
 
+pub type ModuleBuilder<'src> = Module<'src, Building>;
 /// Partially parsed wasm object.
 /// It expects that module has valid structure and contains additional custom sections:
 /// - name section with function and global names
@@ -77,7 +78,9 @@ impl<'src> LinkingFile<'src> {
 #[derive(Debug)]
 pub struct Module<'src, BuilderState = Finished> {
     // symbols: Symbols<'src>,
-    // pub to_any_ref: GappedMap<SymbolId, common_index::AnyEntityRef>,
+    // pub to_any_ref: GappedMap<SymbolId, common_index::FlatEntityRef>,
+
+    // function types?
 
     // wasm entities
     pub functions: entities::Functions<'src, BuilderState>,
@@ -111,8 +114,9 @@ impl<'src> Module<'src> {
                     .code
                     .section_payload
                     .defined_funcs
-                    .as_values_slice()
-                    .to_vec(),
+                    .values()
+                    .map(Into::into)
+                    .collect(),
             )
             .into_finished(),
             reader
@@ -125,7 +129,8 @@ impl<'src> Module<'src> {
             exports.0,
         );
         let tables = entities::Tables::from_parts(
-            CompoundList::new(imports.1, reader.tables.as_values_slice().to_vec()).into_finished(),
+            CompoundList::new(imports.1, reader.tables.values().map(Into::into).collect())
+                .into_finished(),
             reader
                 .names
                 .tables
@@ -148,7 +153,8 @@ impl<'src> Module<'src> {
             exports.2,
         );
         let globals = entities::Globals::from_parts(
-            CompoundList::new(imports.3, reader.globals.as_values_slice().to_vec()).into_finished(),
+            CompoundList::new(imports.3, reader.globals.values().map(Into::into).collect())
+                .into_finished(),
             reader
                 .names
                 .globals
@@ -316,11 +322,11 @@ impl<'src> Module<'src> {
         }
     }
 
-    pub fn get_function_type_id(&self, func_id: FunctionRef) -> FuncTypeId {
+    pub fn get_function_type(&self, func_id: FunctionRef) -> &FuncType {
         let func = self.functions.items.get_entity(func_id);
         match func {
-            ImportOrDefined::Defined(defined) => defined.type_id,
-            ImportOrDefined::Import(import) => import.entity_type,
+            ImportOrDefined::Defined(defined) => &defined.entity_type,
+            ImportOrDefined::Import(import) => &import.entity_type,
         }
     }
 
@@ -335,10 +341,10 @@ impl<'src> Module<'src> {
     }
 }
 
-impl<'src> Module<'src, Building> {
+impl<'src> ModuleBuilder<'src> {
     pub fn new() -> Self {
         let mut tables = entities::Tables::new();
-        let _table_ref = tables.items.push_defined(raw::Table {
+        let _table_ref = tables.items.push_defined(&raw::Table {
             ty: TableType {
                 table64: false,
                 shared: false,
@@ -350,7 +356,7 @@ impl<'src> Module<'src, Building> {
             init: wasmparser::TableInit::RefNull,
         });
 
-        Module {
+        ModuleBuilder {
             functions: entities::Functions::new(),
             memories: entities::Memories::new(),
             globals: entities::Globals::new(),
@@ -374,11 +380,34 @@ impl<'src> Module<'src, Building> {
             indirect_function_table: self.indirect_function_table,
         }
     }
+
+    /// Add imported global to the module, returning its reference.
+    pub fn add_imported_global(&mut self, import: ImportedGlobal<'src>) -> Temp<GlobalRef> {
+        self.globals.items.push_import(import)
+    }
+
+    /// Add defined global to the module, returning its reference.
+    pub fn add_defined_global(&mut self, global: DefinedGlobal<'src>) -> Temp<GlobalRef> {
+        self.globals.items.push_defined(global)
+    }
+
+    /// Add imported function to the module, returning its reference.
+    pub fn add_imported_function(&mut self, import: ImportedFunction<'src>) -> Temp<FunctionRef> {
+        self.functions.items.push_import(import)
+    }
+
+    /// Add defined function to the module, returning its reference.
+    pub fn add_defined_function(&mut self, func: DefinedFunction<'src>) -> Temp<FunctionRef> {
+        self.functions.items.push_defined(func)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use wasmparser::FuncType;
+
     use super::{LinkingFile, Module};
+    use crate::{raw::FuncTypeId, typed::ImportedFunction};
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
     #[test]
@@ -398,6 +427,11 @@ mod tests {
     #[test]
     fn create_from_scratch() {
         let mut module = Module::new();
+        module.add_imported_function(ImportedFunction {
+            module: "env".into(),
+            name: "bar".into(),
+            entity_type: FuncType::new(None, None), // void type
+        });
         todo!();
         // push_function();
         // finalize();

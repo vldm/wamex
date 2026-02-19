@@ -15,8 +15,13 @@ impl_entity_index! {
     pub struct ElementItemId;
 }
 pub trait ElementType<'a> {
-    // Provides a hint for the number of items in the element segment, allowing to pre-allocate the map capacity.
+    /// Provides a hint for the number of items in the element segment, allowing to pre-allocate the map capacity.
     fn hint_size(items: &ElementItems<'a>) -> Option<u32>;
+    /// Provides a way to access each element as internal iterator of `Self` type.
+    ///
+    /// Params:
+    /// first - Id of the first element item.
+    /// save - Internal iterator callback that handles each item (stores in a map ID -> Self)
     fn for_item(
         items: ElementItems<'a>,
         first: ElementItemId,
@@ -57,7 +62,6 @@ impl ElementType<'_> for FunctionRef {
 pub struct ElementTable<T: ReservedValue + Clone> {
     // ID of table with indirect functions definition
     pub table_id: TableRef,
-    pub element_ids: SVec<ElementId>,
     // Allow gaps in case of non-initialized elements
     pub items: GappedMap<ElementItemId, T>,
 }
@@ -66,7 +70,6 @@ impl<T: ReservedValue + Clone> ElementTable<T> {
     pub fn new(table_id: TableRef) -> Self {
         Self {
             table_id,
-            element_ids: SVec::new(),
             items: GappedMap::new(),
         }
     }
@@ -110,8 +113,6 @@ impl<'a, T: ElementType<'a> + ReservedValue + Clone> ElementTable<T> {
                 offset > 0,
                 "Negative offset expressions are not supported in element segments (element {id:?})",
             );
-
-            table.element_ids.push(id);
 
             let item_id =
                 ElementItemId::from_u32(offset.try_into().expect("Negative offset checked above"));

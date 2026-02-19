@@ -35,28 +35,22 @@ use super::{
 use crate::{
     index::{Building, CompoundList, Finished, GappedMap, ImportOrDefined, NonDefault, TempIndex},
     raw,
+    typed::{
+        DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag, ImportedFunction,
+        ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag,
+    },
 };
 
-pub type Functions<'src, BuilderState = Finished> = EntitiesCollection<
-    'src,
-    FunctionRef,
-    types::ImportedFunction<'src>,
-    raw::FunctionWithBody<'src>,
-    BuilderState,
->;
-pub type Tables<'src, BuilderState = Finished> =
-    EntitiesCollection<'src, TableRef, types::ImportedTable<'src>, raw::Table<'src>, BuilderState>;
-pub type Globals<'src, BuilderState = Finished> = EntitiesCollection<
-    'src,
-    GlobalRef,
-    types::ImportedGlobal<'src>,
-    raw::Global<'src>,
-    BuilderState,
->;
-pub type Memories<'src, BuilderState = Finished> =
-    EntitiesCollection<'src, MemoryRef, types::ImportedMemory<'src>, raw::MemoryType, BuilderState>;
-pub type Tags<'src, BuilderState = Finished> =
-    EntitiesCollection<'src, TagRef, types::ImportedTag<'src>, raw::TagType, BuilderState>;
+pub type Functions<'src, BS = Finished> =
+    EntitiesCollection<'src, FunctionRef, ImportedFunction<'src>, DefinedFunction<'src>, BS>;
+pub type Tables<'src, BS = Finished> =
+    EntitiesCollection<'src, TableRef, ImportedTable<'src>, DefinedTable<'src>, BS>;
+pub type Globals<'src, BS = Finished> =
+    EntitiesCollection<'src, GlobalRef, ImportedGlobal<'src>, DefinedGlobal<'src>, BS>;
+pub type Memories<'src, BS = Finished> =
+    EntitiesCollection<'src, MemoryRef, ImportedMemory<'src>, DefinedMemory, BS>;
+pub type Tags<'src, BS = Finished> =
+    EntitiesCollection<'src, TagRef, ImportedTag<'src>, DefinedTag, BS>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EntitiesCollection<'src, Ref, Import, Defined, BuilderState = Finished>

@@ -214,12 +214,15 @@ impl<'a> ObjectReader<'a> {
         }
 
         // merge fields into code section
-        module.code = CodeSection::new(code_start, funcs, function_types, code_reader_header)?;
+        module.code = CodeSection::new(
+            code_start,
+            funcs,
+            function_types,
+            &module.types,
+            code_reader_header,
+        )?;
 
         Ok(module)
-    }
-    pub fn defined_func_type_id(&self, id: DefinedFuncId) -> FuncTypeId {
-        self.code.section_payload.defined_funcs[id].type_id
     }
 }
 

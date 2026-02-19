@@ -1,7 +1,7 @@
 //! Implementation of logic related to linkage:
 //! - Symbol by name resolution
-//! - Relocations
-//! -
+//! - Relocations implementation
+//! - Entity resolution
 //!
 pub mod file_db;
 pub mod name_resolver;
@@ -23,8 +23,8 @@ use crate::{
     },
     typed::{
         FunctionRef, GlobalRef, Module, SymbolId, TableRef, TagRef,
-        common_index::{AnyEntityRef, EntitiesSnapshot, TaggedEntityRef},
-        data::DataDefined,
+        common_index::EntityKind,
+        data::{DataDefined, DataSymbolRef},
     },
 };
 
@@ -46,28 +46,28 @@ impl LinkageInfo {
         let mut defined_data_ids = PrimaryMap::new();
         // symbol ids of defined data symbols
         let mut defined_data_symbols = Vec::new();
-        let mut name_to_entity: HashMap<Str<'_>, TaggedEntityRef> = HashMap::new();
+        let mut name_to_entity: HashMap<Str<'_>, EntityKind> = HashMap::new();
 
         for sym in reader.linking.linking_symbols.symbols.iter() {
             let (idx, name, flags) = match sym {
                 SymbolInfo::Func { flags, index, name } => {
                     let func_index = FunctionRef::from_u32(*index);
-                    let idx = TaggedEntityRef::Function(func_index);
+                    let idx = EntityKind::Function(func_index);
                     (idx, *name, flags)
                 }
                 SymbolInfo::Event { flags, index, name } => {
                     let tag_ref = TagRef::from_u32(*index);
-                    let idx = TaggedEntityRef::Tag(tag_ref);
+                    let idx = EntityKind::Tag(tag_ref);
                     (idx, *name, flags)
                 }
                 SymbolInfo::Global { flags, index, name } => {
                     let global_ref = GlobalRef::from_u32(*index);
-                    let idx = TaggedEntityRef::Global(global_ref);
+                    let idx = EntityKind::Global(global_ref);
                     (idx, *name, flags)
                 }
                 SymbolInfo::Table { flags, index, name } => {
                     let table_index = TableRef::from_u32(*index);
-                    let idx = TaggedEntityRef::Table(table_index);
+                    let idx = EntityKind::Table(table_index);
                     error!("Unsupported symbol: table symbol");
                     (idx, *name, flags)
                 }
@@ -77,7 +77,7 @@ impl LinkageInfo {
                     symbol: Some(defined),
                 } => {
                     let data_ref = defined_data_ids.push(());
-                    let idx = TaggedEntityRef::DataSymbol(data_ref);
+                    let idx = EntityKind::DataSymbol(data_ref);
 
                     defined_data_symbols.push((id, DataDefined::from(defined)));
                     (idx, Some(*name), flags)
@@ -156,37 +156,36 @@ impl LinkageInfo {
             )
     }
 
-    // Build data and code parts:
-    // - Functions body for code part
-    // - Data chunks for data part
+    // Returns pair of maps of relocation owners:
+    // - for each functions body
+    // - for each data chunks
     pub fn build_owners(
         input: &Module,
-        snapshot: EntitiesSnapshot,
-    ) -> GappedMap<AnyEntityRef, RelocRange> {
-        let mut owners = GappedMap::new();
+    ) -> (
+        GappedMap<FunctionRef, RelocRange>,
+        GappedMap<DataSymbolRef, RelocRange>,
+    ) {
+        let mut code_owners = GappedMap::new();
+        let mut data_owners = GappedMap::new();
 
         for (func_ref, func) in input.functions.defined_iter() {
-            let entity_ref = TaggedEntityRef::Function(func_ref);
-
-            owners.insert(
-                snapshot.as_any_ref(&entity_ref),
+            code_owners.insert(
+                func_ref,
                 RelocRange {
-                    relocs: func.body.range(),
+                    relocs: func.original_range(),
                 },
             );
         }
 
         for (data_ref, data) in input.data.iter() {
-            let entity_ref = TaggedEntityRef::DataSymbol(data_ref);
-
-            owners.insert(
-                snapshot.as_any_ref(&entity_ref),
+            data_owners.insert(
+                data_ref,
                 RelocRange {
                     relocs: data.original_offset..data.original_offset + data.data.len(),
                 },
             );
         }
 
-        owners
+        (code_owners, data_owners)
     }
 }

@@ -13,7 +13,7 @@ use std::io::Write;
 
 use wasm_encoder::MemArg;
 
-use crate::emit::modify::encode;
+use crate::emit::relocation::encode;
 
 pub struct Encoder<W> {
     writer: W,

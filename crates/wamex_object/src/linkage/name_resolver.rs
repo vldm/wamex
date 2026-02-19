@@ -26,16 +26,27 @@
 
 use std::borrow::Cow;
 
-use crate::typed::common_index::AnyEntityRef;
+use crate::typed::{FileId, common_index::EntityKind};
 
+#[derive(Clone, Copy, Debug)]
 enum SymbolBinding {
     Weak,
     Local,
     Default,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SymbolRecord {
+    file: FileId,
+    chosen_entity: EntityKind,
+    binding: SymbolBinding,
+    visible: bool,
+    no_strip: bool,
+    // other_entities: Vec<TaggedEntityRef>,
+}
+
 pub struct NameResolver<'src> {
-    names: std::collections::HashMap<Cow<'src, str>, AnyEntityRef>,
+    names: std::collections::HashMap<Cow<'src, str>, SymbolRecord>,
 }
 
 impl<'src> NameResolver<'src> {
@@ -45,7 +56,7 @@ impl<'src> NameResolver<'src> {
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<AnyEntityRef> {
+    pub fn get(&self, name: &str) -> Option<SymbolRecord> {
         self.names.get(name).copied()
     }
 }

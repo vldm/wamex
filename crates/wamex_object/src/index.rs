@@ -23,6 +23,8 @@ use std::{
 use cranelift_entity::packed_option::PackedOption;
 pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 
+use crate::typed::{DefinedEntity, ImportedEntity};
+
 macro_rules! impl_entity_index {
     ( $(
         $(#[display = $display:literal])?
@@ -547,15 +549,15 @@ where
 {
     /// Pushes new imported entity and returns its compound index.
     /// This is differ from `push_defined`, since later index is "shifted" by imports count.
-    pub fn push_import(&mut self, import: I) -> Temp<Ref> {
-        self.imports.push(import);
+    pub fn push_import(&mut self, import: impl Into<I>) -> Temp<Ref> {
+        self.imports.push(import.into());
         Temp::from_import(self.imports.len() - 1)
     }
 
     /// Pushes new defined entity and returns its "defined" index.
     /// This defined index can be converted to compound by calling `get_compound_index`.
-    pub fn push_defined(&mut self, defined: D) -> Temp<Ref> {
-        self.defined.push(defined);
+    pub fn push_defined(&mut self, defined: impl Into<D>) -> Temp<Ref> {
+        self.defined.push(defined.into());
         Temp::from_defined(self.defined.len() - 1)
     }
 
@@ -683,6 +685,17 @@ where
 pub enum ImportOrDefined<Import, Defined> {
     Import(Import),
     Defined(Defined),
+}
+
+impl<'any, ImportInner>
+    ImportOrDefined<&'any ImportedEntity<'_, ImportInner>, &'any DefinedEntity<'_, ImportInner>>
+{
+    pub fn get_type(&self) -> &'any ImportInner {
+        match self {
+            ImportOrDefined::Import(import) => &import.entity_type,
+            ImportOrDefined::Defined(defined) => &defined.entity_type,
+        }
+    }
 }
 
 #[cfg(test)]

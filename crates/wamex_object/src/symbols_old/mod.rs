@@ -18,7 +18,7 @@
 //     index::{GappedMap, IdVec},
 //     read::{
 //         FunctionRef, GlobalRef, TableRef,
-//         common_index::AnyEntityRef,
+//         common_index::FlatEntityRef,
 //         raw::{DataSegmentId, DefinedFuncId},
 //     },
 //     symbols::reloc::AnyRelocationEntry,
@@ -127,7 +127,7 @@ pub mod reloc;
 // #[derive(Clone, Default, Debug)]
 // pub struct Symbols {
 //     // Map from module symbol id
-//     symbols: PrimaryMap<SymbolId, AnyEntityRef>,
+//     symbols: PrimaryMap<SymbolId, FlatEntityRef>,
 //     funcs_ids: GappedMap<FunctionRef, SymbolId>,
 //     datas_ids: BTreeSet<DataSymbolKey>,
 // }

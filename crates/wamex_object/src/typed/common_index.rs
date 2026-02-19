@@ -1,33 +1,77 @@
-use crate::typed::{
-    FunctionRef, GlobalRef, MemoryRef, Module, TableRef, TagRef, data::DataSymbolRef,
+use crate::{
+    linkage::reloc::SymbolType,
+    typed::{FunctionRef, GlobalRef, MemoryRef, Module, TableRef, TagRef, data::DataSymbolRef},
 };
 
 impl_entity_index! {
     #[display = "anyref"]
     /// A reference to any entity in a WebAssembly module.
+    /// Within flat index space of entities.
     /// It is used only for module with known structure (cannot be used for builder).
     ///
     /// Implementation note about mapping to actual entity types:
-    /// - FunctionRef => AnyEntityRef::from_u32(func_ref)
-    /// - GlobalRef => AnyEntityRef::from_u32(global_ref + num_function_refs )
-    /// - TableRef => AnyEntityRef::from_u32(table_ref + num_function_refs + num_global_refs)
-    /// - MemoryRef => AnyEntityRef::from_u32(memory_ref + num_function_refs + num_global_refs + num_table_refs)
-    /// - TagRef => AnyEntityRef::from_u32(tag_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs)
-    /// - DataSymbolRef => AnyEntityRef::from_u32(data_symbol_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs + num_tag_refs)
+    /// - FunctionRef => FlatEntityRef::from_u32(func_ref)
+    /// - GlobalRef => FlatEntityRef::from_u32(global_ref + num_function_refs )
+    /// - TableRef => FlatEntityRef::from_u32(table_ref + num_function_refs + num_global_refs)
+    /// - MemoryRef => FlatEntityRef::from_u32(memory_ref + num_function_refs + num_global_refs + num_table_refs)
+    /// - TagRef => FlatEntityRef::from_u32(tag_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs)
+    /// - DataSymbolRef => FlatEntityRef::from_u32(data_symbol_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs + num_tag_refs)
     /// DataSymbolRef is placed last because unlike others they count can be retrieved only after parsing linking section.
-    pub struct AnyEntityRef;
+    pub struct FlatEntityRef;
 
     #[display = "entity"]
     /// A reference to entity which type is provided by external tag.
     /// used for relocs where symbols type is described by relocation type.
-    // TODO: Maybe replace usage by `TaggedEntityRef`?
+    ///
+    /// In might be intuitive to replace symbol_id + symbol_type in reloc entry with tagged `EntityKind`,
+    /// but symbol_type contain not only information about entity type, but also "mode" in which this symbol is used
+    /// (e.g. function index vs function offset vs table index, memaddr vs memlocrel).
+    ///
     pub struct ErasedEntityRef;
 }
 
+impl ErasedEntityRef {
+    pub fn combine(self, tag: SymbolType) -> EntityKind {
+        match tag {
+            SymbolType::FunctionIndex | SymbolType::TableIndex => {
+                EntityKind::Function(FunctionRef::from_u32(self.as_u32()))
+            }
+            SymbolType::GlobalIndex => EntityKind::Global(GlobalRef::from_u32(self.as_u32())),
+            SymbolType::TableNumber => EntityKind::Table(TableRef::from_u32(self.as_u32())),
+            SymbolType::MemoryAddr => {
+                EntityKind::DataSymbol(DataSymbolRef::from_u32(self.as_u32()))
+            }
+            SymbolType::EventIndex => EntityKind::Tag(TagRef::from_u32(self.as_u32())),
+            _ => panic!("Unsupported symbol type for entity reference: {:?}", tag),
+        }
+    }
+}
+
+impl From<GlobalRef> for ErasedEntityRef {
+    fn from(global_ref: GlobalRef) -> Self {
+        ErasedEntityRef::from_u32(global_ref.as_u32())
+    }
+}
+impl From<FunctionRef> for ErasedEntityRef {
+    fn from(func_ref: FunctionRef) -> Self {
+        ErasedEntityRef::from_u32(func_ref.as_u32())
+    }
+}
+impl From<TableRef> for ErasedEntityRef {
+    fn from(table_ref: TableRef) -> Self {
+        ErasedEntityRef::from_u32(table_ref.as_u32())
+    }
+}
+impl From<DataSymbolRef> for ErasedEntityRef {
+    fn from(data_symbol_ref: DataSymbolRef) -> Self {
+        ErasedEntityRef::from_u32(data_symbol_ref.as_u32())
+    }
+}
+
 /// A tagged reference to an entity in a WebAssembly module.
-/// Can be converted to `AnyEntityRef` in order to get a unified index.
+/// Can be converted to `FlatEntityRef` in order to get a unified index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum TaggedEntityRef {
+pub enum EntityKind {
     Function(FunctionRef),
     DataSymbol(DataSymbolRef),
     Global(GlobalRef),
@@ -37,7 +81,7 @@ pub enum TaggedEntityRef {
 }
 
 /// A snapshot of the number of entities in a WebAssembly module.
-/// Used to convert between `TaggedEntityRef` and `AnyEntityRef`.
+/// Used to convert between `TaggedEntityRef` and `FlatEntityRef`.
 pub struct EntitiesSnapshot {
     num_function_refs: u32,
     num_data_symbol_refs: u32,
@@ -59,27 +103,25 @@ impl EntitiesSnapshot {
         }
     }
 
-    pub fn as_any_ref(&self, symbol: &TaggedEntityRef) -> AnyEntityRef {
+    pub fn pack_ref(&self, symbol: EntityKind) -> FlatEntityRef {
         match symbol {
-            TaggedEntityRef::Function(f) => AnyEntityRef::from_u32(f.as_u32()),
+            EntityKind::Function(f) => FlatEntityRef::from_u32(f.as_u32()),
 
-            TaggedEntityRef::Global(g) => {
-                AnyEntityRef::from_u32(g.as_u32() + self.num_function_refs)
+            EntityKind::Global(g) => FlatEntityRef::from_u32(g.as_u32() + self.num_function_refs),
+            EntityKind::Table(t) => {
+                FlatEntityRef::from_u32(t.as_u32() + self.num_function_refs + self.num_global_refs)
             }
-            TaggedEntityRef::Table(t) => {
-                AnyEntityRef::from_u32(t.as_u32() + self.num_function_refs + self.num_global_refs)
-            }
-            TaggedEntityRef::Memory(m) => AnyEntityRef::from_u32(
+            EntityKind::Memory(m) => FlatEntityRef::from_u32(
                 m.as_u32() + self.num_function_refs + self.num_global_refs + self.num_table_refs,
             ),
-            TaggedEntityRef::Tag(t) => AnyEntityRef::from_u32(
+            EntityKind::Tag(t) => FlatEntityRef::from_u32(
                 t.as_u32()
                     + self.num_function_refs
                     + self.num_global_refs
                     + self.num_table_refs
                     + self.num_memory_refs,
             ),
-            TaggedEntityRef::DataSymbol(d) => AnyEntityRef::from_u32(
+            EntityKind::DataSymbol(d) => FlatEntityRef::from_u32(
                 d.as_u32()
                     + self.num_function_refs
                     + self.num_global_refs
@@ -89,14 +131,14 @@ impl EntitiesSnapshot {
             ),
         }
     }
-    pub fn unpack_any_ref(&self, any_ref: AnyEntityRef) -> TaggedEntityRef {
+    pub fn unpack_ref(&self, any_ref: FlatEntityRef) -> EntityKind {
         let idx = any_ref.as_u32();
         if idx < self.num_function_refs {
-            TaggedEntityRef::Function(FunctionRef::from_u32(idx))
+            EntityKind::Function(FunctionRef::from_u32(idx))
         } else if idx < self.num_function_refs + self.num_global_refs {
-            TaggedEntityRef::Global(GlobalRef::from_u32(idx - self.num_function_refs))
+            EntityKind::Global(GlobalRef::from_u32(idx - self.num_function_refs))
         } else if idx < self.num_function_refs + self.num_global_refs + self.num_table_refs {
-            TaggedEntityRef::Table(TableRef::from_u32(
+            EntityKind::Table(TableRef::from_u32(
                 idx - self.num_function_refs - self.num_global_refs,
             ))
         } else if idx
@@ -105,7 +147,7 @@ impl EntitiesSnapshot {
                 + self.num_table_refs
                 + self.num_memory_refs
         {
-            TaggedEntityRef::Memory(MemoryRef::from_u32(
+            EntityKind::Memory(MemoryRef::from_u32(
                 idx - self.num_function_refs - self.num_global_refs - self.num_table_refs,
             ))
         } else if idx
@@ -115,14 +157,14 @@ impl EntitiesSnapshot {
                 + self.num_memory_refs
                 + self.num_tag_refs
         {
-            TaggedEntityRef::Tag(TagRef::from_u32(
+            EntityKind::Tag(TagRef::from_u32(
                 idx - self.num_function_refs
                     - self.num_global_refs
                     - self.num_table_refs
                     - self.num_memory_refs,
             ))
         } else {
-            TaggedEntityRef::DataSymbol(DataSymbolRef::from_u32(
+            EntityKind::DataSymbol(DataSymbolRef::from_u32(
                 idx - self.num_function_refs
                     - self.num_global_refs
                     - self.num_table_refs

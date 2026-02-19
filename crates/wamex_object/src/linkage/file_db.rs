@@ -1,71 +1,19 @@
-use std::{borrow::Cow, collections::HashMap, ops::Range};
+use std::ops::Range;
 
 use anyhow::Result;
 use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
-use log::error;
-use wasmparser::SymbolInfo;
 
 use crate::{
-    ObjectReader,
     index::GappedMap,
     linkage::reloc::{
         AnyRelocationEntry, Encoding, Relative, RelocationEntry, RelocationWidth, SymbolType,
     },
     typed::{
-        FnTypeRef, FunctionRef, GlobalRef, Module, SymbolId, TableRef, TagRef,
-        common_index::{AnyEntityRef, EntitiesSnapshot, ErasedEntityRef, TaggedEntityRef},
-        data::DataDefined,
+        FnTypeRef, FunctionRef, SymbolId,
+        common_index::{EntityKind, ErasedEntityRef},
+        data::DataSymbolRef,
     },
 };
-
-// 1 / WASM_SYM_BINDING_WEAK - Indicating that this is a weak symbol.
-//  When linking multiple modules defining the same symbol, all weak
-//  definitions are discarded if any strong definitions exist; then
-//  if multiple weak definitions exist all but one (unspecified)
-//  are discarded; and finally it is an error if more than one definition remains.
-// 2 / WASM_SYM_BINDING_LOCAL - Indicating that this is a local symbol
-//  (this is exclusive with WASM_SYM_BINDING_WEAK). Local symbols are not
-//  to be exported, or linked to other modules/sections.
-//  The names of all non-local symbols must be unique, but the names of
-//  local symbols are not considered for uniqueness. A local function or global symbol cannot reference an import.
-// 4 / WASM_SYM_VISIBILITY_HIDDEN - Indicating that this is a hidden symbol.
-//  Hidden symbols are not to be exported when performing the final link, but may be linked to other modules.
-// 0x10 / WASM_SYM_UNDEFINED - Indicating that this symbol is not defined.
-//  For non-data symbols, this must match whether the symbol is an import or is defined; for data symbols, determines whether a segment is specified.
-// 0x20 / WASM_SYM_EXPORTED - The symbol is intended to be exported from  ?DUPLICATE OF EXPORT section?
-//  the wasm module to the host environment. This differs from the visibility flags in that it effects the static linker.
-// 0x40 / WASM_SYM_EXPLICIT_NAME - The symbol uses an explicit symbol name, ?Only imports
-//  rather than reusing the name from a wasm import. This allows it to remap
-//  imports from foreign WebAssembly modules into local symbols with different names.
-// 0x80 / WASM_SYM_NO_STRIP - The symbol is intended to be included in
-//  the linker output, regardless of whether it is used by the program.
-//
-// 0x100 / WASM_SYM_TLS - The symbol resides in thread local storage.  ?Only data
-// 0x200 / WASM_SYM_ABSOLUTE - The symbol represents an absolute address. ?Only data
-//  This means it's offset is relative to the start of the wasm memory as opposed to being relative to a data segment.
-
-enum SymbolBinding {
-    Weak,
-    Local,
-    Default,
-}
-
-pub struct NameResolver<'src> {
-    names: std::collections::HashMap<Cow<'src, str>, AnyEntityRef>,
-}
-
-impl<'src> NameResolver<'src> {
-    pub fn new() -> Self {
-        Self {
-            names: std::collections::HashMap::new(),
-        }
-    }
-
-    pub fn get(&self, name: &str) -> Option<AnyEntityRef> {
-        self.names.get(name).copied()
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelocRange {
     pub(super) relocs: Range<usize>,
@@ -94,7 +42,10 @@ pub struct FileRelocs {
     array: Box<[RelocationEntry<ErasedEntityRef>]>,
 
     // In what symbol this relocation is placed
-    owners: GappedMap<AnyEntityRef, RelocRange>,
+    code_owners: GappedMap<FunctionRef, RelocRange>,
+    data_owners: GappedMap<DataSymbolRef, RelocRange>,
+    // Elem/global doesn't have relocations.
+    // TODO: custom section related relocs?
 }
 
 impl FileRelocs {
@@ -102,7 +53,10 @@ impl FileRelocs {
     pub fn build_relocs(
         file_relocs: impl IntoIterator<Item = AnyRelocationEntry>,
         file_db: &FileSymbolDb,
-        owners: GappedMap<AnyEntityRef, RelocRange>,
+        (code_owners, data_owners): (
+            GappedMap<FunctionRef, RelocRange>,
+            GappedMap<DataSymbolRef, RelocRange>,
+        ),
     ) -> Result<Self> {
         let mut array = file_relocs
             .into_iter()
@@ -142,41 +96,30 @@ impl FileRelocs {
 
         array.sort_by_key(|e| e.offset);
 
-        Ok(Self { array, owners })
+        Ok(Self {
+            array,
+            code_owners,
+            data_owners,
+        })
     }
 
-    pub fn get(&self, owner: AnyEntityRef) -> &[RelocationEntry<ErasedEntityRef>] {
-        let Some(range) = self.owners.get(owner) else {
-            return &[];
-        };
-
-        &self.array[range.relocs.clone()]
-    }
-
-    pub fn get_mut(&mut self, owner: AnyEntityRef) -> &mut [RelocationEntry<ErasedEntityRef>] {
-        let Some(range) = self.owners.get(owner) else {
-            return &mut [];
-        };
-        &mut self.array[range.relocs.clone()]
-    }
     /// Convert enum to erased form.
-    fn unwrap_entity_ref(src: TaggedEntityRef, symbol_type: SymbolType) -> ErasedEntityRef {
+    fn unwrap_entity_ref(src: EntityKind, symbol_type: SymbolType) -> ErasedEntityRef {
         match (src, symbol_type) {
             (
-                TaggedEntityRef::Function(f),
+                EntityKind::Function(f),
                 SymbolType::FunctionIndex | SymbolType::FunctionOffset | SymbolType::TableIndex,
             ) => ErasedEntityRef::from_u32(f.as_u32()),
-            (TaggedEntityRef::Global(g), SymbolType::GlobalIndex) => {
+            (EntityKind::Global(g), SymbolType::GlobalIndex) => {
                 ErasedEntityRef::from_u32(g.as_u32())
             }
-            (
-                TaggedEntityRef::DataSymbol(d),
-                SymbolType::MemoryAddrLocrel | SymbolType::MemoryAddr,
-            ) => ErasedEntityRef::from_u32(d.as_u32()),
-            (TaggedEntityRef::Table(t), SymbolType::TableNumber) => {
+            (EntityKind::DataSymbol(d), SymbolType::MemoryAddrLocrel | SymbolType::MemoryAddr) => {
+                ErasedEntityRef::from_u32(d.as_u32())
+            }
+            (EntityKind::Table(t), SymbolType::TableNumber) => {
                 ErasedEntityRef::from_u32(t.as_u32())
             }
-            (TaggedEntityRef::Memory(_) | TaggedEntityRef::Tag(_), _) => {
+            (EntityKind::Memory(_) | EntityKind::Tag(_), _) => {
                 panic!("Unsupported entity ref for relocation")
             }
             _ => panic!("Mismatched entity ref and symbol type"),
@@ -200,11 +143,11 @@ impl FileRelocs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SymbolOffset {
-    // We can use `AnyEntityRef` or `TaggedEntityRef` but for first one, we also need track `EntitiesCount`
+    // We can use `FlatEntityRef` or `TaggedEntityRef` but for first one, we also need track `EntitiesCount`
     // thats why we use `TaggedEntityRef` instead.
     // This also will enhance debugging.
     /// Reference to entity in wasm object.
-    pub entity: TaggedEntityRef,
+    pub entity: EntityKind,
     /// If symbol was merged into another entity, this is the offset in that entity.
     /// Only aplicable for data symbols.
     pub offset_in_entity: u32,
@@ -213,8 +156,9 @@ pub struct SymbolOffset {
     /// (Like functionoffset, memoryaddrlocrel, etc).
     pub used_defintion: bool,
 }
+
 impl SymbolOffset {
-    pub fn new(entity: TaggedEntityRef) -> Self {
+    pub fn new(entity: EntityKind) -> Self {
         Self {
             entity,
             offset_in_entity: 0,

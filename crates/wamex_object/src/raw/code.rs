@@ -1,4 +1,5 @@
 use anyhow::{Result, bail, ensure};
+use wasmparser::FuncType;
 pub use wasmparser::FunctionBody;
 
 use super::{Ind, indexes::FuncTypeId};
@@ -11,7 +12,7 @@ pub enum InputFunction<'a> {
 }
 #[derive(Debug, Clone)]
 pub struct FunctionWithBody<'a> {
-    pub type_id: FuncTypeId,
+    pub func_type: FuncType,
     pub body: FunctionBody<'a>,
 }
 
@@ -25,7 +26,8 @@ impl<'a> CodeSection<'a> {
     pub fn new(
         start: Option<FunctionRef>,
         funcs: Vec<FunctionBody<'a>>,
-        func_types: Vec<FuncTypeId>,
+        func_type_ids: Vec<FuncTypeId>,
+        func_types: &IdVec<FuncType>,
         code_header: Option<(usize, usize, u32)>,
     ) -> Result<Ind<Self>> {
         let Some((code_start, section_index, count)) = code_header else {
@@ -38,10 +40,10 @@ impl<'a> CodeSection<'a> {
             funcs.len()
         );
         ensure!(
-            count as usize == func_types.len(),
-            "Function types count mismatch: {} != {}",
+            count as usize == func_type_ids.len(),
+            "Function type ids count mismatch: {} != {}",
             count,
-            func_types.len()
+            func_type_ids.len()
         );
         Ok(Ind {
             starting_offset: code_start,
@@ -50,8 +52,11 @@ impl<'a> CodeSection<'a> {
                 start_func: start,
                 defined_funcs: funcs
                     .into_iter()
-                    .zip(&func_types)
-                    .map(|(body, ty)| FunctionWithBody { type_id: *ty, body })
+                    .zip(&func_type_ids)
+                    .map(|(body, type_id)| FunctionWithBody {
+                        func_type: func_types[*type_id].clone(),
+                        body,
+                    })
                     .collect(),
             },
         })
