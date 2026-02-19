@@ -8,6 +8,7 @@ use crate::{
     typed::{FunctionRef, Module},
 };
 
+pub mod memory_layout;
 pub mod modify;
 pub mod relocation;
 

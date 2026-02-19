@@ -77,7 +77,6 @@ impl Rewrite {
 
 /// Represents a modification entry that describes changes to be made
 /// to a specific range of bytes in a WebAssembly module.
-///
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModificationEntry<D = ()> {
     /// Indicates if this entry rewrites some of the original bytes.
@@ -94,12 +93,6 @@ pub struct ModificationEntry<D = ()> {
 pub enum ModifyOrReloc<D> {
     Modify(ModificationEntry<D>),
     OriginalReloc(AnyRelocationEntry),
-}
-
-#[derive(Default, Debug, Clone, Copy)]
-pub struct ModuleConfig {
-    // Is this module is emitting as position-independent code
-    pub dyn_base: bool,
 }
 
 // Future desing of moidifcation trait:

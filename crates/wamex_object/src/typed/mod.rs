@@ -9,19 +9,21 @@
 use std::fmt::Debug;
 
 use anyhow::{Result, bail};
-use cranelift_entity::EntityRef;
+use cranelift_entity::{EntityRef, SecondaryMap};
 pub use entities::*;
 use log::warn;
 use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
 
 use crate::{
-    index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, NonDefault, Temp},
+    index::{
+        Building, CompoundList, Finished, GappedMap, IdVec, ImportOrDefined, NonDefault, Temp,
+    },
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
-    raw::{self, DefinedFuncId, ElementId, ImportId},
-    typed::common_index::EntityKind,
+    raw::{self, DataSegmentId, DefinedFuncId, ElementId, ImportId},
+    typed::{common_index::EntityKind, data::DataSymbolRef},
 };
 
 pub mod common_index;
@@ -40,7 +42,7 @@ impl_entity_index! {
 // Wasm module + extra information required for applying relocations of symbols from this module.
 //
 pub struct LinkingFile<'src> {
-    wasm_reader: raw::ObjectReader<'src>,
+    pub(crate) wasm_reader: raw::ObjectReader<'src>,
     pub file_symbol_db: file_db::FileSymbolDb,
     pub relocs: FileRelocs,
     pub module: Module<'src>,
@@ -93,6 +95,7 @@ pub struct Module<'src, BuilderState = Finished> {
 
     // linkage entity (lack of import part?)
     pub data: IdVec<data::RawDataChunk<'src>>,
+    pub data_segments: SecondaryMap<DataSymbolRef, DataSegmentId>,
 
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
@@ -219,11 +222,12 @@ impl<'src> Module<'src> {
             .chunk_by(|o, a| o.1.segment_id == a.1.segment_id)
             .peekable();
 
-        let data = {
+        let (data, data_segments) = {
             // todo: make it configurable
             let slice_chunks = true;
 
             let mut sliced_chunks = IdVec::new();
+            let mut data_segments = SecondaryMap::new();
 
             for (segment_id, d) in reader.data.data_segments.iter() {
                 let pow2align = reader.linking.segments_info[segment_id.index()]
@@ -237,13 +241,15 @@ impl<'src> Module<'src> {
 
                 if !slice_chunks {
                     warn!("Skipping data segment slicing - working with one chunk per segment");
-                    sliced_chunks.push(segment_chunk);
+                    let id = sliced_chunks.push(segment_chunk);
+                    data_segments[id] = segment_id;
                     continue;
                 }
 
                 let Some(chunk) = chunks.peek() else {
                     warn!("No more data symbols, skipping slicing for the rest of segments");
-                    sliced_chunks.push(segment_chunk);
+                    let id = sliced_chunks.push(segment_chunk);
+                    data_segments[id] = segment_id;
                     continue;
                 };
 
@@ -260,7 +266,8 @@ impl<'src> Module<'src> {
                         "No data symbols for segment {:?}. Skipping slicing for this segment.",
                         segment_id
                     );
-                    sliced_chunks.push(segment_chunk);
+                    let id = sliced_chunks.push(segment_chunk);
+                    data_segments[id] = segment_id;
                     continue;
                 }
 
@@ -273,16 +280,19 @@ impl<'src> Module<'src> {
 
                 let sliced = segment_chunk.slice_segment(defined_data_symbols);
                 let filtered = data::DataChunk::filter_bounds_in_table(sliced, &mut file_symbol_db);
-
-                sliced_chunks.extend(filtered.into_iter().map(|(_, chunk)| chunk));
+                for (_, chunk) in filtered.into_iter() {
+                    let id = sliced_chunks.push(chunk);
+                    data_segments[id] = segment_id;
+                }
             }
 
-            sliced_chunks
+            (sliced_chunks, data_segments)
         };
 
         let this = Module {
             indirect_function_table,
             data,
+            data_segments,
             functions,
             tables,
             memories,
@@ -315,7 +325,7 @@ impl<'src> Module<'src> {
             EntityKind::Memory(mem_id) => self.memories.names.get(mem_id).map(|n| &n[..]),
             EntityKind::Tag(tag_id) => self.tags.names.get(tag_id).map(|n| &n[..]),
             EntityKind::Type(_) => None, // types don't have names in name section
-            EntityKind::DataSymbol(d) => None, // TODO: add names for data symbols
+            EntityKind::DataSymbol(d) => Some("<data>"), // TODO: add names for data symbols
         }
     }
     pub fn function_id_iter<'any>(
@@ -378,6 +388,7 @@ impl<'src> ModuleBuilder<'src> {
             globals: entities::Globals::new(),
             tags: entities::Tags::new(),
             data: IdVec::new(),
+            data_segments: SecondaryMap::new(),
             tables,
             // TODO: When building IndirectFunctionTable we need Temp<TableRef> instead of TableRef.
             indirect_function_table: elements::IndirectFunctionTable::new(TableRef::from_u32(0)),
@@ -393,6 +404,7 @@ impl<'src> ModuleBuilder<'src> {
             globals: self.globals.into_finished(),
             tags: self.tags.into_finished(),
             data: self.data,
+            data_segments: self.data_segments,
             indirect_function_table: self.indirect_function_table,
         }
     }

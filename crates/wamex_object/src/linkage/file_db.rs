@@ -196,6 +196,22 @@ impl FileRelocs {
             )
     }
 
+    pub fn get_data_relocs(
+        &self,
+        data_symbol: DataSymbolRef,
+    ) -> Option<&[RelocationEntry<ErasedEntityRef>]> {
+        self.data_owners
+            .get(data_symbol)
+            .map(|range| &self.array[range.relocs.clone()])
+    }
+    pub fn get_code_relocs(
+        &self,
+        func: FunctionRef,
+    ) -> Option<&[RelocationEntry<ErasedEntityRef>]> {
+        self.code_owners
+            .get(func)
+            .map(|range| &self.array[range.relocs.clone()])
+    }
     /// Convert enum to erased form.
     fn unwrap_entity_ref(src: EntityKind, symbol_type: SymbolType) -> ErasedEntityRef {
         match (src, symbol_type) {

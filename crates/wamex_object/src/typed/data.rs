@@ -67,7 +67,6 @@ pub struct DataChunk<D> {
     /// offset of this chunk in wasm file
     pub original_offset: usize,
     pub data: D,
-    pub segment_id: DataSegmentId,
     pub pow2align: u8,
 }
 
@@ -102,7 +101,6 @@ impl<'a> RawDataChunk<'a> {
             data: segment_data,
             pow2align,
             original_offset,
-            segment_id,
         }
     }
     /// Extracts data chunks defined in linking table as separate symbol.
@@ -196,7 +194,6 @@ impl<'a> RawDataChunk<'a> {
                 pow2align: field_alignment,
                 data: relation,
                 original_offset: segment_offset + symbol_in_data.start as usize,
-                segment_id: self.segment_id,
             };
             log::trace!("Data part: {part:?}");
             data_parts.push(part);
@@ -235,7 +232,6 @@ impl<'a> DataChunk<SymbolRelation<'a>> {
                         data: bytes,
                         pow2align: chunk.pow2align,
                         original_offset: chunk.original_offset,
-                        segment_id: chunk.segment_id,
                     });
                 }
                 SymbolRelation::BoundToPrevious { offset, symbol_id } => {
