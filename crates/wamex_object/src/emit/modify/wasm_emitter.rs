@@ -32,7 +32,7 @@ where
     }
 
     fn push_byte(&mut self, byte: u8) -> Result<(), std::io::Error> {
-        self.writer.write(&[byte])?;
+        let _ = self.writer.write(&[byte])?;
         self.offset += 1;
         Ok(())
     }
@@ -41,7 +41,7 @@ where
         let mut buf = [0; 5];
         encode::encode_leb128_u32_5byte(v, &mut buf);
         let res = self.offset;
-        self.writer.write(&buf)?;
+        let _ = self.writer.write(&buf)?;
         Ok(res)
     }
 
@@ -49,7 +49,7 @@ where
         let mut buf = [0; 5];
         encode::encode_leb128_i32_5byte(v, &mut buf);
         let res = self.offset;
-        self.writer.write(&buf)?;
+        let _ = self.writer.write(&buf)?;
         Ok(res)
     }
 
@@ -82,18 +82,18 @@ where
         if m.memory_index == 0 {
             let _ = self.encode_leb_5byte(m.align)?;
             let offset = self.encode_leb_5byte(m.offset.try_into().unwrap())?;
-            return Ok(MemArgOffsets {
+            Ok(MemArgOffsets {
                 offset,
                 memory_index: None,
-            });
+            })
         } else {
             let _ = self.encode_leb_5byte(m.align | (1 << 6))?;
-            let idx = self.encode_leb_5byte(m.memory_index.try_into().unwrap())?;
+            let idx = self.encode_leb_5byte(m.memory_index)?;
             let offset = self.encode_leb_5byte(m.offset.try_into().unwrap())?;
-            return Ok(MemArgOffsets {
+            Ok(MemArgOffsets {
                 offset,
                 memory_index: Some(idx),
-            });
+            })
         }
     }
 

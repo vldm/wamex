@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{fmt::Write, ops::Range};
 
 #[derive(Clone, Debug)]
 pub struct DataPart<'a> {
@@ -17,8 +17,7 @@ pub struct Ref<'a> {
 /// part_base - initial offset of the part in the overall data segment.
 /// color - whether to use ANSI color codes for highlighting.
 /// part - the DataPart to render.
-pub fn render_part(out: &mut String, part_base: usize, part: &DataPart, color: bool) {
-    use std::fmt::Write;
+pub fn render_part(mut out: impl Write, part_base: usize, part: &DataPart, color: bool) {
     // Mark bytes to ref index
     let mut byte_to_ref: Vec<Option<usize>> = vec![None; part.bytes.len()];
     for (idx, r) in part.refs.iter().enumerate() {
@@ -135,25 +134,29 @@ pub fn render_part(out: &mut String, part_base: usize, part: &DataPart, color: b
         }
     }
 
-    writeln!(out, "\nREFS (this part)").ok();
-    for (i, r) in part.refs.iter().enumerate() {
-        let a = r.range.start + part_base;
-        let b = r.range.end + part_base;
-        let index = if color {
-            let (fg, bg) = palette(i);
-            format!("\x1b[{fg};{bg}m{}\x1b[0m ", i + 1)
-        } else {
-            format!("{}", i + 1)
-        };
-        writeln!(
-            out,
-            "  [{}] {}   range=0x{a:04X}..0x{b:04X} ({})",
-            index,
-            r.name,
-            r.range.end.saturating_sub(r.range.start)
-        )
-        .ok();
+    if !part.refs.is_empty() {
+        writeln!(out, "  REFS (this part)").ok();
+        for (i, r) in part.refs.iter().enumerate() {
+            let a = r.range.start + part_base;
+            let b = r.range.end + part_base;
+            let index = if color {
+                let (fg, bg) = palette(i);
+                format!("\x1b[{fg};{bg}m{}\x1b[0m ", i + 1)
+            } else {
+                format!("{}", i + 1)
+            };
+            writeln!(
+                out,
+                "  [{}] {}   range=0x{a:04X}..0x{b:04X} ({})",
+                index,
+                r.name,
+                r.range.end.saturating_sub(r.range.start)
+            )
+            .ok();
+        }
     }
+
+    writeln!(out).ok();
 }
 
 /// Returns (fg_code, bg_code)
@@ -180,19 +183,19 @@ mod tests {
             refs: vec![
                 Ref {
                     range: 0..6,
-                    name: ".Lanon.faeb22a22ed4190fdf8d8c764500d80d.47".into(),
+                    name: ".Lanon.faeb22a22ed4190fdf8d8c764500d80d.47",
                 },
                 Ref {
                     range: 8..21,
-                    name: "very_very_long_human_readable_field_name".into(),
+                    name: "very_very_long_human_readable_field_name",
                 },
                 Ref {
                     range: 24..27,
-                    name: ".Lanon.a91b73428f0e239f7d2e4cbd3eaa0011.02".into(),
+                    name: ".Lanon.a91b73428f0e239f7d2e4cbd3eaa0011.02",
                 },
                 Ref {
                     range: 46..47,
-                    name: "tiny".into(),
+                    name: "tiny",
                 },
             ],
         };

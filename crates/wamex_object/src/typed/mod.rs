@@ -9,21 +9,19 @@
 use std::fmt::Debug;
 
 use anyhow::{Result, bail};
-use cranelift_entity::{EntityRef, SecondaryMap};
+use cranelift_entity::{EntityRef, PrimaryMap};
 pub use entities::*;
 use log::warn;
 use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
 
 use crate::{
-    index::{
-        Building, CompoundList, Finished, GappedMap, IdVec, ImportOrDefined, NonDefault, Temp,
-    },
+    index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, NonDefault, Temp},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
     raw::{self, DataSegmentId, DefinedFuncId, ElementId, ImportId},
-    typed::{common_index::EntityKind, data::DataSymbolRef},
+    typed::{common_index::EntityKind, data::DataSegmentInfo},
 };
 
 pub mod common_index;
@@ -42,6 +40,7 @@ impl_entity_index! {
 // Wasm module + extra information required for applying relocations of symbols from this module.
 //
 pub struct LinkingFile<'src> {
+    // used for tests
     pub(crate) wasm_reader: raw::ObjectReader<'src>,
     pub file_symbol_db: file_db::FileSymbolDb,
     pub relocs: FileRelocs,
@@ -50,7 +49,7 @@ pub struct LinkingFile<'src> {
 
 impl<'src> LinkingFile<'src> {
     pub fn from_wasm_bytes(wasm_bytes: &'src [u8]) -> Result<Self> {
-        let reader = raw::ObjectReader::parse(&wasm_bytes)?;
+        let reader = raw::ObjectReader::parse(wasm_bytes)?;
 
         Self::from_raw_module(reader)
     }
@@ -75,17 +74,16 @@ pub type ModuleBuilder<'src> = Module<'src, Building>;
 /// - name section with function and global names
 /// - linking section with symbol information
 ///
-/// Unlike `read::ObjectReader` which is low-level representation of wasm module sections structure,
-/// `InputObject` provides higher-level API to access wasm entities like functions and globals, in a way that concatenates imported and defined entities.
+/// Unlike `raw::ObjectReader` which is low-level representation of wasm module sections structure,
+/// `Module` provides higher-level API to access wasm entities like functions and globals, in a way that concatenates imported and defined entities.
 /// So user can use type-safe indexes from original module.
-/// Additionally, `InputObject` expects that module has linking information and symbol names for entities.
+/// Additionally, `Module` expects that module has linking information and symbol names for entities.
+/// Also `Module` can be built from scratch using `ModuleBuilder` API, during this build Temp indexes are returned, which
+/// can be converted to stable after calling `into_finished()`.
+/// The temp indexes are used to automatically shift defined entities after new imports are added.
+///
 #[derive(Debug)]
 pub struct Module<'src, BuilderState = Finished> {
-    // symbols: Symbols<'src>,
-    // pub to_any_ref: GappedMap<SymbolId, common_index::FlatEntityRef>,
-
-    // function types?
-
     // wasm entities
     pub functions: entities::Functions<'src, BuilderState>,
     pub tables: entities::Tables<'src, BuilderState>,
@@ -93,12 +91,16 @@ pub struct Module<'src, BuilderState = Finished> {
     pub globals: entities::Globals<'src, BuilderState>,
     pub tags: entities::Tags<'src, BuilderState>,
 
-    // linkage entity (lack of import part?)
+    /// linkage entity
+    // (lack of import part?)
     pub data: IdVec<data::RawDataChunk<'src>>,
-    pub data_segments: SecondaryMap<DataSymbolRef, DataSegmentId>,
+    pub data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>>,
 
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
+    /// List of functions to be called on module start.
+    /// Should have `()->void` type and can be defined or imported.
+    pub start_functions: Vec<FunctionRef>,
 }
 
 impl<'src> Module<'src> {
@@ -109,8 +111,8 @@ impl<'src> Module<'src> {
         let mut imported_funcs: Vec<ImportId> = Vec::new();
         let mut imported_globals: Vec<ImportId> = Vec::new();
 
-        let imports = entities::read_imports(&reader)?;
-        let exports = entities::read_exports(&reader)?;
+        let imports = entities::read_imports(reader)?;
+        let exports = entities::read_exports(reader)?;
 
         let functions = entities::Functions::from_parts(
             CompoundList::new(
@@ -129,7 +131,7 @@ impl<'src> Module<'src> {
                 .functions
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (FunctionRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .map(|(id, name)| (FunctionRef::from_u32(id.as_u32()), *name))
                 .collect(),
             exports.0,
         );
@@ -141,7 +143,7 @@ impl<'src> Module<'src> {
                 .tables
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (TableRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .map(|(id, name)| (TableRef::from_u32(id.as_u32()), *name))
                 .collect(),
             exports.1,
         );
@@ -153,7 +155,7 @@ impl<'src> Module<'src> {
                 .memories
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (MemoryRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .map(|(id, name)| (MemoryRef::from_u32(id.as_u32()), *name))
                 .collect(),
             exports.2,
         );
@@ -165,7 +167,7 @@ impl<'src> Module<'src> {
                 .globals
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (GlobalRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .map(|(id, name)| (GlobalRef::from_u32(id.as_u32()), *name))
                 .collect(),
             exports.3,
         );
@@ -177,7 +179,7 @@ impl<'src> Module<'src> {
                 .tags
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (TagRef::from_u32(id.as_u32()), NonDefault::from(*name)))
+                .map(|(id, name)| (TagRef::from_u32(id.as_u32()), *name))
                 .collect(),
             exports.4,
         );
@@ -211,45 +213,46 @@ impl<'src> Module<'src> {
             });
 
         let indirect_function_table =
-            elements::IndirectFunctionTable::from_reader(&reader, table_id, true)?;
+            elements::IndirectFunctionTable::from_reader(reader, table_id, true)?;
 
         let LinkageInfo {
             mut file_symbol_db,
             defined_data_symbols,
-        } = LinkageInfo::from_reader(&reader);
+        } = LinkageInfo::from_reader(reader);
 
         let mut chunks = defined_data_symbols
             .chunk_by(|o, a| o.1.segment_id == a.1.segment_id)
             .peekable();
 
-        let (data, data_segments) = {
+        let data = {
             // todo: make it configurable
             let slice_chunks = true;
 
             let mut sliced_chunks = IdVec::new();
-            let mut data_segments = SecondaryMap::new();
 
             for (segment_id, d) in reader.data.data_segments.iter() {
-                let pow2align = reader.linking.segments_info[segment_id.index()]
-                    .alignment
-                    .try_into()
-                    .unwrap();
+                let segment_info = reader.linking.segments_info[segment_id.index()];
+                let pow2align = segment_info.alignment.try_into().unwrap();
+                let segment_name = segment_info.name;
                 // Range.start is point to <length> field of data segment.
                 let data_start = d.range.end - d.data.len();
-                let segment_chunk =
-                    data::RawDataChunk::from_segment(segment_id, d.data, pow2align, data_start);
+                let segment_chunk = data::RawDataChunk::from_segment(
+                    segment_id,
+                    d.data,
+                    segment_name.into(),
+                    pow2align,
+                    data_start,
+                );
 
                 if !slice_chunks {
                     warn!("Skipping data segment slicing - working with one chunk per segment");
-                    let id = sliced_chunks.push(segment_chunk);
-                    data_segments[id] = segment_id;
+                    sliced_chunks.push(segment_chunk);
                     continue;
                 }
 
                 let Some(chunk) = chunks.peek() else {
                     warn!("No more data symbols, skipping slicing for the rest of segments");
-                    let id = sliced_chunks.push(segment_chunk);
-                    data_segments[id] = segment_id;
+                    sliced_chunks.push(segment_chunk);
                     continue;
                 };
 
@@ -266,38 +269,47 @@ impl<'src> Module<'src> {
                         "No data symbols for segment {:?}. Skipping slicing for this segment.",
                         segment_id
                     );
-                    let id = sliced_chunks.push(segment_chunk);
-                    data_segments[id] = segment_id;
+                    sliced_chunks.push(segment_chunk);
                     continue;
                 }
 
                 let defined_data_symbols = chunks
                     .next()
                     .unwrap()
-                    .into_iter()
+                    .iter()
                     .map(|&(symbol_id, ref symbol_info)| (symbol_id, symbol_info))
                     .collect::<Vec<_>>();
 
                 let sliced = segment_chunk.slice_segment(defined_data_symbols);
                 let filtered = data::DataChunk::filter_bounds_in_table(sliced, &mut file_symbol_db);
-                for (_, chunk) in filtered.into_iter() {
-                    let id = sliced_chunks.push(chunk);
-                    data_segments[id] = segment_id;
-                }
+                sliced_chunks.extend(filtered.into_iter().map(|(_, v)| v));
             }
 
-            (sliced_chunks, data_segments)
+            sliced_chunks
         };
+
+        let data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'_>> = reader
+            .data
+            .data_segments
+            .iter()
+            .map(|(id, segment)| {
+                let info = reader.linking.segments_info[id.index()];
+                let name = info.name.into();
+                let pow2align = info.alignment as u8;
+                DataSegmentInfo::from_parts(&segment.kind, name, pow2align)
+            })
+            .collect::<Result<_>>()?;
 
         let this = Module {
             indirect_function_table,
             data,
-            data_segments,
             functions,
             tables,
             memories,
             globals,
             tags,
+            data_segments,
+            start_functions: reader.code.start_func.into_iter().collect(),
         };
 
         Ok((this, file_symbol_db))
@@ -324,8 +336,8 @@ impl<'src> Module<'src> {
             EntityKind::Table(table_id) => self.tables.names.get(table_id).map(|n| &n[..]),
             EntityKind::Memory(mem_id) => self.memories.names.get(mem_id).map(|n| &n[..]),
             EntityKind::Tag(tag_id) => self.tags.names.get(tag_id).map(|n| &n[..]),
+            EntityKind::DataSymbol(d) => self.data.get(d).map(|v| &v.name[..]),
             EntityKind::Type(_) => None, // types don't have names in name section
-            EntityKind::DataSymbol(d) => Some("<data>"), // TODO: add names for data symbols
         }
     }
     pub fn function_id_iter<'any>(
@@ -368,6 +380,7 @@ impl<'src> Module<'src> {
 }
 
 impl<'src> ModuleBuilder<'src> {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let mut tables = entities::Tables::new();
         let _table_ref = tables.items.push_defined(&raw::Table {
@@ -388,10 +401,11 @@ impl<'src> ModuleBuilder<'src> {
             globals: entities::Globals::new(),
             tags: entities::Tags::new(),
             data: IdVec::new(),
-            data_segments: SecondaryMap::new(),
+            data_segments: PrimaryMap::new(),
             tables,
-            // TODO: When building IndirectFunctionTable we need Temp<TableRef> instead of TableRef.
+            // TODO: When building IndirectFunctionTable provide Temp<TableRef> instead of TableRef.
             indirect_function_table: elements::IndirectFunctionTable::new(TableRef::from_u32(0)),
+            start_functions: Vec::new(),
         }
     }
 
@@ -406,6 +420,7 @@ impl<'src> ModuleBuilder<'src> {
             data: self.data,
             data_segments: self.data_segments,
             indirect_function_table: self.indirect_function_table,
+            start_functions: self.start_functions,
         }
     }
 

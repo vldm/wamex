@@ -165,7 +165,7 @@ impl<'src> CodeRelocationHandler {
         buffer.try_extend_before(ix_size)?;
 
         let instruction = {
-            let bin_reader = wasmparser::BinaryReader::new(&buffer.green_buf(), 0);
+            let bin_reader = wasmparser::BinaryReader::new(buffer.green_buf(), 0);
             let mut op_reader = wasmparser::OperatorsReader::new(bin_reader);
             let instr = op_reader.read()?;
             if !op_reader.eof() {
@@ -238,7 +238,7 @@ impl<'src> CodeRelocationHandler {
         // TODO: Return new list of relocations to GlobalGet and I32Const (GlobalIndexLeb + MemoryAddrLeb | TableIndexLeb)
         new_relocs.push(OutputRelocationEntry {
             symbol_id: OutputEntityRef::resolved(got_global_index), // to symbol_id
-            offset: got_rel_offset as u32,
+            offset: got_rel_offset,
             encoding: Encoding::Leb,
             width: RelocationWidth::Bits32,
             relation: Relative::None,
@@ -249,7 +249,7 @@ impl<'src> CodeRelocationHandler {
         new_relocs.push(OutputRelocationEntry {
             // TODO: Handle old memory index
             symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
-            offset: const_rel_offset as u32,
+            offset: const_rel_offset,
             relation: Relative::Got,
 
             encoding: old_entry.encoding,
@@ -309,7 +309,7 @@ impl<'src> CodeRelocationHandler {
             let reloc_offset = writer.global_get(global_id.as_u32())?;
             new_relocs.push(OutputRelocationEntry {
                 symbol_id: OutputEntityRef::resolved(global_id),
-                offset: reloc_offset as u32,
+                offset: reloc_offset,
                 encoding: Encoding::Leb,
                 symbol_type: SymbolType::GlobalIndex,
                 width: RelocationWidth::Bits32,
@@ -327,7 +327,7 @@ impl<'src> CodeRelocationHandler {
             let reloc_offset = writer.global_get(global_id.as_u32())?;
             new_relocs.push(OutputRelocationEntry {
                 symbol_id: OutputEntityRef::resolved(global_id),
-                offset: reloc_offset as u32,
+                offset: reloc_offset,
                 encoding: Encoding::Leb,
                 symbol_type: SymbolType::GlobalIndex,
                 width: RelocationWidth::Bits32,
@@ -340,7 +340,7 @@ impl<'src> CodeRelocationHandler {
         new_relocs.push(OutputRelocationEntry {
             //TODO: Convert to OutputSymbolId
             symbol_id: OutputEntityRef::from_input(entry.symbol_id),
-            offset: mem_offsets.offset as u32,
+            offset: mem_offsets.offset,
             relation: Relative::Got,
 
             encoding: entry.encoding,
@@ -394,7 +394,7 @@ impl<'src> CodeRelocationHandler {
         let fix_offset = |memarg: &wasmparser::MemArg| wasm_encoder::MemArg {
             align: memarg.align as u32,
             memory_index: memarg.memory,
-            offset: memarg.offset as u64,
+            offset: memarg.offset,
         };
         let res = match ix {
             Operator::F32Load { memarg } => writer.f32_load(fix_offset(memarg))?,

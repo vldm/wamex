@@ -24,6 +24,10 @@ fnv = "1.0.7"
 pub_if = "0.1"
 nom = { version = "8.0.0", features = ["std"] }
 
+[dev-dependencies]
+tempdir = "0.3"
+insta = "1.43"
+
 [features]
 default = []
 unstable = [] # enable unstable APIs

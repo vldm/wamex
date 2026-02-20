@@ -30,15 +30,15 @@ use crate::{
 
 type Str<'a> = Cow<'a, str>;
 
-pub struct LinkageInfo {
+pub struct LinkageInfo<'src> {
     pub file_symbol_db: FileSymbolDb,
-    pub defined_data_symbols: Vec<(SymbolId, DataDefined)>,
+    pub defined_data_symbols: Vec<(SymbolId, DataDefined<'src>)>,
     // pub defined_data_symbols: PrimaryMap<DataSymbolRef, DataDefined>,
     // pub relocations: Relocations,
 }
 
-impl LinkageInfo {
-    pub fn from_reader(reader: &ObjectReader) -> Self {
+impl<'src> LinkageInfo<'src> {
+    pub fn from_reader(reader: &ObjectReader<'src>) -> Self {
         let mut id = SymbolId::from_u32(0);
 
         let mut symbols = PrimaryMap::new();
@@ -79,7 +79,8 @@ impl LinkageInfo {
                     let data_ref = defined_data_ids.push(());
                     let idx = EntityKind::DataSymbol(data_ref);
 
-                    defined_data_symbols.push((id, DataDefined::from(defined)));
+                    defined_data_symbols
+                        .push((id, DataDefined::from_defined(defined, (*name).into())));
                     (idx, Some(*name), flags)
                 }
                 SymbolInfo::Data { symbol: None, .. } => {

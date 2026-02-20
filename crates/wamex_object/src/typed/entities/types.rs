@@ -143,6 +143,7 @@ pub enum EntityBody<'src> {
 }
 
 impl EntityBody<'_> {
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         match self {
             EntityBody::Copied { bytes, patches, .. } => {
@@ -156,15 +157,15 @@ impl EntityBody<'_> {
     }
 }
 
-pub fn read_imports<'a>(
-    reader: &crate::raw::ObjectReader<'a>,
-) -> crate::Result<(
+pub type Imports<'a> = (
     Vec<ImportedFunction<'a>>,
     Vec<ImportedTable<'a>>,
     Vec<ImportedMemory<'a>>,
     Vec<ImportedGlobal<'a>>,
     Vec<ImportedTag<'a>>,
-)> {
+);
+
+pub fn read_imports<'a>(reader: &crate::raw::ObjectReader<'a>) -> crate::Result<Imports<'a>> {
     let mut imported_funcs: Vec<ImportedFunction<'a>> = Vec::new();
     let mut imported_tables: Vec<ImportedTable<'a>> = Vec::new();
     let mut imported_memories: Vec<ImportedMemory<'a>> = Vec::new();
@@ -185,28 +186,28 @@ pub fn read_imports<'a>(
                 imported_tables.push(ImportedTable {
                     module: import.module.into(),
                     name: import.name.into(),
-                    entity_type: table_type.clone(),
+                    entity_type: *table_type,
                 });
             }
             TypeRef::Memory(ref memory_type) => {
                 imported_memories.push(ImportedMemory {
                     module: import.module.into(),
                     name: import.name.into(),
-                    entity_type: memory_type.clone(),
+                    entity_type: *memory_type,
                 });
             }
             TypeRef::Global(ref global_type) => {
                 imported_globals.push(ImportedGlobal {
                     module: import.module.into(),
                     name: import.name.into(),
-                    entity_type: global_type.clone(),
+                    entity_type: *global_type,
                 });
             }
             TypeRef::Tag(ref tag_type) => {
                 imported_tags.push(ImportedTag {
                     module: import.module.into(),
                     name: import.name.into(),
-                    entity_type: tag_type.clone(),
+                    entity_type: *tag_type,
                 });
             }
         }
@@ -220,15 +221,15 @@ pub fn read_imports<'a>(
     ))
 }
 
-pub fn read_exports<'a>(
-    reader: &crate::raw::ObjectReader<'a>,
-) -> crate::Result<(
+pub type Exports<'a> = (
     Vec<ExportEntry<'a, FunctionRef>>,
     Vec<ExportEntry<'a, TableRef>>,
     Vec<ExportEntry<'a, MemoryRef>>,
     Vec<ExportEntry<'a, GlobalRef>>,
     Vec<ExportEntry<'a, TagRef>>,
-)> {
+);
+
+pub fn read_exports<'a>(reader: &crate::raw::ObjectReader<'a>) -> crate::Result<Exports<'a>> {
     let mut func_exports: Vec<ExportEntry<'a, FunctionRef>> = Vec::new();
     let mut table_exports: Vec<ExportEntry<'a, TableRef>> = Vec::new();
     let mut memory_exports: Vec<ExportEntry<'a, MemoryRef>> = Vec::new();

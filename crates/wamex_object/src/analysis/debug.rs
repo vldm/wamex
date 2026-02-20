@@ -44,7 +44,7 @@ pub(crate) fn print_deps_inner(
                     "{dep} data[{segment_id}:{start}..{end}]  <{name:?}> (size={})",
                     size_fn(&symbol_kind),
                     start = data.original_offset,
-                    segment_id = info.data_segments[data_ref].as_u32(),
+                    segment_id = info.data[data_ref].segment_id.as_u32(),
                     end = data.original_offset + data.data.len()
                 )
             }
@@ -111,7 +111,7 @@ pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
                     "{dep} data[{segment_id}:{start}..{end}]  <{name:?}> (size={})",
                     size_fn(&symbol_kind),
                     start = data.original_offset,
-                    segment_id = info.data_segments[data_ref].as_u32(),
+                    segment_id = info.data[data_ref].segment_id.as_u32(),
                     end = data.original_offset + data.data.len()
                 )
             }

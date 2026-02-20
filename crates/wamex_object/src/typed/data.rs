@@ -20,23 +20,40 @@ use crate::{
     typed::{Module, SymbolId},
 };
 
-#[derive(Debug)]
-pub struct DataDefined {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DataSegmentInfo<'a> {
+    pub name: Cow<'a, str>,
+    pub location: DataLocation,
+    pub pow2align: u8,
+}
+impl<'a> DataSegmentInfo<'a> {
+    pub fn from_parts(kind: &DataKind, name: Cow<'a, str>, pow2align: u8) -> Result<Self> {
+        Ok(Self {
+            name,
+            location: DataLocation::from_data_kind(kind)?,
+            pow2align,
+        })
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DataDefined<'a> {
     pub segment_id: DataSegmentId,
+    pub name: Cow<'a, str>,
     // Range of bytes in data segment related to this symbol
     pub range: Range<u32>,
 }
-impl From<&wasmparser::DefinedDataSymbol> for DataDefined {
-    fn from(value: &wasmparser::DefinedDataSymbol) -> Self {
+impl<'a> DataDefined<'a> {
+    pub fn from_defined(value: &wasmparser::DefinedDataSymbol, name: Cow<'a, str>) -> Self {
         Self {
             segment_id: DataSegmentId::from_u32(value.index),
             range: value.offset..(value.offset + value.size),
+            name,
         }
     }
 }
 
 /// Memory location of data chunk
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DataLocation {
     /// Place chunk at offset (starting from mem_start) in active memory.
     ActiveOffset(u32),
@@ -63,14 +80,16 @@ impl DataLocation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DataChunk<D> {
+pub struct DataChunk<'src, D> {
     /// offset of this chunk in wasm file
     pub original_offset: usize,
     pub data: D,
     pub pow2align: u8,
+    pub segment_id: DataSegmentId,
+    pub name: Cow<'src, str>,
 }
 
-pub type RawDataChunk<'a> = DataChunk<&'a [u8]>;
+pub type RawDataChunk<'src> = DataChunk<'src, &'src [u8]>;
 
 /// Describes how a data symbol relates to its neighboring symbols within a segment.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,6 +113,7 @@ impl<'a> RawDataChunk<'a> {
     pub fn from_segment(
         segment_id: DataSegmentId,
         segment_data: &'a [u8],
+        segment_name: Cow<'a, str>,
         pow2align: u8,
         original_offset: usize,
     ) -> Self {
@@ -101,6 +121,8 @@ impl<'a> RawDataChunk<'a> {
             data: segment_data,
             pow2align,
             original_offset,
+            segment_id,
+            name: segment_name,
         }
     }
     /// Extracts data chunks defined in linking table as separate symbol.
@@ -114,29 +136,22 @@ impl<'a> RawDataChunk<'a> {
         self,
         // Iterator over defined data symbols in this segment
         // symbol_id is used for debugging and later cleanup of bound symbols
-        defined_data_symbols: impl IntoIterator<Item = (SymbolId, &'o DataDefined)>,
-    ) -> IdVec<DataChunk<SymbolRelation<'a>>> {
+        defined_data_symbols: impl IntoIterator<Item = (SymbolId, &'o DataDefined<'a>)>,
+    ) -> IdVec<DataChunk<'a, SymbolRelation<'a>>>
+    where
+        'a: 'o,
+    {
         let pow2align = self.pow2align;
         let segment_align = 1 << pow2align;
-
-        #[cfg(debug_assertions)]
-        let mut segment_id = None;
 
         let segment_offset = self.original_offset;
         let mut data_parts = IdVec::new();
         let mut last_regular = 0..0;
         for (symbol_id, d) in defined_data_symbols.into_iter() {
-            #[cfg(debug_assertions)]
-            {
-                if let Some(id) = segment_id {
-                    assert_eq!(
-                        id, d.segment_id,
-                        "All data symbols should belong to the same segment"
-                    );
-                } else {
-                    segment_id = Some(d.segment_id);
-                }
-            }
+            debug_assert_eq!(
+                self.segment_id, d.segment_id,
+                "All data symbols should belong to the same segment"
+            );
 
             let symbol_in_data = d.range.clone();
             let field_alignment = Self::data_symbol_alignment(pow2align, symbol_in_data.clone());
@@ -194,6 +209,8 @@ impl<'a> RawDataChunk<'a> {
                 pow2align: field_alignment,
                 data: relation,
                 original_offset: segment_offset + symbol_in_data.start as usize,
+                segment_id: d.segment_id,
+                name: d.name.clone(),
             };
             log::trace!("Data part: {part:?}");
             data_parts.push(part);
@@ -214,14 +231,14 @@ impl<'a> RawDataChunk<'a> {
     }
 }
 
-impl<'a> DataChunk<SymbolRelation<'a>> {
+impl<'a> DataChunk<'a, SymbolRelation<'a>> {
     /// Removes bound symbols from the list, calling cleanup handler for each removed symbol.
     fn filter_bounds_with_cleanup(
         this: IdVec<Self>,
         // external cleanup handler
         // return map of RemovedSymbol to -> (BoundSymbol, offset_within_symbol)
         mut cleanup_symbol: impl FnMut(SymbolId, (SymbolId, u32)),
-    ) -> IdVec<DataChunk<&'a [u8]>> {
+    ) -> IdVec<RawDataChunk<'a>> {
         let mut result = IdVec::new();
         let mut last_regular_data = (&[] as &[u8], SymbolId::reserved_value());
         for (_, chunk) in this.into_inner().into_iter() {
@@ -232,6 +249,8 @@ impl<'a> DataChunk<SymbolRelation<'a>> {
                         data: bytes,
                         pow2align: chunk.pow2align,
                         original_offset: chunk.original_offset,
+                        segment_id: chunk.segment_id,
+                        name: chunk.name,
                     });
                 }
                 SymbolRelation::BoundToPrevious { offset, symbol_id } => {
@@ -249,7 +268,7 @@ impl<'a> DataChunk<SymbolRelation<'a>> {
     pub fn filter_bounds_in_table(
         this: IdVec<Self>,
         table: &mut FileSymbolDb,
-    ) -> IdVec<DataChunk<&'a [u8]>> {
+    ) -> IdVec<RawDataChunk<'a>> {
         Self::filter_bounds_with_cleanup(this, |real_id, (removed, offset)| {
             // Replace entity_ref in table.
             let mut new_entry = table.symbols[real_id].clone();
@@ -263,12 +282,12 @@ impl<'a> DataChunk<SymbolRelation<'a>> {
 }
 
 impl_entity_index! {
-    #[display="data"]
+    #[display="symbol"]
     pub struct DataSymbolRef;
 }
 
 // impl generic over `D`
-impl<D> crate::index::PrimaryKey for DataChunk<D> {
+impl<D> crate::index::PrimaryKey for DataChunk<'_, D> {
     type EntityRef = DataSymbolRef;
 }
 

@@ -65,7 +65,7 @@ impl<'src> SegmentLayout<'src> {
         let data_parts = module
             .data
             .iter()
-            .filter(|(id, _)| module.data_segments[*id] == data_segment_id)
+            .filter(|(id, _)| module.data[*id].segment_id == data_segment_id)
             .map(|(symbol_index, chunk)| (chunk.clone(), symbol_index))
             .collect::<Vec<_>>();
 
@@ -82,19 +82,18 @@ impl<'src> SegmentLayout<'src> {
         module: &Module<'_>,
         module_name: String,
         data_segments: &GappedMap<DataSegmentId, SegmentLayout<'_>>,
+        print_data_format: &mut impl std::fmt::Write,
+        color: bool, // std::io::stdout().is_terminal()
     ) {
-        use std::fmt::Write;
-        let mut print_data_format = String::new();
         writeln!(print_data_format, "<Module {module_name}>").unwrap();
 
         let mut base = 0;
-        for (i, segment) in data_segments.iter() {
+        for (segment_id, segment) in data_segments.iter() {
             for (symbol, symbol_index) in segment.data_parts.iter() {
                 writeln!(
                     print_data_format,
-                    "Data symbol [{i}.{index}]: {name}",
-                    i = i,
-                    index = symbol_index,
+                    "[{segment}:{symbol_index}] {name}",
+                    segment = module.data_segments[segment_id].name,
                     name = module
                         .get_name(EntityKind::DataSymbol(*symbol_index))
                         .unwrap(),
@@ -112,22 +111,16 @@ impl<'src> SegmentLayout<'src> {
                         let name = module.get_name(id).unwrap();
                         hexdump::Ref {
                             range: reloc.relocation_range().shift_left(symbol.original_offset),
-                            name: name,
+                            name,
                         }
                     })
                     .collect();
                 let part = hexdump::DataPart { bytes: chunk, refs };
-                hexdump::render_part(
-                    &mut print_data_format,
-                    base,
-                    &part,
-                    std::io::stderr().is_terminal(),
-                );
+                hexdump::render_part(&mut *print_data_format, base, &part, color);
                 // TODO: add padding
                 base += chunk.len();
             }
         }
-        println!("Data segments {print_data_format}");
     }
 
     pub fn memory_location(&self) -> DataLocation {
@@ -322,7 +315,7 @@ mod tests {
     use cranelift_entity::EntityRef;
 
     use super::*;
-    use crate::{index::IdVec, typed::LinkingFile};
+    use crate::typed::LinkingFile;
     const WASM_BYTES: &[u8] = include_bytes!("../../../../wamex-cli/test-data/simple_graph.wasm");
 
     #[test]
@@ -341,8 +334,15 @@ mod tests {
             );
             segments.insert(segment_id, layout.unwrap());
         }
-
-        SegmentLayout::debug_layout(&file.relocs, &file.module, String::from("test"), &segments);
-        panic!();
+        let mut print_data_format = String::new();
+        SegmentLayout::debug_layout(
+            &file.relocs,
+            &file.module,
+            String::from("test"),
+            &segments,
+            &mut print_data_format,
+            false,
+        );
+        insta::assert_snapshot!(print_data_format);
     }
 }

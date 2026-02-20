@@ -227,10 +227,10 @@ impl<Id> NamedGraph<Id> {
     ) -> DepSet {
         let mut reduced = DepSet::new();
         for dep in shared_entries {
-            if let Some(parent) = graph.get_parents(*dep) {
-                if !parent.iter().any(|p| module_entries.contains(p)) {
-                    continue; // skip if all parents are also in shared entries
-                }
+            if let Some(parent) = graph.get_parents(*dep)
+                && !parent.iter().any(|p| module_entries.contains(p))
+            {
+                continue; // skip if all parents are also in shared entries
             }
             reduced.insert(*dep);
         }

@@ -82,6 +82,7 @@ where
             exports: Vec::new(),
         }
     }
+    
     pub fn into_finished(self) -> EntitiesCollection<'src, Ref, Import, Defined, Finished> {
         EntitiesCollection {
             items: self.items.into_finished(),
