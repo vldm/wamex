@@ -155,7 +155,7 @@ pub fn format_split_program_info(
     writeln!(&mut output, "=== Split Program Structure ===\n").unwrap();
 
     for (idx, (module_id, module_info)) in split_info.output_modules.iter().enumerate() {
-        writeln!(&mut output, "Module #{idx}: {module_id:?}").unwrap();
+        writeln!(&mut output, "Module #{idx}: {module_id}").unwrap();
         writeln!(
             &mut output,
             "  Defined symbols: {}",

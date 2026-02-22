@@ -8,9 +8,12 @@ use cranelift_entity::SecondaryMap;
 use wamex_types::map_vec::MiniSet;
 
 use super::dep_graph::{DepGraph, DepMiniSet, DepSet, NamedGraph, find_reachable_deps};
-use crate::typed::{
-    FunctionRef, Module,
-    common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+use crate::{
+    analysis::dep_graph::SharedEntry,
+    typed::{
+        FunctionRef, Module,
+        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+    },
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -61,6 +64,8 @@ pub struct OutputModuleInfo {
     pub imports: MiniSet<FlatEntityRef>,
     pub exports: MiniSet<FlatEntityRef>,
     pub split_points: Vec<SplitPoint>,
+
+    pub dependencies: BTreeMap<SplitModuleIdentifier, MiniSet<FlatEntityRef>>,
 }
 
 impl Debug for OutputModuleInfo {
@@ -69,6 +74,7 @@ impl Debug for OutputModuleInfo {
         Self::fmt_table(f, "defined_symbols", self.defined_symbols.iter())?;
         Self::fmt_table(f, "imports", self.imports.iter())?;
         Self::fmt_table(f, "exports", self.exports.iter())?;
+        Self::fmt_map(f, "dependencies", self.dependencies.iter())?;
         writeln!(f, "  split_points: {:?},", self.split_points)?;
         write!(f, "}}")
     }
@@ -86,11 +92,7 @@ impl OutputModuleInfo {
         static_export || lazy_export
     }
 
-    fn fmt_table<'a, T, I>(
-        f: &mut std::fmt::Formatter<'_>,
-        label: &str,
-        items: I,
-    ) -> std::fmt::Result
+    fn fmt_table<'a, T, I>(f: &mut dyn std::fmt::Write, label: &str, items: I) -> std::fmt::Result
     where
         T: Debug,
         I: IntoIterator<Item = T>,
@@ -112,6 +114,29 @@ impl OutputModuleInfo {
                 write!(f, "{item:<width$}")?;
             }
             writeln!(f)?;
+        }
+        Ok(())
+    }
+    fn fmt_map<'a, ID, T, U, I>(
+        f: &mut std::fmt::Formatter<'_>,
+        label: &str,
+        items: I,
+    ) -> std::fmt::Result
+    where
+        U: Debug,
+        ID: Debug,
+        I: IntoIterator<Item = (ID, T)>,
+        // fmt each item using fmt_table
+        T: IntoIterator<Item = U>,
+    {
+        writeln!(f, "{label}:")?;
+        let mut is_empty = true;
+        for (id, item) in items {
+            Self::fmt_table(f, &format!("{id:?}"), item.into_iter())?;
+            is_empty = false;
+        }
+        if is_empty {
+            writeln!(f, "<empty>")?;
         }
         Ok(())
     }
@@ -256,9 +281,6 @@ impl SplitModuleIdentifier {
     }
 }
 
-/// Emission plan for a full split program.
-///
-/// Note: the algorithm that computes this structure lives in `wamex-cli`.
 #[derive(Debug, Default)]
 pub struct SplitProgramInfo {
     pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
@@ -448,12 +470,180 @@ pub fn main_roots(
     roots
 }
 
+// // Merge modules that shared with main module into main itself.
+// pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
+//     let (shared_with_main, mut other): (Vec<_>, Vec<_>) =
+//         std::mem::take(&mut program_info.output_modules)
+//             .into_iter()
+//             .partition(|(id, _)| {
+//                 if let SplitModuleIdentifier::Shared(shared_with) = id {
+//                     shared_with.contains(&ModuleIdentifier::Main)
+//                 } else {
+//                     false
+//                 }
+//             });
+
+//     // split iter at 3 parts: before main, main, after main
+//     let (left_to_main, main_module, right_to_main) = {
+//         let main_module_index = other
+//             .iter()
+//             .enumerate()
+//             .find(|(_, (id, _))| *id == MAIN_ID)
+//             .expect("Main module not found")
+//             .0;
+//         let (before, main_and_next) = other.split_at_mut(main_module_index);
+//         let (main_module, after) = main_and_next.split_at_mut(1);
+//         let main_module = &mut main_module[0].1;
+//         (before, main_module, after)
+//     };
+
+//     // check import in all remain modules except main
+//     let is_imported_by_other = |node: &SymbolId| {
+//         left_to_main
+//             .iter()
+//             .chain(right_to_main.iter())
+//             .any(|(_, mod_state)| mod_state.imports.contains(node))
+//             || right_to_main
+//                 .iter()
+//                 .any(|(_, mod_state)| mod_state.imports.contains(node))
+//     };
+
+//     #[cfg(debug_assertions)]
+//     let mut check_imports = vec![];
+
+//     for (id, mut shared_module) in shared_with_main {
+//         debug_assert!(shared_module.split_points.is_empty());
+
+//         for node in &shared_module.exports {
+//             // it was exported in shared module, so on main side it had been imported.
+//             // remove from main link symbols.
+//             if !main_module.imports.remove(node) {
+//                 log::trace!(
+//                     "Shared module symbol not found in main: {node:?}. It probably was removed in other shared entry."
+//                 );
+//             }
+//             // This was imported not only by main, so export is needed.
+//             if is_imported_by_other(node) {
+//                 main_module.exports.insert(*node);
+//             }
+//         }
+
+//         // imported modules should already be in main
+//         #[cfg(debug_assertions)]
+//         for node in &shared_module.imports {
+//             check_imports.push(*node);
+//         }
+//         log::trace!(
+//             "extending main defined symbols with shared ({id:?}): {:?}",
+//             shared_module.defined_symbols
+//         );
+
+//         main_module
+//             .defined_symbols
+//             .extend(std::mem::take(&mut shared_module.defined_symbols));
+//     }
+
+//     debug_assert!(main_module.imports.is_empty());
+//     #[cfg(debug_assertions)]
+//     for node in check_imports {
+//         assert!(
+//             main_module.defined_symbols.contains(&node),
+//             "Shared module import not found in main defined symbols: {node:?}"
+//         );
+//     }
+
+//     program_info.output_modules = std::mem::take(&mut other);
+// }
+
+// Merge shared modules with main module.
+pub fn merge_shared_with_main(
+    (main_id, main): &mut (SplitModuleIdentifier, OutputModuleInfo),
+    regular_modules: &[(SplitModuleIdentifier, OutputModuleInfo)],
+    shared: &mut Vec<SharedEntry<ModuleIdentifier>>,
+) -> anyhow::Result<()> {
+    assert_eq!(
+        &*main_id,
+        &SplitModuleIdentifier::Single(ModuleIdentifier::Main)
+    );
+
+    let mut shared_with_main = Vec::new();
+    let mut other_shared = Vec::new();
+
+    for shared_module in shared.drain(..) {
+        if shared_module.module_names.contains(&ModuleIdentifier::Main) {
+            shared_with_main.push(shared_module);
+        } else {
+            other_shared.push(shared_module);
+        }
+    }
+
+    // check import in all remain modules except main
+    let is_imported_by_other = |node: &FlatEntityRef| {
+        regular_modules
+            .iter()
+            .any(|(_, mod_state)| mod_state.imports.contains(node))
+    };
+    #[cfg(debug_assertions)]
+    let mut check_imports = vec![];
+
+    for shared_module in shared_with_main {
+        for node in &shared_module.exports {
+            // it was exported in shared module, so on main side it had been imported.
+            // remove from main link symbols.
+            if !main.imports.remove(node) {
+                log::trace!(
+                    "Shared module symbol not found in main: {node:?}. It probably was removed in other shared entry."
+                );
+            }
+            // This was imported not only by main, so export is needed.
+            if is_imported_by_other(node) {
+                main.exports.insert(*node);
+            }
+        }
+
+        // imported modules should already be in main
+        #[cfg(debug_assertions)]
+        for node in &shared_module.imports {
+            check_imports.push(*node);
+        }
+
+        log::trace!(
+            "extending main defined symbols with shared ({}): {:?}",
+            shared_module
+                .module_names
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            shared_module.shared_deps
+        );
+
+        main.defined_symbols.extend(shared_module.shared_deps);
+    }
+
+    assert!(
+        main.imports.is_empty(),
+        "BUG: After merging shared modules, main still contain imports."
+    );
+    #[cfg(debug_assertions)]
+    for node in check_imports {
+        assert!(
+            main.defined_symbols.contains(&node),
+            "Shared module import not found in main defined symbols: {node:?}"
+        );
+    }
+
+    shared.extend(other_shared);
+
+    Ok(())
+}
 /// Compute the split modules content based on split points and dependency graph.
 pub fn compute_split_modules(
     info: &Module,
     dep_graph: &DepGraph,
     split_points: &[SplitPoint],
     wbg_descriptors: &MiniSet<FlatEntityRef>,
+    merge_shared: bool,
 ) -> anyhow::Result<SplitProgramInfo> {
     let split_points_by_module = merge_split_points_by_name(split_points);
 
@@ -476,9 +666,9 @@ pub fn compute_split_modules(
         ));
     }
 
-    let shared_deps = NamedGraph::calculate_shared_modules(&mut named_modules, dep_graph);
+    let mut shared_deps = NamedGraph::calculate_shared_modules(&mut named_modules, dep_graph);
 
-    let mut split_module_contents = BTreeMap::<SplitModuleIdentifier, OutputModuleInfo>::new();
+    let mut split_module_contents = Vec::<(SplitModuleIdentifier, OutputModuleInfo)>::new();
 
     split_module_contents.extend(named_modules.into_iter().map(|named_graph| {
         let imports = named_graph.imports().clone();
@@ -486,11 +676,13 @@ pub fn compute_split_modules(
             .get(&named_graph.module.to_string())
             .cloned()
             .unwrap_or_default();
-
+        let id = SplitModuleIdentifier::Single(named_graph.module);
+        let dependencies = calculate_deps(&shared_deps, &id, &imports, None);
         (
-            SplitModuleIdentifier::Single(named_graph.module),
+            id,
             OutputModuleInfo {
                 defined_symbols: named_graph.reachable,
+                dependencies,
                 imports,
                 split_points,
                 exports: DepMiniSet::new(),
@@ -498,16 +690,24 @@ pub fn compute_split_modules(
         )
     }));
 
-    for shared in shared_deps {
-        split_module_contents.insert(
-            SplitModuleIdentifier::Shared(SharedModuleIdentifier(shared.module_names.clone())),
+    if merge_shared {
+        let (main, rest) = split_module_contents.split_at_mut(1);
+        merge_shared_with_main(&mut main[0], rest, &mut shared_deps)?;
+    }
+
+    for (shared_index, shared) in shared_deps.iter().enumerate() {
+        let id = SplitModuleIdentifier::Shared(SharedModuleIdentifier(shared.module_names.clone()));
+        let dependencies = calculate_deps(&shared_deps, &id, &shared.imports, Some(shared_index));
+        split_module_contents.push((
+            id,
             OutputModuleInfo {
-                defined_symbols: shared.shared_deps,
-                exports: shared.exports,
-                imports: shared.imports,
+                defined_symbols: shared.shared_deps.clone(),
+                exports: shared.exports.clone(),
+                imports: shared.imports.clone(),
                 split_points: vec![],
+                dependencies,
             },
-        );
+        ));
     }
 
     let symbol_output_module = split_module_contents
@@ -526,6 +726,51 @@ pub fn compute_split_modules(
         output_modules,
         symbol_output_module,
     })
+}
+
+fn get_deps(
+    shared_deps: &[SharedEntry<ModuleIdentifier>],
+    id: &SplitModuleIdentifier,
+) -> Vec<usize> {
+    match id {
+        SplitModuleIdentifier::Single(name) => shared_deps
+            .iter()
+            .enumerate()
+            .filter(|(_i, m)| m.module_names.contains(name))
+            .map(|(i, _)| i)
+            .collect(),
+        SplitModuleIdentifier::Shared(shared) => shared_deps
+            .iter()
+            .enumerate()
+            .filter(|(_i, m)| shared.0.iter().all(|name| m.module_names.contains(name)))
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>(),
+    }
+}
+fn calculate_deps(
+    shared_deps: &[SharedEntry<ModuleIdentifier>],
+    id: &SplitModuleIdentifier,
+    imports: &MiniSet<FlatEntityRef>,
+    shared_index: Option<usize>,
+) -> BTreeMap<SplitModuleIdentifier, MiniSet<FlatEntityRef>> {
+    let dep_modules = get_deps(shared_deps, id);
+    dep_modules
+        .into_iter()
+        .filter(|dep_module_index| shared_index.map_or(true, |si| si != *dep_module_index))
+        .map(|dep_module_index| {
+            let dep_module = &shared_deps[dep_module_index];
+            let dep_id = SplitModuleIdentifier::Shared(SharedModuleIdentifier(
+                dep_module.module_names.clone(),
+            ));
+            let dep_symbols = dep_module
+                .exports
+                .iter()
+                .filter(|symbol| imports.contains(symbol))
+                .cloned()
+                .collect();
+            (dep_id, dep_symbols)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -594,12 +839,34 @@ mod tests {
         insta::assert_snapshot!(format!("{} - dep_graph", name), dep_graph_output);
 
         // Compute and snapshot the split program info
-        let split_info =
-            compute_split_modules(&info.module, &dep_graph, &split_points, &wbg_descriptors)
-                .expect("Failed to compute split modules");
+        let split_info = compute_split_modules(
+            &info.module,
+            &dep_graph,
+            &split_points,
+            &wbg_descriptors,
+            false,
+        )
+        .expect("Failed to compute split modules");
 
         let split_info_output =
             crate::analysis::debug::format_split_program_info(&split_info, &info.module);
         insta::assert_snapshot!(format!("{} - split_program_info", name), split_info_output);
+
+        // Compute and snapshot the split program info
+        let split_info = compute_split_modules(
+            &info.module,
+            &dep_graph,
+            &split_points,
+            &wbg_descriptors,
+            true,
+        )
+        .expect("Failed to compute split modules");
+
+        let split_info_output =
+            crate::analysis::debug::format_split_program_info(&split_info, &info.module);
+        insta::assert_snapshot!(
+            format!("{} - split_program_info - merged", name),
+            split_info_output
+        );
     }
 }

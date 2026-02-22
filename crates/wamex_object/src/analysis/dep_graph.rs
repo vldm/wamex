@@ -138,7 +138,7 @@ impl<Id> NamedGraph<Id> {
 }
 
 #[derive(Debug, Clone)]
-pub struct SharedEntries<Id> {
+pub struct SharedEntry<Id> {
     pub module_names: Vec<Id>,
     pub shared_deps: DepSet,
     pub exports: DepMiniSet,
@@ -243,7 +243,7 @@ impl<Id> NamedGraph<Id> {
     pub fn calculate_shared_modules(
         modules: &mut [NamedGraph<Id>],
         graph: &DepGraph,
-    ) -> Vec<SharedEntries<Id>>
+    ) -> Vec<SharedEntry<Id>>
     where
         Id: Clone + Ord + Debug,
     {
@@ -284,7 +284,7 @@ impl<Id> NamedGraph<Id> {
                 shared_exports.extend_and_resort(top_shared_deps.into_iter());
                 module_names.push(module.module.clone());
             }
-            result.push(SharedEntries {
+            result.push(SharedEntry {
                 module_names,
                 shared_deps,
                 exports: shared_exports,

@@ -6,10 +6,10 @@
 //!  - `PrimaryMap<K, V>` - map from `EntityRef` to some data. Think of it like `Vec<V>` where index is typed `K`.
 //!  - trait `PrimaryKey` - allows defining default index type for some data type.
 //!  - `IdVec<T>` - wrapper around `PrimaryMap` that allows only types with defined `PrimaryKey`,
-//! think of it like `PrimaryMap<_, T>`` where `K` is inferred automatically.
+//!    think of it like `PrimaryMap<_, T>`` where `K` is inferred automatically.
 //!  - `SecondaryMap<K, V>` - map from `EntityRef` to some data, but with default value in case if some entry wasn't initialized.
 //!  - `GappedMap<K, V>` - wrapper around `SecondaryMap` that handles gaps in the map using trait `ReservedValue`
-//! that mark some defined state of `V` as invalid.
+//!    that mark some defined state of `V` as invalid.
 //!
 //! macro `impl_entity_index!` - allows defining new `EntityRef` types with minimal boilerplate.
 //!
@@ -140,8 +140,7 @@ where
         let last = self
             .map
             .iter()
-            .rev()
-            .next()
+            .next_back()
             .map(|(k, _)| K::new(k.index() + 1))
             .unwrap_or(K::new(0));
         self.insert(last, value);
@@ -166,6 +165,9 @@ where
     }
     pub fn len(&self) -> usize {
         self.length
+    }
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
     }
 
     pub fn entry(&mut self, key: K) -> GappedMapEntry<'_, V> {
@@ -246,6 +248,7 @@ impl<T: PrimaryKey> IdVec<T> {
     pub fn into_inner(self) -> PrimaryMap<T::EntityRef, T> {
         self.0
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn into_iter(self) -> impl Iterator<Item = (T::EntityRef, T)> {
         self.0.into_iter()
     }
@@ -358,7 +361,7 @@ impl<T: ReservedValue> PackedOptionExt<T> for PackedOption<T> {
             None
         } else {
             //SAFETY: cast ref to inner type of repr(transparent) type
-            Some(unsafe { std::mem::transmute(self) })
+            Some(unsafe { std::mem::transmute::<&PackedOption<T>, &T>(self) })
         }
     }
     fn expand_mut(&mut self) -> Option<&mut T> {
@@ -366,7 +369,7 @@ impl<T: ReservedValue> PackedOptionExt<T> for PackedOption<T> {
             None
         } else {
             //SAFETY: cast ref to inner type of repr(transparent) type
-            Some(unsafe { std::mem::transmute(self) })
+            Some(unsafe { std::mem::transmute::<&mut PackedOption<T>, &mut T>(self) })
         }
     }
 }
