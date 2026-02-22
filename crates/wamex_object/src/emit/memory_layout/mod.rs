@@ -94,9 +94,7 @@ impl<'src> SegmentLayout<'src> {
                     print_data_format,
                     "[{segment}:{symbol_index}] {name}",
                     segment = module.data_segments[segment_id].name,
-                    name = module
-                        .get_name(EntityKind::DataSymbol(*symbol_index))
-                        .unwrap(),
+                    name = module.get_name(EntityKind::DataSymbol(*symbol_index))
                 )
                 .unwrap();
                 let chunk = symbol.data;
@@ -108,7 +106,7 @@ impl<'src> SegmentLayout<'src> {
                     .iter()
                     .map(|reloc| {
                         let id = reloc.symbol_id.combine(reloc.symbol_type);
-                        let name = module.get_name(id).unwrap();
+                        let name = module.get_name(id);
                         hexdump::Ref {
                             range: reloc.relocation_range().shift_left(symbol.original_offset),
                             name,
@@ -313,16 +311,22 @@ impl DataSegmentOutput {
 #[cfg(test)]
 mod tests {
     use cranelift_entity::EntityRef;
+    use nom::bytes;
 
     use super::*;
     use crate::typed::LinkingFile;
-    const WASM_BYTES: &[u8] = include_bytes!("../../../../wamex-cli/test-data/simple_graph.wasm");
+    const WASM_BYTES: &[u8] = crate::testfiles::SIMPLE_GRAPH;
 
     #[test]
-    fn test_layout() {
-        let file = LinkingFile::from_wasm_bytes(WASM_BYTES).unwrap();
+    fn test_layouts() {
+        assert_layout_same("simpl_graph", crate::testfiles::SIMPLE_GRAPH);
+        assert_layout_same("example", crate::testfiles::EXAMPLE_WASM);
+        assert_layout_same("lazy_routes", crate::testfiles::LAZY_ROUTES);
+    }
+    fn assert_layout_same(file_name: &str, bytes: &[u8]) {
+        let file = LinkingFile::from_wasm_bytes(bytes).unwrap();
         let mut segments = GappedMap::new();
-        for segment in 0..1 {
+        for segment in 0..file.wasm_reader.data.data_segments.len() {
             let segment_id = DataSegmentId::new(segment);
             let layout = SegmentLayout::new_from_module(
                 &file.module,
@@ -343,6 +347,6 @@ mod tests {
             &mut print_data_format,
             false,
         );
-        insta::assert_snapshot!(print_data_format);
+        insta::assert_snapshot!(file_name, print_data_format);
     }
 }

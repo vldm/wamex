@@ -14,6 +14,9 @@ pub mod linkage;
 pub mod raw;
 pub mod typed;
 
+#[cfg(test)]
+pub mod testfiles;
+
 pub use anyhow::Result;
 // pub use emit::split::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
 pub use raw::ObjectReader;

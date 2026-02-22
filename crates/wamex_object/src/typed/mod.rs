@@ -6,7 +6,7 @@
 //! 2.
 //!
 
-use std::fmt::Debug;
+use std::{borrow::Cow, fmt::Debug};
 
 use anyhow::{Result, bail};
 use cranelift_entity::{EntityRef, PrimaryMap};
@@ -15,7 +15,7 @@ use log::warn;
 use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
 
 use crate::{
-    index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, NonDefault, Temp},
+    index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, Temp},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
@@ -32,8 +32,8 @@ impl_entity_index! {
     #[display = "file"]
     pub struct FileId;
 
-    #[display = ""] // Basic symbol no need prefix for display
-    pub struct SymbolId; //(for<'a> SymbolRecord<'a>);
+    #[display = "sym"]
+    pub struct SymbolId;
 }
 
 //
@@ -224,6 +224,8 @@ impl<'src> Module<'src> {
             .chunk_by(|o, a| o.1.segment_id == a.1.segment_id)
             .peekable();
 
+        // todo!("check that after filtering symbols in file_symbol_db we also have shifts");
+
         let data = {
             // todo: make it configurable
             let slice_chunks = true;
@@ -281,7 +283,9 @@ impl<'src> Module<'src> {
                     .collect::<Vec<_>>();
 
                 let sliced = segment_chunk.slice_segment(defined_data_symbols);
-                let filtered = data::DataChunk::filter_bounds_in_table(sliced, &mut file_symbol_db);
+                // LLVM provides data symbols in random order, sometimes one symbol can be a part of another symbol.
+                let filtered =
+                    data::DataChunk::canonicalize_data_symbols(sliced, &mut file_symbol_db);
                 sliced_chunks.extend(filtered.into_iter().map(|(_, v)| v));
             }
 
@@ -329,8 +333,8 @@ impl<'src> Module<'src> {
         val
     }
     // Get entity name
-    pub fn get_name(&self, entity: EntityKind) -> Option<&str> {
-        match entity {
+    pub fn get_name(&self, entity: EntityKind) -> Cow<'_, str> {
+        let debug_name = match entity {
             EntityKind::Function(func_id) => self.functions.names.get(func_id).map(|n| &n[..]),
             EntityKind::Global(global_id) => self.globals.names.get(global_id).map(|n| &n[..]),
             EntityKind::Table(table_id) => self.tables.names.get(table_id).map(|n| &n[..]),
@@ -338,7 +342,10 @@ impl<'src> Module<'src> {
             EntityKind::Tag(tag_id) => self.tags.names.get(tag_id).map(|n| &n[..]),
             EntityKind::DataSymbol(d) => self.data.get(d).map(|v| &v.name[..]),
             EntityKind::Type(_) => None, // types don't have names in name section
-        }
+        };
+        debug_name
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| format!("{entity}").into())
     }
     pub fn function_id_iter<'any>(
         &'any self,

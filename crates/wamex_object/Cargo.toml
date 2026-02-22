@@ -23,10 +23,12 @@ cranelift-bitset = "0.126.1"
 fnv = "1.0.7"
 pub_if = "0.1"
 nom = { version = "8.0.0", features = ["std"] }
+derive_more = { version = "2.1.1", features = ["display", "from"] }
 
 [dev-dependencies]
 tempdir = "0.3"
 insta = "1.43"
+env_logger = "0.11.0"
 
 [features]
 default = []

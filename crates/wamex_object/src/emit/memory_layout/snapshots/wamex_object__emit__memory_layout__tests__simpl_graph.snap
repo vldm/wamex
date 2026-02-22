@@ -1,19 +1,18 @@
 ---
 source: crates/wamex_object/src/emit/memory_layout/mod.rs
-assertion_line: 346
 expression: print_data_format
 ---
 <Module test>
-[.rodata:symbol0] .Lanon.40cffdd5158028b640e87266bd095959.0
+[.rodata:data0] .Lanon.40cffdd5158028b640e87266bd095959.0
 00000000  48 65 6C 6C 6F 2C 20 77  6F 72 6C 64 21           |Hello, world!|
 
-[.rodata:symbol1] .Lanon.40cffdd5158028b640e87266bd095959.1
+[.rodata:data1] .Lanon.40cffdd5158028b640e87266bd095959.1
 0000000D  30 2E 31 2E 30                                    |0.1.0|
 
-[.rodata:symbol2] .Lanon.40cffdd5158028b640e87266bd095959.2
+[.rodata:data2] .Lanon.40cffdd5158028b640e87266bd095959.2
 00000012  63 6F 6E 73 74 61 6E 74                           |constant|
 
-[.rodata:symbol3] .Lswitch.table.indirect_fn
+[.rodata:data3] .Lswitch.table.indirect_fn
 0000001A  01 00 00 00 02 00 00 00  03 00 00 00              |............|
           └[1]───────┘└[2]───────┘ └[3]───────┘             
   REFS (this part)

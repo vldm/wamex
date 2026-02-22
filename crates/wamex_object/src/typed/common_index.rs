@@ -1,3 +1,5 @@
+use derive_more::{Display, From};
+
 use crate::{
     linkage::reloc::SymbolType,
     raw::FuncTypeId,
@@ -5,7 +7,7 @@ use crate::{
 };
 
 impl_entity_index! {
-    #[display = "anyref"]
+    #[display = ""] // default id print without prefix
     /// A reference to any entity in a WebAssembly module.
     /// Within flat index space of entities.
     /// It is used only for module with known structure (cannot be used for builder).
@@ -72,7 +74,8 @@ impl From<DataSymbolRef> for ErasedEntityRef {
 
 /// A tagged reference to an entity in a WebAssembly module.
 /// Can be converted to `FlatEntityRef` in order to get a unified index.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Display)]
+#[display("{_0}")]
 pub enum EntityKind {
     Function(FunctionRef),
     DataSymbol(DataSymbolRef),
@@ -81,6 +84,14 @@ pub enum EntityKind {
     Memory(MemoryRef),
     Tag(TagRef),
     Type(FuncTypeId),
+}
+impl EntityKind {
+    pub fn is_function(&self) -> bool {
+        matches!(self, EntityKind::Function(_))
+    }
+    pub fn is_data(&self) -> bool {
+        matches!(self, EntityKind::DataSymbol(_))
+    }
 }
 
 /// A snapshot of the number of entities in a WebAssembly module.
@@ -119,8 +130,8 @@ impl EntitiesSnapshot {
         }
     }
 
-    pub fn pack_ref(&self, symbol: EntityKind) -> FlatEntityRef {
-        match symbol {
+    pub fn pack_ref(&self, symbol: impl Into<EntityKind>) -> FlatEntityRef {
+        match symbol.into() {
             EntityKind::Function(f) => FlatEntityRef::from_u32(f.as_u32()),
 
             EntityKind::Global(g) => FlatEntityRef::from_u32(g.as_u32() + self.num_function_refs),
@@ -212,6 +223,73 @@ impl EntitiesSnapshot {
                     - self.num_tag_refs
                     - self.num_data_symbol_refs,
             ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EntitiesSnapshot;
+    use crate::{
+        raw::FuncTypeId,
+        typed::{FunctionRef, LinkingFile, common_index::EntityKind, data::DataSymbolRef},
+    };
+
+    #[test]
+    fn test_entity_ref_mapping() {
+        let file = crate::testfiles::EXAMPLE_WASM;
+        let info = LinkingFile::from_wasm_bytes(file).unwrap();
+        let module = info.module;
+
+        let snapshot = EntitiesSnapshot::new(&module);
+
+        module.functions.items.iter().for_each(|(func_ref, _)| {
+            let entity_kind = EntityKind::Function(func_ref);
+            let flat_ref = snapshot.pack_ref(func_ref);
+            let unpacked = snapshot.unpack_ref(flat_ref);
+            assert_eq!(entity_kind, unpacked);
+        });
+
+        module.data.iter().for_each(|(data_ref, _)| {
+            let entity_kind = EntityKind::DataSymbol(data_ref);
+            let flat_ref = snapshot.pack_ref(data_ref);
+            let unpacked = snapshot.unpack_ref(flat_ref);
+            assert_eq!(entity_kind, unpacked);
+        });
+    }
+
+    #[test]
+    fn check_each_entity_for_snapshot() {
+        let snapshot = EntitiesSnapshot::for_testing();
+        for fns in 0..snapshot.num_function_refs {
+            let func_ref = EntityKind::Function(FunctionRef::from_u32(fns));
+            let flat_ref = snapshot.pack_ref(func_ref);
+            let unpacked = snapshot.unpack_ref(flat_ref);
+            assert_eq!(func_ref, unpacked);
+        }
+        let invalid_fn = EntityKind::Function(FunctionRef::from_u32(snapshot.num_function_refs));
+        let flat_ref = snapshot.pack_ref(invalid_fn);
+        let unpacked = snapshot.unpack_ref(flat_ref);
+        assert_ne!(invalid_fn, unpacked);
+
+        for data in 0..snapshot.num_data_symbol_refs {
+            let data_ref = EntityKind::DataSymbol(DataSymbolRef::from_u32(data));
+            let flat_ref = snapshot.pack_ref(data_ref);
+            let unpacked = snapshot.unpack_ref(flat_ref);
+            assert_eq!(data_ref, unpacked);
+        }
+        let invalid_data =
+            EntityKind::DataSymbol(DataSymbolRef::from_u32(snapshot.num_data_symbol_refs));
+        let flat_ref = snapshot.pack_ref(invalid_data);
+        let unpacked = snapshot.unpack_ref(flat_ref);
+        assert_ne!(invalid_data, unpacked);
+
+        for ty in 0..10 {
+            // any number
+            let tag_ref = EntityKind::Type(FuncTypeId::from_u32(ty));
+            let flat_ref = snapshot.pack_ref(tag_ref);
+            let unpacked = snapshot.unpack_ref(flat_ref);
+            assert_eq!(tag_ref, unpacked);
         }
     }
 }

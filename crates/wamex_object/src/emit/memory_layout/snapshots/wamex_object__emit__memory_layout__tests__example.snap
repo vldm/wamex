@@ -1,0 +1,711 @@
+---
+source: crates/wamex_object/src/emit/memory_layout/mod.rs
+expression: print_data_format
+---
+<Module test>
+[.rodata:data0] .Lanon.79b81406656296db68a0b7034c081fc6.43
+00000000  6C 69 62 72 61 72 79 2F  61 6C 6C 6F 63 2F 73 72  |library/alloc/sr|
+00000010  63 2F 66 6D 74 2E 72 73  00                       |c/fmt.rs.|
+
+[.rodata:data1] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.16
+00000019  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+00000029  63 61 72 67 6F 2F 72 65  67 69 73 74 72 79 2F 73  |cargo/registry/s|
+00000039  72 63 2F 69 6E 64 65 78  2E 63 72 61 74 65 73 2E  |rc/index.crates.|
+00000049  69 6F 2D 31 39 34 39 63  66 38 63 36 62 35 62 35  |io-1949cf8c6b5b5|
+00000059  35 37 66 2F 77 61 73 6D  2D 62 69 6E 64 67 65 6E  |57f/wasm-bindgen|
+00000069  2D 30 2E 32 2E 31 30 30  2F 73 72 63 2F 63 6F 6E  |-0.2.100/src/con|
+00000079  76 65 72 74 2F 73 6C 69  63 65 73 2E 72 73 00     |vert/slices.rs.|
+
+[.rodata:data2] .Lanon.51aa6f4db30a08e7412a135b574a635e.3
+00000088  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+00000098  72 75 73 74 75 70 2F 74  6F 6F 6C 63 68 61 69 6E  |rustup/toolchain|
+000000A8  73 2F 6E 69 67 68 74 6C  79 2D 78 38 36 5F 36 34  |s/nightly-x86_64|
+000000B8  2D 75 6E 6B 6E 6F 77 6E  2D 6C 69 6E 75 78 2D 67  |-unknown-linux-g|
+000000C8  6E 75 2F 6C 69 62 2F 72  75 73 74 6C 69 62 2F 73  |nu/lib/rustlib/s|
+000000D8  72 63 2F 72 75 73 74 2F  6C 69 62 72 61 72 79 2F  |rc/rust/library/|
+000000E8  73 74 64 2F 73 72 63 2F  73 79 73 2F 73 79 6E 63  |std/src/sys/sync|
+000000F8  2F 6D 75 74 65 78 2F 6E  6F 5F 74 68 72 65 61 64  |/mutex/no_thread|
+00000108  73 2E 72 73 00                                    |s.rs.|
+
+[.rodata:data3] .Lanon.850abc7070cad3aaf54fc18349b11383.1
+0000010D  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+0000011D  72 75 73 74 75 70 2F 74  6F 6F 6C 63 68 61 69 6E  |rustup/toolchain|
+0000012D  73 2F 6E 69 67 68 74 6C  79 2D 78 38 36 5F 36 34  |s/nightly-x86_64|
+0000013D  2D 75 6E 6B 6E 6F 77 6E  2D 6C 69 6E 75 78 2D 67  |-unknown-linux-g|
+0000014D  6E 75 2F 6C 69 62 2F 72  75 73 74 6C 69 62 2F 73  |nu/lib/rustlib/s|
+0000015D  72 63 2F 72 75 73 74 2F  6C 69 62 72 61 72 79 2F  |rc/rust/library/|
+0000016D  73 74 64 2F 73 72 63 2F  74 68 72 65 61 64 2F 6C  |std/src/thread/l|
+0000017D  6F 63 61 6C 2E 72 73 00                           |ocal.rs.|
+
+[.rodata:data4] .Lanon.79b81406656296db68a0b7034c081fc6.21
+00000185  6C 69 62 72 61 72 79 2F  61 6C 6C 6F 63 2F 73 72  |library/alloc/sr|
+00000195  63 2F 73 74 72 69 6E 67  2E 72 73 00              |c/string.rs.|
+
+[.rodata:data5] .Lanon.850abc7070cad3aaf54fc18349b11383.6
+000001A1  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+000001B1  63 61 72 67 6F 2F 72 65  67 69 73 74 72 79 2F 73  |cargo/registry/s|
+000001C1  72 63 2F 69 6E 64 65 78  2E 63 72 61 74 65 73 2E  |rc/index.crates.|
+000001D1  69 6F 2D 31 39 34 39 63  66 38 63 36 62 35 62 35  |io-1949cf8c6b5b5|
+000001E1  35 37 66 2F 77 61 73 6D  2D 62 69 6E 64 67 65 6E  |57f/wasm-bindgen|
+000001F1  2D 66 75 74 75 72 65 73  2D 30 2E 34 2E 34 32 2F  |-futures-0.4.42/|
+00000201  73 72 63 2F 71 75 65 75  65 2E 72 73 00           |src/queue.rs.|
+
+[.rodata:data6] .Lanon.8353eafc0686ece12291357d89b43616.8
+0000020E  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+0000021E  72 75 73 74 75 70 2F 74  6F 6F 6C 63 68 61 69 6E  |rustup/toolchain|
+0000022E  73 2F 6E 69 67 68 74 6C  79 2D 78 38 36 5F 36 34  |s/nightly-x86_64|
+0000023E  2D 75 6E 6B 6E 6F 77 6E  2D 6C 69 6E 75 78 2D 67  |-unknown-linux-g|
+0000024E  6E 75 2F 6C 69 62 2F 72  75 73 74 6C 69 62 2F 73  |nu/lib/rustlib/s|
+0000025E  72 63 2F 72 75 73 74 2F  6C 69 62 72 61 72 79 2F  |rc/rust/library/|
+0000026E  61 6C 6C 6F 63 2F 73 72  63 2F 73 6C 69 63 65 2E  |alloc/src/slice.|
+0000027E  72 73 00                                          |rs.|
+
+[.rodata:data7] .Lanon.79b81406656296db68a0b7034c081fc6.10
+00000281  6C 69 62 72 61 72 79 2F  61 6C 6C 6F 63 2F 73 72  |library/alloc/sr|
+00000291  63 2F 72 61 77 5F 76 65  63 2F 6D 6F 64 2E 72 73  |c/raw_vec/mod.rs|
+000002A1  00                                                |.|
+
+[.rodata:data8] .Lanon.d8aea96bde7621720d8eebb0a9215221.2
+000002A2  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+000002B2  63 61 72 67 6F 2F 72 65  67 69 73 74 72 79 2F 73  |cargo/registry/s|
+000002C2  72 63 2F 69 6E 64 65 78  2E 63 72 61 74 65 73 2E  |rc/index.crates.|
+000002D2  69 6F 2D 31 39 34 39 63  66 38 63 36 62 35 62 35  |io-1949cf8c6b5b5|
+000002E2  35 37 66 2F 77 61 73 6D  2D 62 69 6E 64 67 65 6E  |57f/wasm-bindgen|
+000002F2  2D 66 75 74 75 72 65 73  2D 30 2E 34 2E 34 32 2F  |-futures-0.4.42/|
+00000302  73 72 63 2F 74 61 73 6B  2F 73 69 6E 67 6C 65 74  |src/task/singlet|
+00000312  68 72 65 61 64 2E 72 73  00                       |hread.rs.|
+
+[.rodata:data9] .Lanon.34e2a803857b49632d1110a535995711.80
+0000031B  2F 72 75 73 74 2F 64 65  70 73 2F 64 6C 6D 61 6C  |/rust/deps/dlmal|
+0000032B  6C 6F 63 2D 30 2E 32 2E  31 30 2F 73 72 63 2F 64  |loc-0.2.10/src/d|
+0000033B  6C 6D 61 6C 6C 6F 63 2E  72 73 00                 |lmalloc.rs.|
+
+[.rodata:data10] .Lanon.8353eafc0686ece12291357d89b43616.0
+00000346  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 77  |/home/vladimir/w|
+00000356  6F 72 6B 2F 77 61 73 6D  2D 73 70 6C 69 74 2F 63  |ork/wasm-split/c|
+00000366  72 61 74 65 73 2F 77 61  73 6D 5F 73 70 6C 69 74  |rates/wasm_split|
+00000376  2F 73 72 63 2F 6C 69 62  2E 72 73 00              |/src/lib.rs.|
+
+[.rodata:data11] .Lanon.8353eafc0686ece12291357d89b43616.13
+00000382  63 72 61 74 65 73 2F 65  78 61 6D 70 6C 65 2F 73  |crates/example/s|
+00000392  72 63 2F 6C 69 62 2E 72  73 00                    |rc/lib.rs.|
+
+[.rodata:data12] .Lanon.51aa6f4db30a08e7412a135b574a635e.12
+0000039C  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+000003AC  63 61 72 67 6F 2F 72 65  67 69 73 74 72 79 2F 73  |cargo/registry/s|
+000003BC  72 63 2F 69 6E 64 65 78  2E 63 72 61 74 65 73 2E  |rc/index.crates.|
+000003CC  69 6F 2D 31 39 34 39 63  66 38 63 36 62 35 62 35  |io-1949cf8c6b5b5|
+000003DC  35 37 66 2F 61 73 79 6E  63 2D 6F 6E 63 65 2D 63  |57f/async-once-c|
+000003EC  65 6C 6C 2D 30 2E 35 2E  33 2F 73 72 63 2F 6C 69  |ell-0.5.3/src/li|
+000003FC  62 2E 72 73 00                                    |b.rs.|
+
+[.rodata:data13] .Lanon.8353eafc0686ece12291357d89b43616.4
+00000401  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+00000411  63 61 72 67 6F 2F 72 65  67 69 73 74 72 79 2F 73  |cargo/registry/s|
+00000421  72 63 2F 69 6E 64 65 78  2E 63 72 61 74 65 73 2E  |rc/index.crates.|
+00000431  69 6F 2D 31 39 34 39 63  66 38 63 36 62 35 62 35  |io-1949cf8c6b5b5|
+00000441  35 37 66 2F 77 61 73 6D  2D 62 69 6E 64 67 65 6E  |57f/wasm-bindgen|
+00000451  2D 66 75 74 75 72 65 73  2D 30 2E 34 2E 34 32 2F  |-futures-0.4.42/|
+00000461  73 72 63 2F 6C 69 62 2E  72 73 00                 |src/lib.rs.|
+
+[.rodata:data14] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.6
+0000046C  2F 68 6F 6D 65 2F 76 6C  61 64 69 6D 69 72 2F 2E  |/home/vladimir/.|
+0000047C  63 61 72 67 6F 2F 72 65  67 69 73 74 72 79 2F 73  |cargo/registry/s|
+0000048C  72 63 2F 69 6E 64 65 78  2E 63 72 61 74 65 73 2E  |rc/index.crates.|
+0000049C  69 6F 2D 31 39 34 39 63  66 38 63 36 62 35 62 35  |io-1949cf8c6b5b5|
+000004AC  35 37 66 2F 6F 6E 63 65  5F 63 65 6C 6C 2D 31 2E  |57f/once_cell-1.|
+000004BC  31 39 2E 30 2F 73 72 63  2F 6C 69 62 2E 72 73 00  |19.0/src/lib.rs.|
+
+[.rodata:data15] .Lanon.8353eafc0686ece12291357d89b43616.1
+000004CC  46 03 10 00 3B 00 00 00  1C 00 00 00 63 00 00 00  |F...;.......c...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.8353eafc0686ece12291357d89b43616.0   range=0x04CC..0x04D0 (4)
+
+[.rodata:data16] .Lanon.8353eafc0686ece12291357d89b43616.2
+000004DC  23 00 00 00 9C 00 00 00  04 00 00 00 24 00 00 00  |#...........$...|
+          └[1]───────┘                         └[2]───────┘ 
+  REFS (this part)
+  [1] _ZN4core3ptr216drop_in_place$LT$wasm_bindgen_futures..future_to_promise$LT$example.._..__wasm_bindgen_generated_print_lazy_loaded_string..$u7b$$u7b$closure$u7d$$u7d$$GT$..$u7b$$u7b$closure$u7d$$u7d$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h2eb914b4914f937dE   range=0x04DC..0x04E0 (4)
+  [2] _ZN20wasm_bindgen_futures17future_to_promise28_$u7b$$u7b$closure$u7d$$u7d$28_$u7b$$u7b$closure$u7d$$u7d$17hf8b48fabfb2e0c9eE   range=0x04E8..0x04EC (4)
+
+[.rodata:data17] .Lanon.8353eafc0686ece12291357d89b43616.3
+000004EC  00 00 00 00 04 00 00 00  04 00 00 00 25 00 00 00  |............%...|
+                                               └[1]───────┘ 
+000004FC  26 00 00 00                                       |&...|
+          └[2]───────┘                                      
+  REFS (this part)
+  [1] _ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17hdb806480babc8434E   range=0x04F8..0x04FC (4)
+  [2] _ZN20wasm_bindgen_futures17future_to_promise28_$u7b$$u7b$closure$u7d$$u7d$17hbdc5d332ffe341b0E   range=0x04FC..0x0500 (4)
+
+[.rodata:data18] .Lanon.8353eafc0686ece12291357d89b43616.5
+00000500  01 04 10 00 6A 00 00 00  DD 00 00 00 15 00 00 00  |....j...........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.8353eafc0686ece12291357d89b43616.4   range=0x0500..0x0504 (4)
+
+[.rodata:data19] .Lanon.8353eafc0686ece12291357d89b43616.9
+00000510  0E 02 10 00 72 00 00 00  BD 01 00 00 1D 00 00 00  |....r...........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.8353eafc0686ece12291357d89b43616.8   range=0x0510..0x0514 (4)
+
+[.rodata:data20] .Lanon.8353eafc0686ece12291357d89b43616.10
+00000520  63 61 6C 6C 65 64 20 60  4F 70 74 69 6F 6E 3A 3A  |called `Option::|
+00000530  75 6E 77 72 61 70 5F 74  68 72 6F 77 28 29 60 20  |unwrap_throw()` |
+00000540  6F 6E 20 61 20 60 4E 6F  6E 65 60 20 76 61 6C 75  |on a `None` valu|
+00000550  65                                                |e|
+
+[.rodata:data21] .Lanon.8353eafc0686ece12291357d89b43616.11
+00000551  63 61 6C 6C 65 64 20 60  52 65 73 75 6C 74 3A 3A  |called `Result::|
+00000561  75 6E 77 72 61 70 5F 74  68 72 6F 77 28 29 60 20  |unwrap_throw()` |
+00000571  6F 6E 20 61 6E 20 60 45  72 72 60 20 76 61 6C 75  |on an `Err` valu|
+00000581  65                                                |e|
+
+[.rodata:data22] .Lanon.8353eafc0686ece12291357d89b43616.12
+00000582  27 00 00 00                                       |'...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] _ZN4core3ops8function6FnOnce9call_once17h20c204fd51280f17E   range=0x0582..0x0586 (4)
+
+[.rodata:data23] .Lanon.8353eafc0686ece12291357d89b43616.14
+00000586  82 03 10 00 19 00 00 00  07 00 00 00 1F 00 00 00  |................|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.8353eafc0686ece12291357d89b43616.13   range=0x0586..0x058A (4)
+
+[.rodata:data24] .Lanon.8353eafc0686ece12291357d89b43616.15
+00000596  66 6F 6F 31 32 33 31 32  33                       |foo123123|
+
+[.rodata:data25] .Lanon.8353eafc0686ece12291357d89b43616.16
+0000059F  28 00 00 00                                       |(...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] _ZN4core3ops8function6FnOnce9call_once17h7fd976547ee79da5E   range=0x059F..0x05A3 (4)
+
+[.rodata:data26] .Lanon.8353eafc0686ece12291357d89b43616.17
+000005A3  82 03 10 00 19 00 00 00  0C 00 00 00 1F 00 00 00  |................|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.8353eafc0686ece12291357d89b43616.13   range=0x05A3..0x05A7 (4)
+
+[.rodata:data27] .Lanon.8353eafc0686ece12291357d89b43616.18
+000005B3  6F 74 68 65 72 5F 73 74  72 69 6E 67 5F 62 69 67  |other_string_big|
+000005C3  67 65 72 5F 73 69 7A 65                           |ger_size|
+
+[.rodata:data28] .Lanon.8353eafc0686ece12291357d89b43616.19
+000005CB  73 74 61 74 69 63                                 |static|
+
+[.rodata:data29] .Lanon.8353eafc0686ece12291357d89b43616.20
+000005D1  73 74 72 69 6E 67                                 |string|
+
+[.rodata:data30] .Lanon.8353eafc0686ece12291357d89b43616.22
+000005D7  82 03 10 00 19 00 00 00  12 00 00 00 4E 00 00 00  |............N...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.8353eafc0686ece12291357d89b43616.13   range=0x05D7..0x05DB (4)
+
+[.rodata:data31] .Lanon.8353eafc0686ece12291357d89b43616.23
+000005E7  82 03 10 00 19 00 00 00  11 00 00 00 01 00 00 00  |................|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.8353eafc0686ece12291357d89b43616.13   range=0x05E7..0x05EB (4)
+
+[.rodata:data32] .Lanon.79b81406656296db68a0b7034c081fc6.2
+000005F7  45 72 72 6F 72                                    |Error|
+
+[.rodata:data33] .Lanon.79b81406656296db68a0b7034c081fc6.7
+000005FC  29 00 00 00 0C 00 00 00  04 00 00 00 2A 00 00 00  |)...........*...|
+          └[1]───────┘                         └[2]───────┘ 
+0000060C  2B 00 00 00 2C 00 00 00                           |+...,...|
+          └[3]───────┘└[4]───────┘                          
+  REFS (this part)
+  [1] _ZN4core3ptr42drop_in_place$LT$alloc..string..String$GT$17h58b386670e9fd7a3E   range=0x05FC..0x0600 (4)
+  [2] _ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$9write_str17h3844d3de31d4d20fE   range=0x0608..0x060C (4)
+  [3] _ZN58_$LT$alloc..string..String$u20$as$u20$core..fmt..Write$GT$10write_char17hfce5597c22aa7f43E   range=0x060C..0x0610 (4)
+  [4] _ZN4core3fmt5Write9write_fmt17h1cff29b70616e2c6E   range=0x0610..0x0614 (4)
+
+[.rodata:data34] .Lanon.79b81406656296db68a0b7034c081fc6.8
+00000614  63 61 70 61 63 69 74 79  20 6F 76 65 72 66 6C 6F  |capacity overflo|
+00000624  77                                                |w|
+
+[.rodata:data35] .Lanon.79b81406656296db68a0b7034c081fc6.9
+00000625  1C 06 10 00 11 00 00 00                           |........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.79b81406656296db68a0b7034c081fc6.8   range=0x0625..0x0629 (4)
+
+[.rodata:data36] .Lanon.79b81406656296db68a0b7034c081fc6.11
+0000062D  81 02 10 00 20 00 00 00  2E 02 00 00 11 00 00 00  |.... ...........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.79b81406656296db68a0b7034c081fc6.10   range=0x062D..0x0631 (4)
+
+[.rodata:data37] .Lanon.79b81406656296db68a0b7034c081fc6.22
+0000063D  85 01 10 00 1B 00 00 00  E8 01 00 00 17 00 00 00  |................|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.79b81406656296db68a0b7034c081fc6.21   range=0x063D..0x0641 (4)
+
+[.rodata:data38] .Lanon.79b81406656296db68a0b7034c081fc6.41
+0000064D  00 00 00 00 00 00 00 00  01 00 00 00 2D 00 00 00  |............-...|
+                                               └[1]───────┘ 
+  REFS (this part)
+  [1] _ZN53_$LT$core..fmt..Error$u20$as$u20$core..fmt..Debug$GT$3fmt17h7dde34acca5f97cbE   range=0x0659..0x065D (4)
+
+[.rodata:data39] .Lanon.79b81406656296db68a0b7034c081fc6.42
+0000065D  61 20 66 6F 72 6D 61 74  74 69 6E 67 20 74 72 61  |a formatting tra|
+0000066D  69 74 20 69 6D 70 6C 65  6D 65 6E 74 61 74 69 6F  |it implementatio|
+0000067D  6E 20 72 65 74 75 72 6E  65 64 20 61 6E 20 65 72  |n returned an er|
+0000068D  72 6F 72 20 77 68 65 6E  20 74 68 65 20 75 6E 64  |ror when the und|
+0000069D  65 72 6C 79 69 6E 67 20  73 74 72 65 61 6D 20 64  |erlying stream d|
+000006AD  69 64 20 6E 6F 74                                 |id not|
+
+[.rodata:data40] .Lanon.79b81406656296db68a0b7034c081fc6.44
+000006B3  00 00 10 00 18 00 00 00  8A 02 00 00 0E 00 00 00  |................|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.79b81406656296db68a0b7034c081fc6.43   range=0x06B3..0x06B7 (4)
+
+[.rodata:data41] .Lanon.51aa6f4db30a08e7412a135b574a635e.0
+000006C3  63 61 6E 6E 6F 74 20 72  65 63 75 72 73 69 76 65  |cannot recursive|
+000006D3  6C 79 20 61 63 71 75 69  72 65 20 6D 75 74 65 78  |ly acquire mutex|
+
+[.rodata:data42] .Lanon.51aa6f4db30a08e7412a135b574a635e.1
+000006E3  D0 06 10 00 20 00 00 00                           |.... ...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.51aa6f4db30a08e7412a135b574a635e.0   range=0x06E3..0x06E7 (4)
+
+[.rodata:data43] .Lanon.51aa6f4db30a08e7412a135b574a635e.4
+000006EB  88 00 10 00 84 00 00 00  13 00 00 00 09 00 00 00  |................|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.51aa6f4db30a08e7412a135b574a635e.3   range=0x06EB..0x06EF (4)
+
+[.rodata:data44] .Lanon.51aa6f4db30a08e7412a135b574a635e.10
+000006FB  2E 00 00 00 08 00 00 00  04 00 00 00 2F 00 00 00  |............/...|
+          └[1]───────┘                         └[2]───────┘ 
+  REFS (this part)
+  [1] _ZN4core3ptr52drop_in_place$LT$async_once_cell..QuickInitGuard$GT$17h505400b5c5bbd6a2E   range=0x06FB..0x06FF (4)
+  [2] _ZN68_$LT$async_once_cell..QuickInitGuard$u20$as$u20$core..fmt..Debug$GT$3fmt17h1035a711cfb7884aE   range=0x0707..0x070B (4)
+
+[.rodata:data45] .Lanon.51aa6f4db30a08e7412a135b574a635e.13
+0000070B  49 6E 6E 65 72                                    |Inner|
+
+[.rodata:data46] .Lanon.51aa6f4db30a08e7412a135b574a635e.15
+00000710  72 65 61 64 79                                    |ready|
+
+[.rodata:data47] .Lanon.51aa6f4db30a08e7412a135b574a635e.16
+00000715  71 75 69 63 6B 5F 69 6E  69 74                    |quick_init|
+
+[.rodata:data48] .Lanon.51aa6f4db30a08e7412a135b574a635e.18
+0000071F  72 65 66 63 6F 75 6E 74                           |refcount|
+
+[.rodata:data49] .Lanon.51aa6f4db30a08e7412a135b574a635e.20
+00000727  71 75 65 75 65                                    |queue|
+
+[.rodata:data50] .Lanon.51aa6f4db30a08e7412a135b574a635e.21
+0000072C  47 6F 74 20 61 20 51 75  69 63 6B 49 6E 69 74 47  |Got a QuickInitG|
+0000073C  75 61 72 64 20 69 6E 20  73 6C 6F 77 20 69 6E 69  |uard in slow ini|
+0000074C  74                                                |t|
+
+[.rodata:data51] .Lanon.51aa6f4db30a08e7412a135b574a635e.22
+0000074D  9C 03 10 00 64 00 00 00  C2 01 00 00 33 00 00 00  |....d.......3...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.51aa6f4db30a08e7412a135b574a635e.12   range=0x074D..0x0751 (4)
+
+[.rodata:data52] .Lanon.51aa6f4db30a08e7412a135b574a635e.23
+0000075D  4E 6F 20 67 75 61 72 64  20 61 76 61 69 6C 61 62  |No guard availab|
+0000076D  6C 65 20 65 76 65 6E 20  77 69 74 68 6F 75 74 20  |le even without |
+0000077D  70 6F 6C 6C 69 6E 67                              |polling|
+
+[.rodata:data53] .Lanon.51aa6f4db30a08e7412a135b574a635e.24
+00000784  9C 03 10 00 64 00 00 00  C3 01 00 00 22 00 00 00  |....d......."...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.51aa6f4db30a08e7412a135b574a635e.12   range=0x0784..0x0788 (4)
+
+[.rodata:data54] .Lanon.51aa6f4db30a08e7412a135b574a635e.25
+00000794  50 6F 6C 6C 65 64 20 66  75 74 75 72 65 20 61 66  |Polled future af|
+000007A4  74 65 72 20 66 69 6E 69  73 68 65 64              |ter finished|
+
+[.rodata:data55] .Lanon.51aa6f4db30a08e7412a135b574a635e.26
+000007B0  9C 03 10 00 64 00 00 00  00 02 00 00 29 00 00 00  |....d.......)...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.51aa6f4db30a08e7412a135b574a635e.12   range=0x07B0..0x07B4 (4)
+
+[.rodata:data56] .Lanon.51aa6f4db30a08e7412a135b574a635e.27
+000007C0  9C 03 10 00 64 00 00 00  29 02 00 00 1C 00 00 00  |....d...).......|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.51aa6f4db30a08e7412a135b574a635e.12   range=0x07C0..0x07C4 (4)
+
+[.rodata:data57] .Lanon.51aa6f4db30a08e7412a135b574a635e.29
+000007D0  51 75 65 75 65 48 65 61  64 20 64 72 6F 70 70 65  |QueueHead droppe|
+000007E0  64 20 77 69 74 68 6F 75  74 20 61 20 77 61 6B 65  |d without a wake|
+000007F0  72 20 6C 69 73 74                                 |r list|
+
+[.rodata:data58] .Lanon.51aa6f4db30a08e7412a135b574a635e.30
+000007F6  9C 03 10 00 64 00 00 00  45 02 00 00 34 00 00 00  |....d...E...4...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.51aa6f4db30a08e7412a135b574a635e.12   range=0x07F6..0x07FA (4)
+
+[.rodata:data59] .Lanon.51aa6f4db30a08e7412a135b574a635e.33
+00000806  51 75 69 63 6B 49 6E 69  74 47 75 61 72 64        |QuickInitGuard|
+
+[.rodata:data60] .Lanon.51aa6f4db30a08e7412a135b574a635e.34
+00000814  69 6E 6E 65 72                                    |inner|
+
+[.rodata:data61] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.151
+00000819  01 00 00 00 00 00 00 00                           |........|
+
+[.rodata:data62] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.158
+00000821  52 65 66 43 65 6C 6C 20  61 6C 72 65 61 64 79 20  |RefCell already |
+00000831  6D 75 74 61 62 6C 79 20  62 6F 72 72 6F 77 65 64  |mutably borrowed|
+
+[.rodata:data63] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.159
+00000841  52 65 66 43 65 6C 6C 20  61 6C 72 65 61 64 79 20  |RefCell already |
+00000851  62 6F 72 72 6F 77 65 64                           |borrowed|
+
+[.rodata:data64] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.212
+00000859  63 61 6C 6C 65 64 20 60  4F 70 74 69 6F 6E 3A 3A  |called `Option::|
+00000869  75 6E 77 72 61 70 28 29  60 20 6F 6E 20 61 20 60  |unwrap()` on a `|
+00000879  4E 6F 6E 65 60 20 76 61  6C 75 65                 |None` value|
+
+[.rodata:data65] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.244
+00000884  3D 3D                                             |==|
+
+[.rodata:data66] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.247
+00000886  61 73 73 65 72 74 69 6F  6E 20 60 6C 65 66 74 20  |assertion `left |
+
+[.rodata:data67] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.248
+00000896  20 72 69 67 68 74 60 20  66 61 69 6C 65 64 0A 20  | right` failed. |
+000008A6  20 6C 65 66 74 3A 20                              | left: |
+
+[.rodata:data68] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.249
+000008AD  0A 20 72 69 67 68 74 3A  20                       |. right: |
+
+[.rodata:data69] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.250
+000008B6  99 08 10 00 10 00 00 00  A9 08 10 00 17 00 00 00  |................|
+          └[1]───────┘             └[2]───────┘             
+000008C6  C0 08 10 00 09 00 00 00                           |........|
+          └[3]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.247   range=0x08B6..0x08BA (4)
+  [2] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.248   range=0x08BE..0x08C2 (4)
+  [3] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.249   range=0x08C6..0x08CA (4)
+
+[.rodata:data70] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.251
+000008CE  20 72 69 67 68 74 60 20  66 61 69 6C 65 64 3A 20  | right` failed: |
+
+[.rodata:data71] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.252
+000008DE  0A 20 20 6C 65 66 74 3A  20                       |.  left: |
+
+[.rodata:data72] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.253
+000008E7  99 08 10 00 10 00 00 00  E4 08 10 00 10 00 00 00  |................|
+          └[1]───────┘             └[2]───────┘             
+000008F7  F4 08 10 00 09 00 00 00  C0 08 10 00 09 00 00 00  |................|
+          └[3]───────┘             └[4]───────┘             
+  REFS (this part)
+  [1] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.247   range=0x08E7..0x08EB (4)
+  [2] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.251   range=0x08EF..0x08F3 (4)
+  [3] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.252   range=0x08F7..0x08FB (4)
+  [4] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.249   range=0x08FF..0x0903 (4)
+
+[.rodata:data73] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.256
+00000907  3A 20                                             |: |
+
+[.rodata:data74] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.257
+00000909  01 00 00 00 00 00 00 00  20 09 10 00 02 00 00 00  |........ .......|
+                                   └[1]───────┘             
+  REFS (this part)
+  [1] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.256   range=0x0911..0x0915 (4)
+
+[.rodata:data75] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.258
+00000919  00 00 00 00 0C 00 00 00  04 00 00 00 30 00 00 00  |............0...|
+                                               └[1]───────┘ 
+00000929  31 00 00 00 32 00 00 00                           |1...2...|
+          └[2]───────┘└[3]───────┘                          
+  REFS (this part)
+  [1] _ZN68_$LT$core..fmt..builders..PadAdapter$u20$as$u20$core..fmt..Write$GT$9write_str17h0e98855b968ab952E   range=0x0925..0x0929 (4)
+  [2] _ZN68_$LT$core..fmt..builders..PadAdapter$u20$as$u20$core..fmt..Write$GT$10write_char17hd1e2df70e1b29341E   range=0x0929..0x092D (4)
+  [3] _ZN4core3fmt5Write9write_fmt17h2f95486555028088E   range=0x092D..0x0931 (4)
+
+[.rodata:data76] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.259
+00000931  20 20 20 20                                       |    |
+
+[.rodata:data77] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.260
+00000935  20 7B 20                                          | { |
+
+[.rodata:data78] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.261
+00000938  2C 20                                             |, |
+
+[.rodata:data79] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.262
+0000093A  20 7B 0A                                          | {.|
+
+[.rodata:data80] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.263
+0000093D  2C 0A                                             |,.|
+
+[.rodata:data81] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.267
+0000093F  7D                                                |}|
+
+[.rodata:data82] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.268
+00000940  20 7D                                             | }|
+
+[.rodata:data83] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.294
+00000942  30 78                                             |0x|
+
+[.rodata:data84] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.297
+00000944  30 30 30 31 30 32 30 33  30 34 30 35 30 36 30 37  |0001020304050607|
+00000954  30 38 30 39 31 30 31 31  31 32 31 33 31 34 31 35  |0809101112131415|
+00000964  31 36 31 37 31 38 31 39  32 30 32 31 32 32 32 33  |1617181920212223|
+00000974  32 34 32 35 32 36 32 37  32 38 32 39 33 30 33 31  |2425262728293031|
+00000984  33 32 33 33 33 34 33 35  33 36 33 37 33 38 33 39  |3233343536373839|
+00000994  34 30 34 31 34 32 34 33  34 34 34 35 34 36 34 37  |4041424344454647|
+000009A4  34 38 34 39 35 30 35 31  35 32 35 33 35 34 35 35  |4849505152535455|
+000009B4  35 36 35 37 35 38 35 39  36 30 36 31 36 32 36 33  |5657585960616263|
+000009C4  36 34 36 35 36 36 36 37  36 38 36 39 37 30 37 31  |6465666768697071|
+000009D4  37 32 37 33 37 34 37 35  37 36 37 37 37 38 37 39  |7273747576777879|
+000009E4  38 30 38 31 38 32 38 33  38 34 38 35 38 36 38 37  |8081828384858687|
+000009F4  38 38 38 39 39 30 39 31  39 32 39 33 39 34 39 35  |8889909192939495|
+00000A04  39 36 39 37 39 38 39 39                           |96979899|
+
+[.rodata:data85] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.313
+00000A0C  66 61 6C 73 65                                    |false|
+
+[.rodata:data86] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.314
+00000A11  74 72 75 65                                       |true|
+
+[.rodata:data87] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.453
+00000A15  60 61 73 79 6E 63 20 66  6E 60 20 72 65 73 75 6D  |`async fn` resum|
+00000A25  65 64 20 61 66 74 65 72  20 63 6F 6D 70 6C 65 74  |ed after complet|
+00000A35  69 6F 6E                                          |ion|
+
+[.rodata:data88] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.454
+00000A38  30 0A 10 00 23 00 00 00                           |0...#...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.7eca65ef36bb00ab9406ec06b65577ca.453   range=0x0A38..0x0A3C (4)
+
+[.rodata:data89] .Lanon.85092bb9fbf5ee025382520e06e7646d.5
+00000A40  72 65 74 75 72 6E 20 74  68 69 73                 |return this|
+
+[.rodata:data90] .Lanon.1ff6891908093a1fe44a9c9d4c56e10b.1
+00000A4B  19 00 10 00 6E 00 00 00  24 01 00 00 0E 00 00 00  |....n...$.......|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.16   range=0x0A4B..0x0A4F (4)
+
+[.rodata:data91] .Lanon.34e2a803857b49632d1110a535995711.21
+00000A5B  00 00 00 00 04 00 00 00  04 00 00 00 33 00 00 00  |............3...|
+                                               └[1]───────┘ 
+  REFS (this part)
+  [1] _ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17h8667e4ebc2e9bb0fE   range=0x0A67..0x0A6B (4)
+
+[.rodata:data92] .Lanon.34e2a803857b49632d1110a535995711.81
+00000A6B  61 73 73 65 72 74 69 6F  6E 20 66 61 69 6C 65 64  |assertion failed|
+00000A7B  3A 20 70 73 69 7A 65 20  3E 3D 20 73 69 7A 65 20  |: psize >= size |
+00000A8B  2B 20 6D 69 6E 5F 6F 76  65 72 68 65 61 64        |+ min_overhead|
+
+[.rodata:data93] .Lanon.34e2a803857b49632d1110a535995711.82
+00000A99  1B 03 10 00 2A 00 00 00  B1 04 00 00 09 00 00 00  |....*...........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.34e2a803857b49632d1110a535995711.80   range=0x0A99..0x0A9D (4)
+
+[.rodata:data94] .Lanon.34e2a803857b49632d1110a535995711.83
+00000AA9  61 73 73 65 72 74 69 6F  6E 20 66 61 69 6C 65 64  |assertion failed|
+00000AB9  3A 20 70 73 69 7A 65 20  3C 3D 20 73 69 7A 65 20  |: psize <= size |
+00000AC9  2B 20 6D 61 78 5F 6F 76  65 72 68 65 61 64        |+ max_overhead|
+
+[.rodata:data95] .Lanon.34e2a803857b49632d1110a535995711.84
+00000AD7  1B 03 10 00 2A 00 00 00  B7 04 00 00 0D 00 00 00  |....*...........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.34e2a803857b49632d1110a535995711.80   range=0x0AD7..0x0ADB (4)
+
+[.rodata:data96] .Lanon.34e2a803857b49632d1110a535995711.103
+00000AE7  41 63 63 65 73 73 45 72  72 6F 72                 |AccessError|
+
+[.rodata:data97] .Lanon.34e2a803857b49632d1110a535995711.105
+00000AF2  63 61 6E 6E 6F 74 20 61  63 63 65 73 73 20 61 20  |cannot access a |
+00000B02  54 68 72 65 61 64 20 4C  6F 63 61 6C 20 53 74 6F  |Thread Local Sto|
+00000B12  72 61 67 65 20 76 61 6C  75 65 20 64 75 72 69 6E  |rage value durin|
+00000B22  67 20 6F 72 20 61 66 74  65 72 20 64 65 73 74 72  |g or after destr|
+00000B32  75 63 74 69 6F 6E 3A 20                           |uction: |
+
+[.rodata:data98] .Lanon.34e2a803857b49632d1110a535995711.106
+00000B3A  13 0B 10 00 48 00 00 00                           |....H...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.34e2a803857b49632d1110a535995711.105   range=0x0B3A..0x0B3E (4)
+
+[.rodata:data99] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.4
+00000B42  4C 61 7A 79 20 69 6E 73  74 61 6E 63 65 20 68 61  |Lazy instance ha|
+00000B52  73 20 70 72 65 76 69 6F  75 73 6C 79 20 62 65 65  |s previously bee|
+00000B62  6E 20 70 6F 69 73 6F 6E  65 64                    |n poisoned|
+
+[.rodata:data100] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.5
+00000B6C  64 0B 10 00 2A 00 00 00                           |d...*...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.4   range=0x0B6C..0x0B70 (4)
+
+[.rodata:data101] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.7
+00000B74  6C 04 10 00 5F 00 00 00  08 03 00 00 19 00 00 00  |l..._...........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.6   range=0x0B74..0x0B78 (4)
+
+[.rodata:data102] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.8
+00000B84  72 65 65 6E 74 72 61 6E  74 20 69 6E 69 74        |reentrant init|
+
+[.rodata:data103] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.9
+00000B92  A8 0B 10 00 0E 00 00 00                           |........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.8   range=0x0B92..0x0B96 (4)
+
+[.rodata:data104] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.10
+00000B9A  6C 04 10 00 5F 00 00 00  7A 02 00 00 0D 00 00 00  |l..._...z.......|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.6   range=0x0B9A..0x0B9E (4)
+
+[.rodata:data105] .Lanon.850abc7070cad3aaf54fc18349b11383.2
+00000BAA  0D 01 10 00 77 00 00 00  19 01 00 00 19 00 00 00  |....w...........|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.850abc7070cad3aaf54fc18349b11383.1   range=0x0BAA..0x0BAE (4)
+
+[.rodata:data106] .Lanon.850abc7070cad3aaf54fc18349b11383.7
+00000BBA  A1 01 10 00 6C 00 00 00  25 00 00 00 2E 00 00 00  |....l...%.......|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.850abc7070cad3aaf54fc18349b11383.6   range=0x0BBA..0x0BBE (4)
+
+[.rodata:data107] .Lanon.850abc7070cad3aaf54fc18349b11383.8
+00000BCA  A1 01 10 00 6C 00 00 00  28 00 00 00 29 00 00 00  |....l...(...)...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.850abc7070cad3aaf54fc18349b11383.6   range=0x0BCA..0x0BCE (4)
+
+[.rodata:data108] .Lanon.850abc7070cad3aaf54fc18349b11383.9
+00000BDA  A1 01 10 00 6C 00 00 00  3E 00 00 00 1A 00 00 00  |....l...>.......|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.850abc7070cad3aaf54fc18349b11383.6   range=0x0BDA..0x0BDE (4)
+
+[.rodata:data109] .Lanon.850abc7070cad3aaf54fc18349b11383.10
+00000BEA  A1 01 10 00 6C 00 00 00  3E 00 00 00 27 00 00 00  |....l...>...'...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.850abc7070cad3aaf54fc18349b11383.6   range=0x0BEA..0x0BEE (4)
+
+[.rodata:data110] .Lanon.d8aea96bde7621720d8eebb0a9215221.0
+00000BFA  63 6C 6F 73 75 72 65 20  69 6E 76 6F 6B 65 64 20  |closure invoked |
+00000C0A  72 65 63 75 72 73 69 76  65 6C 79 20 6F 72 20 61  |recursively or a|
+00000C1A  66 74 65 72 20 62 65 69  6E 67 20 64 72 6F 70 70  |fter being dropp|
+00000C2A  65 64                                             |ed|
+
+[.rodata:data111] .Lanon.d8aea96bde7621720d8eebb0a9215221.1
+00000C2C  35 00 00 00 04 00 00 00  04 00 00 00 36 00 00 00  |5...........6...|
+          └[1]───────┘                         └[2]───────┘ 
+00000C3C  37 00 00 00                                       |7...|
+          └[3]───────┘                                      
+  REFS (this part)
+  [1] _ZN4core3ptr89drop_in_place$LT$wasm_bindgen_futures..queue..Queue..new..$u7b$$u7b$closure$u7d$$u7d$$GT$17h87b75f0bd09882dfE   range=0x0C2C..0x0C30 (4)
+  [2] _ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17hb52c86bf2b4e7114E   range=0x0C38..0x0C3C (4)
+  [3] _ZN20wasm_bindgen_futures5queue5Queue3new28_$u7b$$u7b$closure$u7d$$u7d$17h6e606b30beb033e3E   range=0x0C3C..0x0C40 (4)
+
+[.rodata:data112] _ZN20wasm_bindgen_futures4task12singlethread4Task14into_raw_waker6VTABLE17hc9ed02da2e959ee4E
+00000C40  38 00 00 00 39 00 00 00  3A 00 00 00 3B 00 00 00  |8...9...:...;...|
+          └[1]───────┘└[2]───────┘ └[3]───────┘└[4]───────┘ 
+  REFS (this part)
+  [1] _ZN20wasm_bindgen_futures4task12singlethread4Task14into_raw_waker9raw_clone17hc6044330046b47f4E   range=0x0C40..0x0C44 (4)
+  [2] _ZN20wasm_bindgen_futures4task12singlethread4Task14into_raw_waker8raw_wake17h87e9f28a4a8db9edE   range=0x0C44..0x0C48 (4)
+  [3] _ZN20wasm_bindgen_futures4task12singlethread4Task14into_raw_waker15raw_wake_by_ref17ha3eafc320e69e53dE   range=0x0C48..0x0C4C (4)
+  [4] _ZN20wasm_bindgen_futures4task12singlethread4Task14into_raw_waker8raw_drop17h62df557cca4cd3fdE   range=0x0C4C..0x0C50 (4)
+
+[.rodata:data113] .Lanon.d8aea96bde7621720d8eebb0a9215221.5
+00000C50  A2 02 10 00 78 00 00 00  66 00 00 00 25 00 00 00  |....x...f...%...|
+          └[1]───────┘                                      
+  REFS (this part)
+  [1] .Lanon.d8aea96bde7621720d8eebb0a9215221.2   range=0x0C50..0x0C54 (4)
+
+[.rodata:data114] .Lanon.6543075fd68f4d6599bf6aebcc45076e.0
+00000C60  5F 5F 77 61 73 6D 5F 73  70 6C 69 74 5F 6C 6F 61  |__wasm_split_loa|
+00000C70  64 5F 63 61 6C 6C 62 61  63 6B                    |d_callback|
+
+[.data:data115] _ZN12wasm_bindgen9externref9HEAP_SLAB17h4a3669ba03799398E
+00000C7A  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000C8A  00 00 00 00 00 00 00 00  34 00 00 00              |........4...|
+                                   └[1]───────┘             
+  REFS (this part)
+  [1] _ZN4core3ops8function6FnOnce9call_once17he06989340d67e146E   range=0x0C92..0x0C96 (4)
+
+[.data:data116] _ZN20wasm_bindgen_futures5queue5QUEUE28_$u7b$$u7b$closure$u7d$$u7d$3VAL17h19d1a02ba2c8bb6eE
+00000C96  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000CA6  00 00 00 00 02 00 00 00                           |........|
+
+[.bss:data117] _ZN7example10static_str28_$u7b$$u7b$closure$u7d$$u7d$19__wasm_split_loader28_$u7b$$u7b$closure$u7d$$u7d$3VAL17h6d82a770a0f7e695E
+00000CAE  00 00 00 00                                       |....|
+
+[.bss:data118] _ZN7example18string_from_static28_$u7b$$u7b$closure$u7d$$u7d$19__wasm_split_loader28_$u7b$$u7b$closure$u7d$$u7d$3VAL17ha5845909e0ab183aE
+00000CB2  00 00 00 00                                       |....|
+
+[.bss:data119] _ZN6js_sys6global6GLOBAL28_$u7b$$u7b$closure$u7d$$u7d$3VAL17h7aff4bbc5d5000e6E.0
+00000CB6  00                                                |.|
+
+[.bss:data120] _ZN6js_sys6global6GLOBAL28_$u7b$$u7b$closure$u7d$$u7d$3VAL17h7aff4bbc5d5000e6E.1
+00000CB7  00 00 00 00                                       |....|
+
+[.bss:data121] _ZN3std9panicking4HOOK17h6335f857b7f93101E.0
+00000CBB  00 00 00 00                                       |....|
+
+[.bss:data122] _ZN3std9panicking11panic_count18GLOBAL_PANIC_COUNT17h8ac90f3d55706855E
+00000CBF  00 00 00 00                                       |....|
+
+[.bss:data123] _ZN3std3sys5alloc4wasm8DLMALLOC17h6f413374bf53daefE
+00000CC3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000CD3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000CE3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000CF3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D03  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D13  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D23  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D33  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D43  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D53  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D63  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D73  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D83  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000D93  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000DA3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000DB3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000DC3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000DD3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000DE3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000DF3  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E03  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E13  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E23  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E33  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E43  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E53  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E63  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E73  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000E83  00 00 00 00                                       |....|
+
+[.bss:data124] _ZN3std9panicking11panic_count17LOCAL_PANIC_COUNT28_$u7b$$u7b$closure$u7d$$u7d$3VAL17hc178d7b40cce1a73E.0
+00000E87  00 00 00 00                                       |....|
+
+[.bss:data125] _ZN3std9panicking11panic_count17LOCAL_PANIC_COUNT28_$u7b$$u7b$closure$u7d$$u7d$3VAL17hc178d7b40cce1a73E.1
+00000E8B  00                                                |.|
+
+[.bss:data126] _ZN12wasm_bindgen4__rt14GLOBAL_EXNDATA17h0d1201b0e0d41664E.0
+00000E8C  00 00 00 00 00 00 00 00                           |........|

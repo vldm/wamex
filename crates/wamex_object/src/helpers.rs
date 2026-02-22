@@ -124,11 +124,11 @@ pub fn debug_fmt_mostly_filled<T: Debug>(
     let mut last = None;
     let mut shift = 0;
     for (i, item) in slice.iter().enumerate() {
-        if let Some(last_item) = last {
-            if skipped(last_item, item) {
-                writer.result.write_str(&placeholder).unwrap();
-                shift += 1;
-            }
+        if let Some(last_item) = last
+            && skipped(last_item, item)
+        {
+            writer.result.write_str(&placeholder).unwrap();
+            shift += 1;
         }
         if (i + shift) % max_elements == 0 {
             writer.result.write_char('\n').unwrap();
@@ -188,6 +188,7 @@ impl<Offset> ShiftMap<Offset>
 where
     Offset: Ord,
 {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self { points: vec![] }
     }
@@ -251,6 +252,7 @@ where
             point.shift != 0,
             "Cannot add shift point with zero shift: {point:?}"
         );
+        #[allow(clippy::err_expect)] // Err in binary_search is just insertion point.
         // Make sure no duplicate points exist
         let partition = self
             .points
@@ -281,12 +283,12 @@ where
         // And if we have removed size, ensure that next point is not in that range.
         if let Some(removed_size) = point.removed_size {
             let removed_range = point.at..point.at + removed_size;
-            if let Some(next_point) = self.points.get(partition) {
-                if removed_range.contains(&next_point.at) {
-                    panic!(
-                        "Cannot add shift point at {point:?}, next point {next_point:?} is in range of removed data {removed_range:?}"
-                    );
-                }
+            if let Some(next_point) = self.points.get(partition)
+                && removed_range.contains(&next_point.at)
+            {
+                panic!(
+                    "Cannot add shift point at {point:?}, next point {next_point:?} is in range of removed data {removed_range:?}"
+                );
             }
         }
 
@@ -356,75 +358,63 @@ where
             }
         })
     }
-    pub fn cursor_at(&self, offset: Offset) -> ShiftCursor<'_, Offset>
+
+    /// Get an iterator over shifted offsets.
+    /// old_capacity is used to determine iterator limit.
+    /// Returns an iterator of (old_offset, new_offset) pairs.
+    /// If some offset was removed, new_offset will be None.
+    /// Any added offsets will be skipped, since they don't have old offset.
+    pub fn for_each(&self, old_capacity: Offset, mut f: impl FnMut(Offset, Option<Offset>))
     where
-        Offset: Default,
+        Offset: Sub<u32, Output = Offset> + Default,
+        Range<Offset>: IntoIterator<Item = Offset>,
     {
-        let current_index = self
-            .points
-            .binary_search_by(|v| v.at.cmp(&offset))
-            .unwrap_or_else(|e| e);
+        //  Iter points
+        //  let range = prev.at..point.at;
+        //  range.map(|offset| (offset, Some(offset + prev.shift)));
+        //  if removed_size is Some, then:
+        //  range = point.at..point.at + removed_size;
+        //  range.map(|offset| (offset, None));
+        //  prev = point;
+        // at last:
+        //  range = prev.at..old_capacity;
+        //  range.map(|offset| (offset, Some(offset + prev.shift)))
 
-        ShiftCursor {
-            shift_map: self,
-            current_index,
-        }
-    }
-}
-
-/// For cases when we have a lot of sequential queries to `ShiftMap`, we can avoid binary search each time.
-pub struct ShiftCursor<'a, Offset> {
-    shift_map: &'a ShiftMap<Offset>,
-    current_index: usize,
-}
-
-impl<'a, Offset> ShiftCursor<'a, Offset>
-where
-    Offset: Ord + Copy + Add<u32, Output = Offset> + Debug,
-{
-    /// Get the accumulated shift at the given offset.
-    ///
-    ///
-    /// Return None if offset was removed.
-    pub fn get_shift_raw(&mut self, offset: Offset) -> Option<i32> {
-        // Update cursor if next element behind offset
-        while let Some(next_point) = self.shift_map.points.get(self.current_index + 1) {
-            // No need to update cursor if next point is still before offset
-            if next_point.at > offset {
-                break;
-            }
-            self.current_index += 1;
-        }
-
-        let Some(point) = &self.shift_map.points.get(self.current_index) else {
-            return Some(0);
+        let mut iter = self.points.iter();
+        let mut prev = ShiftPoint {
+            at: Offset::default(),
+            shift: 0,
         };
-        if point.at > offset {
-            return Some(0);
-        }
 
-        // Check if offset is in removed range
-        if let Some(removed_size) = point.removed_size {
-            let removed_range = point.at..point.at + removed_size;
-            if removed_range.contains(&offset) {
-                return None;
-            }
-        }
-        Some(point.shift)
-    }
-
-    /// Get new shifted offset at given offset.
-    pub fn get_shifted_offset(&mut self, offset: Offset) -> Option<Offset>
-    where
-        Offset: Sub<u32, Output = Offset>,
-    {
-        self.get_shift_raw(offset).map(|shift| {
+        let get_shifted = |prev: &ShiftPoint<Offset>, offset: Offset| {
+            let shift = prev.shift;
             if shift < 0 {
                 offset - (-shift) as u32
             } else {
                 offset + shift as u32
             }
-        })
+        };
+        for point in iter.by_ref() {
+            for offset in prev.at..point.at {
+                let new_offset = get_shifted(&prev, offset);
+                f(offset, Some(new_offset));
+            }
+            // If we have removed size, then we need to iterate over removed range and return None for those offsets.
+            if let Some(removed_size) = point.removed_size {
+                for offset in point.at..(point.at + removed_size) {
+                    f(offset, None);
+                }
+            }
+            let at = point.at + point.removed_size.unwrap_or_default();
+            prev = ShiftPoint {
+                at,
+                shift: point.shift,
+            };
+        }
+        for offset in prev.at..old_capacity {
+            let shift = get_shifted(&prev, offset);
+            f(offset, Some(shift));
+        }
     }
 }
 
@@ -578,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn test_shift_map_cursor() {
+    fn test_shift_map_iter() {
         let points = vec![
             ShiftPoint {
                 at: 10u32,
@@ -599,26 +589,26 @@ mod tests {
         ];
 
         let shift_map = ShiftMap::build(points);
-        let mut cursor = shift_map.cursor_at(0u32);
-        for any_offset in 0..10 {
-            assert_eq!(cursor.get_shift_raw(any_offset).unwrap(), 0);
-        }
-        for any_offset in 10..15 {
-            assert_eq!(cursor.get_shift_raw(any_offset).unwrap(), 5);
-        }
-        for any_offset in 15..20 {
-            assert_eq!(cursor.get_shift_raw(any_offset).unwrap(), 7);
-        }
-        // removed range
-        for any_offset in 20..23 {
-            assert!(shift_map.get_shift_raw(any_offset).is_none());
-        }
-        for any_offset in 23..30 {
-            assert_eq!(shift_map.get_shift_raw(any_offset).unwrap(), 4);
-        }
-        for any_offset in 30..40 {
-            assert_eq!(cursor.get_shift_raw(any_offset).unwrap(), 8);
-        }
+        let mut iter_result = (0..10)
+            .zip((0..10).map(Some))
+            // no old offset for new 10..15 since we added those offsets.
+            .chain((10..15).zip((15..20).map(Some)))
+            // same for 20..22
+            .chain((15..20).zip((22..27).map(Some)))
+            // removed range
+            .chain((20..23).zip(std::iter::repeat(None)))
+            // Continue
+            .chain((23..30).zip((27..34).map(Some)))
+            // +4
+            .chain((30..35).zip((38..43).map(Some)));
+        shift_map.for_each(35, |old, new| {
+            let expected = iter_result.next().unwrap();
+            assert_eq!(
+                (old, new),
+                expected,
+                "ShiftMap iteration mismatch at old offset"
+            );
+        });
     }
 
     #[test]
@@ -759,10 +749,7 @@ mod tests {
                 .chain(16u32..21)
                 .chain(22u32..30)
                 .collect::<Vec<_>>();
-            expected_from
-                .into_iter()
-                .zip(expected_results.into_iter())
-                .collect()
+            expected_from.into_iter().zip(expected_results).collect()
         };
         assert_eq!(symbol_map, expected_map);
     }

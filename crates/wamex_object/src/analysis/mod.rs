@@ -5,5 +5,6 @@
 
 mod debug;
 mod dep_graph;
+mod split_point;
 #[cfg(test)]
 mod testing;

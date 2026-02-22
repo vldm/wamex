@@ -263,7 +263,7 @@ pub struct SymbolOffset {
     /// If one symbol replaces definition, previous symbol should be marked as "not used",
     /// to remove "relocs" that targets symbol content.
     /// (Like functionoffset, memoryaddrlocrel, etc).
-    pub used_defintion: bool,
+    pub used_definition: bool,
 }
 
 impl SymbolOffset {
@@ -271,7 +271,7 @@ impl SymbolOffset {
         Self {
             entity,
             offset_in_entity: 0,
-            used_defintion: true,
+            used_definition: true,
         }
     }
 }

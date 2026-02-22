@@ -1,4 +1,4 @@
-use std::{fmt::Write, ops::Range};
+use std::{borrow::Cow, fmt::Write, ops::Range};
 
 #[derive(Clone, Debug)]
 pub struct DataPart<'a> {
@@ -10,7 +10,7 @@ pub struct DataPart<'a> {
 #[derive(Clone, Debug)]
 pub struct Ref<'a> {
     pub range: Range<usize>,
-    pub name: &'a str,
+    pub name: Cow<'a, str>,
 }
 
 /// Renders a hexdump of a DataPart with optional color highlighting for references.
@@ -183,19 +183,19 @@ mod tests {
             refs: vec![
                 Ref {
                     range: 0..6,
-                    name: ".Lanon.faeb22a22ed4190fdf8d8c764500d80d.47",
+                    name: ".Lanon.faeb22a22ed4190fdf8d8c764500d80d.47".into(),
                 },
                 Ref {
                     range: 8..21,
-                    name: "very_very_long_human_readable_field_name",
+                    name: "very_very_long_human_readable_field_name".into(),
                 },
                 Ref {
                     range: 24..27,
-                    name: ".Lanon.a91b73428f0e239f7d2e4cbd3eaa0011.02",
+                    name: ".Lanon.a91b73428f0e239f7d2e4cbd3eaa0011.02".into(),
                 },
                 Ref {
                     range: 46..47,
-                    name: "tiny",
+                    name: "tiny".into(),
                 },
             ],
         };

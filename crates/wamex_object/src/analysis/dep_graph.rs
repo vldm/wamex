@@ -375,7 +375,7 @@ mod tests {
         }
     }
     // checkout test-data/simple-graph crate at root (just keep wasm in case rustc changes)
-    const WASM_FILE: &[u8] = include_bytes!("../../../wamex-cli/test-data/simple_graph.wasm");
+    const WASM_FILE: &[u8] = crate::testfiles::SIMPLE_GRAPH;
 
     #[test]
     fn load_dep_graph() {
@@ -386,28 +386,16 @@ mod tests {
             .module
             .find_function_id_by_name("no_inline_fn")
             .unwrap();
-        let no_inline_fn_sym = dep_graph
-            .snapshot()
-            .pack_ref(EntityKind::Function(no_inline_fn));
+        let no_inline_fn_sym = dep_graph.snapshot().pack_ref(no_inline_fn);
 
         let deps = dep_graph.get_children(no_inline_fn_sym).unwrap();
         let func_deps: Vec<_> = deps
             .iter()
-            .filter(|dep| {
-                matches!(
-                    dep_graph.snapshot().unpack_ref(**dep),
-                    EntityKind::Function(_)
-                )
-            })
+            .filter(|dep| dep_graph.snapshot().unpack_ref(**dep).is_function())
             .collect();
         let data_deps: Vec<_> = deps
             .iter()
-            .filter(|dep| {
-                matches!(
-                    dep_graph.snapshot().unpack_ref(**dep),
-                    EntityKind::DataSymbol(_)
-                )
-            })
+            .filter(|dep| dep_graph.snapshot().unpack_ref(**dep).is_data())
             .collect();
 
         assert_eq!(func_deps.len(), 3);
@@ -416,17 +404,12 @@ mod tests {
 
         let indirect_fn = info.module.find_function_id_by_name("indirect_fn").unwrap();
 
-        let indirect_fn_sym = dep_graph
-            .snapshot()
-            .pack_ref(EntityKind::Function(indirect_fn));
+        let indirect_fn_sym = dep_graph.snapshot().pack_ref(indirect_fn);
 
         let deps = dep_graph.get_children(indirect_fn_sym).unwrap();
         assert_eq!(deps.len(), 1); // only dep on switchtable
         let switch_table = *deps.iter().next().unwrap();
-        assert!(matches!(
-            dep_graph.snapshot().unpack_ref(switch_table),
-            EntityKind::DataSymbol { .. }
-        ));
+        assert!(dep_graph.snapshot().unpack_ref(switch_table).is_data());
         let fns = dep_graph.get_children(switch_table).unwrap();
 
         assert_eq!(fns.len(), 3);
@@ -441,9 +424,7 @@ mod tests {
             .module
             .find_function_id_by_name("no_inline_fn")
             .unwrap();
-        let no_inline_fn_sym = dep_graph
-            .snapshot()
-            .pack_ref(EntityKind::Function(no_inline_fn));
+        let no_inline_fn_sym = dep_graph.snapshot().pack_ref(no_inline_fn);
 
         let reachability_graph =
             super::find_reachable_deps(&dep_graph, &DepSet::from_iter([no_inline_fn_sym]));
@@ -457,9 +438,7 @@ mod tests {
         assert_eq!(reachability_graph.len(), 7); // root +  3 data + 3 funcs
 
         let indirect_fn = info.module.find_function_id_by_name("indirect_fn").unwrap();
-        let indirect_fn_sym = dep_graph
-            .snapshot()
-            .pack_ref(EntityKind::Function(indirect_fn));
+        let indirect_fn_sym = dep_graph.snapshot().pack_ref(indirect_fn);
         let reachability_graph =
             super::find_reachable_deps(&dep_graph, &DepSet::from_iter([indirect_fn_sym]));
         reachability_graph.print("indirect_fn", &info.module, &dep_graph);

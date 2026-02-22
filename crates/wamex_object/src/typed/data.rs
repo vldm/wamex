@@ -13,7 +13,7 @@ use crate::{
     helpers::{RangeComp, RangeExt, cmp_range},
     index::{GappedMap, IdVec, NonDefault},
     linkage::{
-        file_db::{FileRelocs, FileSymbolDb},
+        file_db::{FileRelocs, FileSymbolDb, SymbolOffset},
         reloc::AnyRelocationEntry,
     },
     raw::DataSegmentId,
@@ -231,31 +231,58 @@ impl<'a> RawDataChunk<'a> {
     }
 }
 
+enum FilterEvent {
+    RemoveBound {
+        bound_to_symbol: SymbolId,
+        bound_to_data: DataSymbolRef,
+        removed_symbol: SymbolId,
+        offset_in_bound: u32,
+    },
+    ShiftRegular {
+        symbol_id: SymbolId,
+        new_ref: DataSymbolRef,
+    },
+}
+
 impl<'a> DataChunk<'a, SymbolRelation<'a>> {
-    /// Removes bound symbols from the list, calling cleanup handler for each removed symbol.
+    /// Removes bound symbols from the list,
+    /// and normalize indexes based on order
+    /// - call `filter_event` for each update.
     fn filter_bounds_with_cleanup(
         this: IdVec<Self>,
-        // external cleanup handler
-        // return map of RemovedSymbol to -> (BoundSymbol, offset_within_symbol)
-        mut cleanup_symbol: impl FnMut(SymbolId, (SymbolId, u32)),
+        mut filter_event: impl FnMut(FilterEvent),
     ) -> IdVec<RawDataChunk<'a>> {
         let mut result = IdVec::new();
-        let mut last_regular_data = (&[] as &[u8], SymbolId::reserved_value());
+        let mut last_regular_data = (
+            &[] as &[u8],
+            SymbolId::reserved_value(),
+            DataSymbolRef::reserved_value(),
+        );
         for (_, chunk) in this.into_inner().into_iter() {
             match chunk.data {
                 SymbolRelation::Regular { bytes, symbol_id } => {
-                    last_regular_data = (bytes, symbol_id);
-                    result.push(DataChunk {
+                    let new = result.push(DataChunk {
                         data: bytes,
                         pow2align: chunk.pow2align,
                         original_offset: chunk.original_offset,
                         segment_id: chunk.segment_id,
                         name: chunk.name,
                     });
+                    filter_event(FilterEvent::ShiftRegular {
+                        symbol_id,
+                        new_ref: new,
+                    });
+                    last_regular_data = (bytes, symbol_id, new);
                 }
                 SymbolRelation::BoundToPrevious { offset, symbol_id } => {
                     let prev_symbol = last_regular_data.1;
-                    cleanup_symbol(prev_symbol, (symbol_id, offset as u32));
+                    let prev_symbol_ref = last_regular_data.2;
+                    filter_event(FilterEvent::RemoveBound {
+                        bound_to_symbol: prev_symbol,
+                        bound_to_data: prev_symbol_ref,
+                        removed_symbol: symbol_id,
+                        offset_in_bound: offset,
+                    });
                     // added as part of previous symbol, so skip
                     continue;
                 }
@@ -264,25 +291,42 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
         result
     }
 
-    /// Removes bound symbols from the list, updating symbol table accordingly.
-    pub fn filter_bounds_in_table(
+    /// Removes bound symbols from the list,
+    /// and normalize indexes based on order
+    /// - updating symbol table accordingly.
+    pub fn canonicalize_data_symbols(
         this: IdVec<Self>,
         table: &mut FileSymbolDb,
     ) -> IdVec<RawDataChunk<'a>> {
-        Self::filter_bounds_with_cleanup(this, |real_id, (removed, offset)| {
-            // Replace entity_ref in table.
-            let mut new_entry = table.symbols[real_id].clone();
+        Self::filter_bounds_with_cleanup(this, |event| match event {
+            FilterEvent::RemoveBound {
+                bound_to_symbol,
+                bound_to_data,
+                removed_symbol,
+                offset_in_bound: offset,
+            } => {
+                let entity = bound_to_data.into();
+                if cfg!(debug_assertions) {
+                    let new_entry = table.symbols[bound_to_symbol];
+                    assert!(new_entry.offset_in_entity == 0, "should be regular symbol");
+                };
 
-            assert!(new_entry.offset_in_entity == 0, "should be regular symbol");
-            new_entry.offset_in_entity = offset;
-
-            table.symbols[removed] = new_entry;
+                table.symbols[removed_symbol] = SymbolOffset {
+                    entity,
+                    offset_in_entity: offset,
+                    used_definition: true,
+                };
+            }
+            FilterEvent::ShiftRegular { symbol_id, new_ref } => {
+                let entry = &mut table.symbols[symbol_id];
+                entry.entity = new_ref.into();
+            }
         })
     }
 }
 
 impl_entity_index! {
-    #[display="symbol"]
+    #[display="data"]
     pub struct DataSymbolRef;
 }
 

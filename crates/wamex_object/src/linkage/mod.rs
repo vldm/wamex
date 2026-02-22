@@ -33,7 +33,6 @@ type Str<'a> = Cow<'a, str>;
 pub struct LinkageInfo<'src> {
     pub file_symbol_db: FileSymbolDb,
     pub defined_data_symbols: Vec<(SymbolId, DataDefined<'src>)>,
-    // pub defined_data_symbols: PrimaryMap<DataSymbolRef, DataDefined>,
     // pub relocations: Relocations,
 }
 
@@ -43,7 +42,7 @@ impl<'src> LinkageInfo<'src> {
 
         let mut symbols = PrimaryMap::new();
         // placeholders of future data entities
-        let mut defined_data_ids = PrimaryMap::new();
+        let mut data_ref = DataSymbolRef::from_u32(0);
         // symbol ids of defined data symbols
         let mut defined_data_symbols = Vec::new();
         let mut name_to_entity: HashMap<Str<'_>, EntityKind> = HashMap::new();
@@ -76,11 +75,12 @@ impl<'src> LinkageInfo<'src> {
                     name,
                     symbol: Some(defined),
                 } => {
-                    let data_ref = defined_data_ids.push(());
                     let idx = EntityKind::DataSymbol(data_ref);
 
                     defined_data_symbols
                         .push((id, DataDefined::from_defined(defined, (*name).into())));
+
+                    data_ref = data_ref.next();
                     (idx, Some(*name), flags)
                 }
                 SymbolInfo::Data { symbol: None, .. } => {
