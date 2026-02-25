@@ -137,7 +137,12 @@ pub enum EntityBody<'src> {
     /// New body for entities without body in src file.
     // for wamex-split purposes it's IndirectTrampoline.
     New {
-        new_relocs: SVec<RelocationEntry<OutputEntityRef>, 2>,
+        /// Relocations with offsets relative to body start,
+        /// and referencing new symbol in output module.
+        ///
+        /// This kind of body, cannot use entities from input module (like in EntityBody::Copied),
+        /// because we doesn't store FileId for them.
+        new_relocs: SVec<RelocationEntry<ErasedEntityRef>, 2>,
         new_bytes: SVec<u8, 32>,
     },
 }

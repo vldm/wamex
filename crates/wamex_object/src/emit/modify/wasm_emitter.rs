@@ -11,7 +11,7 @@
 
 use std::io::Write;
 
-use wasm_encoder::MemArg;
+use wasm_encoder::{Encode, MemArg};
 
 use crate::emit::relocation::encode;
 
@@ -31,9 +31,15 @@ where
         }
     }
 
-    fn push_byte(&mut self, byte: u8) -> Result<(), std::io::Error> {
-        let _ = self.writer.write(&[byte])?;
+    pub fn push_byte(&mut self, byte: u8) -> Result<(), std::io::Error> {
+        let _ = self.writer.write_all(&[byte])?;
         self.offset += 1;
+        Ok(())
+    }
+
+    pub fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
+        let _ = self.writer.write_all(bytes)?;
+        self.offset += bytes.len() as u32;
         Ok(())
     }
 
@@ -41,7 +47,7 @@ where
         let mut buf = [0; 5];
         encode::encode_leb128_u32_5byte(v, &mut buf);
         let res = self.offset;
-        let _ = self.writer.write(&buf)?;
+        self.push_bytes(&buf)?;
         Ok(res)
     }
 
@@ -49,8 +55,23 @@ where
         let mut buf = [0; 5];
         encode::encode_leb128_i32_5byte(v, &mut buf);
         let res = self.offset;
-        let _ = self.writer.write(&buf)?;
+        self.push_bytes(&buf)?;
         Ok(res)
+    }
+
+    // TODO: const expr can have multiple vals so we can only return Vec<u32>
+    pub fn encode_const_expr(
+        &mut self,
+        expr: &wasm_encoder::ConstExpr,
+    ) -> Result<(), std::io::Error>
+    where
+        W: Write,
+    {
+        let mut tmp_vec = Vec::new();
+        expr.encode(&mut tmp_vec);
+
+        self.push_bytes(&tmp_vec)?;
+        Ok(())
     }
 
     /// Encode [`Instruction::GlobalGet`] and return offset of global_id start

@@ -49,16 +49,18 @@ pub struct FileRelocs {
     // TODO: custom section related relocs?
 }
 
+type Regions = (
+    Vec<(Range<usize>, FunctionRef)>,
+    Vec<(Range<usize>, DataSymbolRef)>,
+);
+
 impl FileRelocs {
     /// Resolve relocations symbols (to corresponding entities).
     /// code_owners and data_owners should contain regions in original file that belongs to each symbol.
     pub fn build_relocs(
         file_relocs: impl IntoIterator<Item = AnyRelocationEntry>,
         file_db: &FileSymbolDb,
-        regions: (
-            Vec<(Range<usize>, FunctionRef)>,
-            Vec<(Range<usize>, DataSymbolRef)>,
-        ),
+        regions: Regions,
     ) -> Result<Self> {
         let mut array = file_relocs
             .into_iter()
@@ -109,17 +111,14 @@ impl FileRelocs {
     // Convert region based ranges to ranges in relocs array.
     fn build_owners(
         relocs: &[RelocationEntry<ErasedEntityRef>],
-        (mut code_regions, mut data_regions): (
-            Vec<(Range<usize>, FunctionRef)>,
-            Vec<(Range<usize>, DataSymbolRef)>,
-        ),
+        (mut code_regions, mut data_regions): Regions,
     ) -> (
         GappedMap<FunctionRef, RelocRange>,
         GappedMap<DataSymbolRef, RelocRange>,
     ) {
         /// Move relocations from flat list to symbols.
         ///
-        fn move_relocs<'a, U: EntityRef + Debug>(
+        fn move_relocs<U: EntityRef + Debug>(
             map: &mut GappedMap<U, RelocRange>,
             symbol_regions: impl IntoIterator<Item = (Range<usize>, U)>,
             start: &mut usize,
@@ -174,10 +173,10 @@ impl FileRelocs {
         data_regions.sort_by_key(|(r, _)| r.start);
         let mut code_owners = GappedMap::new();
         let mut data_owners = GappedMap::new();
-        let ref mut start = 0;
+        let start = &mut 0;
 
-        move_relocs(&mut code_owners, code_regions.into_iter(), start, relocs);
-        move_relocs(&mut data_owners, data_regions.into_iter(), start, relocs);
+        move_relocs(&mut code_owners, code_regions, start, relocs);
+        move_relocs(&mut data_owners, data_regions, start, relocs);
 
         (code_owners, data_owners)
     }
@@ -278,11 +277,11 @@ impl SymbolOffset {
 
 #[derive(Debug)]
 pub struct FileSymbolDb {
-    /// Map `SymbolId` from linkage symbol table -> `EntityRef` in wasm object.
+    /// Map `SymbolId` from FILE linkage symbol table -> `EntityKind` in wasm object.
     ///
     /// Usecases:
-    /// - reloc.* section contain `symbol_id` reference to this table.
-    /// But for our needs `EntityRef` is used.
+    /// - reloc.* section contain `SymbolId` reference to this table.
+    ///   But for our needs `EntityKind` is used.
     ///
     pub symbols: PrimaryMap<SymbolId, SymbolOffset>,
 }

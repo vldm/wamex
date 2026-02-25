@@ -1,13 +1,14 @@
 use anyhow::{Context, bail, ensure};
 use cranelift_entity::{EntityRef, packed_option::ReservedValue};
+use itertools::Itertools;
 use wasmparser::ElementKind;
 
-use super::{ElementId, ElementItems, Result};
+use super::{ElementItems, Result};
 use crate::{
     SVec,
     index::GappedMap,
     raw,
-    typed::{FunctionRef, Module, TableRef},
+    typed::{FunctionRef, Module, TableRef, data::SpecificLocation},
 };
 
 impl_entity_index! {
@@ -60,10 +61,14 @@ impl ElementType<'_> for FunctionRef {
 
 #[derive(Debug)]
 pub struct ElementTable<T: ReservedValue + Clone> {
-    // ID of table with indirect functions definition
+    /// ID of table with indirect functions definition
     pub table_id: TableRef,
-    // Allow gaps in case of non-initialized elements
+    /// Allow gaps in case of non-initialized elements
     pub items: GappedMap<ElementItemId, T>,
+    /// Enforce item strarting from ElementId to be placed in new segment.
+    pub extra_segments: SVec<ElementItemId>,
+    /// Location of element segment
+    pub location: SpecificLocation,
 }
 
 impl<T: ReservedValue + Clone> ElementTable<T> {
@@ -71,6 +76,53 @@ impl<T: ReservedValue + Clone> ElementTable<T> {
         Self {
             table_id,
             items: GappedMap::new(),
+            extra_segments: SVec::new(),
+            location: SpecificLocation::ConstantOffset(0),
+        }
+    }
+    /// Iterates over all items,
+    /// split by segments if gaps are present, or if extra_segments are specified.
+    /// The callback receives segment id and iterator of items in the segment.
+    pub fn for_each_segment(
+        &self,
+        mut f: impl FnMut(usize, &mut dyn Iterator<Item = (ElementItemId, &T)>),
+    ) {
+        let mut extra_segments = self.extra_segments.clone();
+        extra_segments.sort_unstable();
+        extra_segments.dedup();
+
+        let scan_state = (
+            0,
+            ElementItemId::from_u32(0),
+            extra_segments.into_iter().peekable(),
+        );
+
+        let iter = self
+            .items
+            .iter()
+            .peekable()
+            .scan(
+                scan_state,
+                |(segment_id, prev, extra_segments), (id, item)| {
+                    let has_gap = *prev != id;
+                    let id_eq_extra = extra_segments
+                        .peek()
+                        .map_or(false, |&extra_id| id == extra_id);
+                    if id_eq_extra {
+                        extra_segments.next();
+                    }
+
+                    if has_gap || id_eq_extra {
+                        *segment_id += 1;
+                    }
+                    *prev = id;
+                    // Mark segments with segment_id
+                    Some((*segment_id, (id, item)))
+                },
+            )
+            .chunk_by(|(segment_id, _)| *segment_id);
+        for (segment_id, group) in &iter {
+            f(segment_id, &mut group.map(|(_, item)| item))
         }
     }
 }

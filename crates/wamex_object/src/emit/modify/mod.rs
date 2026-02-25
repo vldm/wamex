@@ -15,6 +15,7 @@ pub enum OutputEntityRef {
     /// Entity that already exist in output module.
     Resolved(ErasedEntityRef),
     /// Entity that will be created in output module, but which id need to be resolved.
+    /// The resolution bound with `FileId` and can be only done in context of processing some predefined entity from input module.
     FromInput(ErasedEntityRef),
 }
 impl OutputEntityRef {
@@ -50,7 +51,8 @@ pub struct RelocTarget<'any, 'src> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Rewrite {
     pub old_range: std::ops::Range<usize>,
-    // entities is referenced to new symbols.
+    /// Relocations with offsets relative to new body start,
+    /// and referencing either new symbol, or symbol existing in same file as one that we modify.
     pub new_relocs: SVec<OutputRelocationEntry, 2>,
     pub new_bytes: SVec<u8, 16>,
 }

@@ -20,7 +20,7 @@ use crate::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
-    raw::{self, DataSegmentId, DefinedFuncId, ElementId, ImportId},
+    raw::{self, DataSegmentId, DefinedFuncId, ImportId},
     typed::{common_index::EntityKind, data::DataSegmentInfo},
 };
 
@@ -94,10 +94,9 @@ pub struct Module<'src, BuilderState = Finished> {
     /// linkage entity
     // (lack of import part?)
     pub data: IdVec<data::RawDataChunk<'src>>,
-    pub data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>>,
-
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
+    pub mem_spec: data::MemSpec<'src>,
     /// List of functions to be called on module start.
     /// Should have `()->void` type and can be defined or imported.
     pub start_functions: Vec<FunctionRef>,
@@ -292,17 +291,7 @@ impl<'src> Module<'src> {
             sliced_chunks
         };
 
-        let data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'_>> = reader
-            .data
-            .data_segments
-            .iter()
-            .map(|(id, segment)| {
-                let info = reader.linking.segments_info[id.index()];
-                let name = info.name.into();
-                let pow2align = info.alignment as u8;
-                DataSegmentInfo::from_parts(&segment.kind, name, pow2align)
-            })
-            .collect::<Result<_>>()?;
+        let mem_spec = data::MemSpec::from_reader(reader)?;
 
         let this = Module {
             indirect_function_table,
@@ -312,7 +301,7 @@ impl<'src> Module<'src> {
             memories,
             globals,
             tags,
-            data_segments,
+            mem_spec,
             start_functions: reader.code.start_func.into_iter().collect(),
         };
 
@@ -408,7 +397,7 @@ impl<'src> ModuleBuilder<'src> {
             globals: entities::Globals::new(),
             tags: entities::Tags::new(),
             data: IdVec::new(),
-            data_segments: PrimaryMap::new(),
+            mem_spec: data::MemSpec::new(),
             tables,
             // TODO: When building IndirectFunctionTable provide Temp<TableRef> instead of TableRef.
             indirect_function_table: elements::IndirectFunctionTable::new(TableRef::from_u32(0)),
@@ -425,7 +414,7 @@ impl<'src> ModuleBuilder<'src> {
             globals: self.globals.into_finished(),
             tags: self.tags.into_finished(),
             data: self.data,
-            data_segments: self.data_segments,
+            mem_spec: self.mem_spec,
             indirect_function_table: self.indirect_function_table,
             start_functions: self.start_functions,
         }

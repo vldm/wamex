@@ -7,16 +7,21 @@ use std::{
 };
 
 use anyhow::Result;
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
+use itertools::Itertools;
+use wasm_encoder::Encode;
 
 use crate::{
+    SVec,
+    emit::modify::wasm_emitter,
     helpers::RangeExt,
-    index::{GappedMap, NonDefault, ReservedValue},
-    linkage::file_db::FileRelocs,
+    index::{GappedMap, IdVec, NonDefault, PrimaryKey, ReservedValue},
+    linkage::file_db::{FileRelocs, SymbolOffset},
     raw::DataSegmentId,
     typed::{
         Module,
         common_index::EntityKind,
-        data::{DataLocation, DataSymbolRef, RawDataChunk},
+        data::{DataSymbolRef, RawDataChunk, SegmentPlacement, SpecificLocation},
     },
 };
 
@@ -27,61 +32,137 @@ type Str<'a> = NonDefault<Cow<'a, str>>;
 
 #[derive(Clone, Debug)]
 pub struct SegmentLayout<'a> {
-    data_parts: Vec<(RawDataChunk<'a>, DataSymbolRef)>,
     segment_name: Str<'a>,
-    location: DataLocation,
-    pow2align: usize,
+    mem_location: Option<SpecificLocation>,
+    pow2align: u32,
+    data_parts: Vec<(RawDataChunk<'a>, DataSymbolRef)>,
 }
 
 impl ReservedValue for SegmentLayout<'_> {
     fn reserved_value() -> Self {
         Self {
-            pow2align: usize::MAX,
+            pow2align: u32::MAX,
             segment_name: Str::reserved_value(),
             data_parts: Vec::new(),
-            location: DataLocation::Passive,
+            mem_location: None,
         }
     }
     fn is_reserved_value(&self) -> bool {
         self.data_parts.is_empty()
-            && self.pow2align == usize::MAX
-            && matches!(self.location, DataLocation::Passive)
+            && self.pow2align == u32::MAX
+            && matches!(self.mem_location, None)
     }
 }
 
+pub type Segments<'a> = IdVec<SegmentLayout<'a>>;
+pub type DataSymbolsOffsets = GappedMap<DataSymbolRef, DataSymbolOffset>;
+
 impl<'src> SegmentLayout<'src> {
-    pub fn new_from_module(
-        module: &Module<'src>,
-        name: Cow<'src, str>,
-        pow2alignment: u8,
-        data_segment_id: DataSegmentId,
-        mem_location: DataLocation,
-    ) -> Result<SegmentLayout<'src>> {
-        // Original segment info
-        let alignment = (2usize).pow(pow2alignment as u32);
+    /// Build segments layout for module.
+    /// Returns segments layout and mapping from data symbol to its offset in memory.
+    ///
+    /// `mem_start` is the offset in memory where the first segment will be placed.
+    /// The next segments will be shifted by the size of previous segments with padding for alignment.
+    ///
+    /// Symbols from passive segments will not be present in the mapping.
+    ///
+    pub fn build_for_module(module: &Module<'src>) -> Result<(Segments<'src>, DataSymbolsOffsets)> {
+        let (mut results, mut mapping) = (IdVec::new(), DataSymbolsOffsets::new());
 
-        log::debug!("Mem location is {:?}", mem_location);
+        let (mut segment_offset, mut mem_offset) = (0, 0);
 
-        let data_parts = module
-            .data
-            .iter()
-            .filter(|(id, _)| module.data[*id].segment_id == data_segment_id)
-            .map(|(symbol_index, chunk)| (chunk.clone(), symbol_index))
-            .collect::<Vec<_>>();
+        debug_assert!(
+            module.data.values().map(|v| v.segment_id).is_sorted(),
+            "Data symbols should be grouped by segment id"
+        );
 
-        Ok(SegmentLayout {
-            segment_name: name.into(),
-            pow2align: alignment,
-            data_parts,
-            location: mem_location,
-        })
+        let chunks = module.data.iter().chunk_by(|(_, v)| v.segment_id);
+        let symbols_iter = chunks
+            .into_iter()
+            .zip(module.mem_spec.data_segments.iter())
+            .map(|((grp_sid, grp), (sid, info))| {
+                debug_assert_eq!(grp_sid, sid, "Data symbols should be grouped by segment id");
+                (sid, info, grp)
+            });
+
+        for (segment_id, info, grp) in symbols_iter {
+            log::debug!(
+                "Segment {}, Mem location is {:?}",
+                segment_id,
+                info.location
+            );
+            // Original segment info
+            let alignment = (2u32).pow(info.pow2align as u32);
+            let location =
+                Self::calculate_location(info.location, module.mem_spec.mem_start, mem_offset);
+
+            segment_offset += Self::segment_header(location)?.len() as u32;
+
+            let mut data_parts = Vec::new();
+            for (symbol_index, symbol) in grp {
+                let field_alignment = 1 << symbol.pow2align;
+                // add padding for alignment
+                if let Some(padding_symbol) =
+                    Self::padding_symbol(segment_offset, field_alignment, segment_id)
+                {
+                    let padding = padding_symbol.data.len() as u32;
+                    log::trace!(
+                        "Add padding placeholder before symbol {}: {padding} bytes",
+                        symbol_index
+                    );
+
+                    data_parts.push((padding_symbol, DataSymbolRef::reserved_value()));
+
+                    segment_offset += padding;
+                    mem_offset += padding;
+                }
+
+                data_parts.push((symbol.clone(), symbol_index));
+                mapping.insert(
+                    symbol_index,
+                    DataSymbolOffset {
+                        addr_of_symbol: mem_offset as usize,
+                        data_section_offset: segment_offset as usize,
+                    },
+                );
+
+                segment_offset += symbol.data.len() as u32;
+                mem_offset += symbol.data.len() as u32;
+            }
+
+            let layout = SegmentLayout {
+                segment_name: info.name.clone().into(),
+                pow2align: alignment,
+                data_parts,
+                mem_location: location,
+            };
+            results.push(layout);
+        }
+        Ok((results, mapping))
+    }
+
+    // Keeps only symbols with id is in `indexes`.
+    pub fn new_with_whitelist(mut self, indexes: &BTreeSet<DataSymbolRef>) -> Self {
+        let mut result = vec![];
+        {
+            for (item, symbol_index) in mem::take(&mut self.data_parts) {
+                let remove = !indexes.contains(&symbol_index);
+                if remove {
+                    continue;
+                }
+                result.push((item, symbol_index));
+            }
+        }
+
+        self.data_parts = result;
+        self
     }
 
     pub fn debug_layout(
         file_relocs: &FileRelocs,
         module: &Module<'_>,
         module_name: String,
-        data_segments: &GappedMap<DataSegmentId, SegmentLayout<'_>>,
+        data_segments: &IdVec<SegmentLayout<'_>>,
         print_data_format: &mut impl std::fmt::Write,
         color: bool, // std::io::stdout().is_terminal()
     ) {
@@ -90,11 +171,22 @@ impl<'src> SegmentLayout<'src> {
         let mut base = 0;
         for (segment_id, segment) in data_segments.iter() {
             for (symbol, symbol_index) in segment.data_parts.iter() {
+                if symbol_index.is_reserved_value() {
+                    writeln!(
+                        print_data_format,
+                        "[{segment}:{symbol_index}] <padding> (size: {})",
+                        symbol.data.len(),
+                        segment = module.mem_spec.data_segments[segment_id].name,
+                    )
+                    .unwrap();
+                    base += symbol.data.len();
+                    continue;
+                }
                 writeln!(
                     print_data_format,
                     "[{segment}:{symbol_index}] {name}",
-                    segment = module.data_segments[segment_id].name,
-                    name = module.get_name(EntityKind::DataSymbol(*symbol_index))
+                    segment = module.mem_spec.data_segments[segment_id].name,
+                    name = symbol.name
                 )
                 .unwrap();
                 let chunk = symbol.data;
@@ -121,63 +213,46 @@ impl<'src> SegmentLayout<'src> {
         }
     }
 
-    pub fn memory_location(&self) -> DataLocation {
-        self.location
+    pub fn memory_location(&self) -> Option<SpecificLocation> {
+        self.mem_location
     }
 
-    // Keeps only symbols with id is in `indexes`.
-    pub fn new_with_whitelist(mut self, indexes: &BTreeSet<DataSymbolRef>) -> Self {
-        let mut result = vec![];
-        {
-            for (item, symbol_index) in mem::take(&mut self.data_parts) {
-                let remove = !indexes.contains(&symbol_index);
-                if remove {
-                    continue;
-                }
-                result.push((item, symbol_index));
-            }
-        }
-
-        self.data_parts = result;
-        self
-    }
-
-    /// Compute data init offset.
-    /// Returns (offset_expr, segment_offset)
-    fn segment_header(
-        &self,
-        mem_start: usize,
-        mut segment_offset: usize,
-        lib_base_global_id: Option<u32>,
-    ) -> (Option<wasm_encoder::ConstExpr>, usize) {
-        match self.location {
-            DataLocation::Passive => (None, 0),
-            DataLocation::ActiveOffset(_) => {
-                let offset_expr = match lib_base_global_id {
-                    None => {
-                        segment_offset +=
-                            Self::calculate_padding(mem_start + segment_offset, self.pow2align);
-                        wasm_encoder::ConstExpr::i32_const(
-                            (mem_start + segment_offset).try_into().unwrap(),
-                        )
-                    }
-                    Some(lib_base_global_id) => {
-                        // submodules use lib_base_id
-                        {
-                            segment_offset +=
-                                Self::calculate_padding(segment_offset, self.pow2align);
-                            wasm_encoder::ConstExpr::global_get(lib_base_global_id)
-                                .with_i32_const(segment_offset.try_into().unwrap())
-                                .with_i32_add()
-                        }
-                    }
-                };
-                (Some(offset_expr), segment_offset)
+    fn calculate_location(
+        segment_placement: SegmentPlacement,
+        mem_start: SpecificLocation,
+        mem_offset: u32,
+    ) -> Option<SpecificLocation> {
+        match segment_placement {
+            SegmentPlacement::Passive => None,
+            SegmentPlacement::ContinuesMemory => Some(mem_start.add_offset(mem_offset)),
+            SegmentPlacement::Specific(location) => {
+                panic!("Segment specify fixed location, which is not supported: {location:?}")
             }
         }
     }
 
-    fn calculate_padding(starting_point: usize, alignment: usize) -> usize {
+    fn segment_header(location: Option<SpecificLocation>) -> Result<SVec<u8, 32>> {
+        Ok(match location {
+            None => {
+                // passive segment
+                let mut v = SVec::new();
+                v.push(0x01); // flag for passive segment
+                v
+            }
+            // TODO: support multiple memories?
+            Some(location) => {
+                let mut result = SVec::new();
+                let mut encoder = wasm_emitter::Encoder::new(&mut result, 0);
+                encoder.push_byte(0x00)?; // mem index + flag
+                let offset = location.to_init_expr();
+                encoder.encode_const_expr(&offset)?;
+                encoder.push_byte(0x0B)?; // end of instruction
+                result
+            }
+        })
+    }
+
+    fn calculate_padding(starting_point: u32, alignment: u32) -> u32 {
         let misalignment = starting_point % alignment;
         if misalignment == 0 {
             0
@@ -186,132 +261,53 @@ impl<'src> SegmentLayout<'src> {
         }
     }
 
-    /// Compute data init offset and alligned segment_offset.
-    pub fn to_segment_output(
-        &self,
-        lib_base_global_id: Option<u32>,
-        mem_start: usize,
-        segment_offset: usize,
-        //TODO: move segment_offset padding outside
-    ) -> (usize, DataSegmentOutput) {
-        const BYTE_FILLER: u8 = 0;
-
-        let mut data = Vec::new();
-
-        log::debug!("Segment offset before is {}", mem_start + segment_offset);
-        let (data_init, segment_offset) =
-            self.segment_header(mem_start, segment_offset, lib_base_global_id);
-
-        log::debug!("Segment offset is {}", mem_start + segment_offset);
-        let mut globals = BTreeMap::new();
-
-        let segment_in_mem_start = mem_start + segment_offset;
-        for (symbol, symbol_index) in self.data_parts.iter() {
-            let chunk = symbol.data;
-            let field_alignment = 1 << symbol.pow2align;
-
-            let total_offset = data.len() + segment_in_mem_start;
-
-            // add padding to align data
-            {
-                let padding = Self::calculate_padding(total_offset, field_alignment);
-                if padding > 0 {
-                    log::debug!(
-                        "Add padding before data symbol {}: {padding} bytes",
-                        symbol_index
-                    );
-
-                    data.resize(data.len() + padding, BYTE_FILLER);
-                }
-            }
-            log::trace!(
-                "Data symbol {}: offset: {}, size: {}, aligned: {}",
-                symbol_index,
-                data.len(),
-                chunk.len(),
-                field_alignment
-            );
-
-            globals.insert(
-                *symbol_index,
-                DataSymbolOffset {
-                    data_mem_offset: data.len(),
-                },
-            );
-            data.extend_from_slice(chunk);
+    fn padding_symbol(
+        segment_offset: u32,
+        alignment: u32,
+        segment_id: DataSegmentId,
+    ) -> Option<RawDataChunk<'src>> {
+        let padding = Self::calculate_padding(segment_offset, alignment);
+        if padding > 0 {
+            Some(RawDataChunk {
+                data: &[0; 64][..padding as usize],
+                pow2align: 0,
+                original_offset: 0,
+                segment_id,
+                name: Cow::Borrowed("padding"),
+            })
+        } else {
+            None
         }
-
-        (
-            segment_offset,
-            DataSegmentOutput {
-                data_init: data_init.expect("Active data segment should have offset"),
-                data,
-                segment_name: self.segment_name.to_string().into(),
-                data_symbols: globals,
-                memory_offset: mem_start + segment_offset,
-            },
-        )
     }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DataSymbolOffset {
-    // Relative to lib_base for submodules
-    pub data_mem_offset: usize,
+    /// Offset of symbol in memory.
+    pub addr_of_symbol: usize,
+    /// Offset of symbol in wasm file relative to data section start.
+    pub data_section_offset: usize,
 }
 
-/// Representation of calculated data segment for output module.
-/// Contain data chunk
-#[derive(Debug, Clone)]
-pub struct DataSegmentOutput {
-    // only for active segments
-    data_init: wasm_encoder::ConstExpr,
-    memory_offset: usize,
-    segment_name: Cow<'static, str>,
-
-    data: Vec<u8>,
-    data_symbols: BTreeMap<DataSymbolRef, DataSymbolOffset>,
-}
-// impl ReservedValue for DataSegmentOutput {
-//     fn reserved_value() -> Self {
-//         Self {
-//             data_init: wasm_encoder::ConstExpr::empty(),
-//             memory_offset: usize::MAX,
-//             data: Vec::new(),
-//             data_symbols: BTreeMap::new(),
-//         }
-//     }
-//     fn is_reserved_value(&self) -> bool {
-//         self.memory_offset == usize::MAX && self.data.is_empty() && self.data_symbols.is_empty()
-//     }
-// }
-
-impl DataSegmentOutput {
-    pub fn data_segment<'a>(&'a self, memory_index: u32) -> wasm_encoder::DataSegment<'a, Vec<u8>> {
-        wasm_encoder::DataSegment {
-            mode: wasm_encoder::DataSegmentMode::Active {
-                memory_index,
-                offset: &self.data_init,
-            },
-
-            data: self.data.clone(),
+impl ReservedValue for DataSymbolOffset {
+    fn reserved_value() -> Self {
+        Self {
+            addr_of_symbol: usize::MAX,
+            data_section_offset: usize::MAX,
         }
     }
-    pub fn as_raw(&self) -> &[u8] {
-        &self.data
+    fn is_reserved_value(&self) -> bool {
+        self.addr_of_symbol == usize::MAX && self.data_section_offset == usize::MAX
     }
-    pub fn memory_offset(&self) -> usize {
-        self.memory_offset
-    }
-    pub fn symbols(&self) -> &BTreeMap<DataSymbolRef, DataSymbolOffset> {
-        &self.data_symbols
-    }
+}
+
+impl PrimaryKey for SegmentLayout<'_> {
+    type EntityRef = DataSegmentId;
 }
 
 #[cfg(test)]
 mod tests {
     use cranelift_entity::EntityRef;
-    use nom::bytes;
 
     use super::*;
     use crate::typed::LinkingFile;
@@ -325,19 +321,7 @@ mod tests {
     }
     fn assert_layout_same(file_name: &str, bytes: &[u8]) {
         let file = LinkingFile::from_wasm_bytes(bytes).unwrap();
-        let mut segments = GappedMap::new();
-        for segment in 0..file.wasm_reader.data.data_segments.len() {
-            let segment_id = DataSegmentId::new(segment);
-            let layout = SegmentLayout::new_from_module(
-                &file.module,
-                format!("segment_{segment}").into(),
-                file.wasm_reader.linking.segments_info[segment].alignment as u8,
-                segment_id,
-                DataLocation::from_data_kind(&file.wasm_reader.data.data_segments[segment_id].kind)
-                    .unwrap(),
-            );
-            segments.insert(segment_id, layout.unwrap());
-        }
+        let (segments, _) = SegmentLayout::build_for_module(&file.module).unwrap();
         let mut print_data_format = String::new();
         SegmentLayout::debug_layout(
             &file.relocs,

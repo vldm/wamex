@@ -672,13 +672,23 @@ where
             .map(|(id, defined)| (id, ImportOrDefined::Defined(defined)));
         imports.chain(defined)
     }
-    /// Same as get_entry but using stable index, for cases where CompoundList will not change in size.
+    /// Returns either imported or defined entity by index.
     pub fn get_entity(&self, stable_index: Ref) -> ImportOrDefined<&I, &D> {
+        self.try_get_entity(stable_index)
+            .expect("Index out of bounds")
+    }
+    /// Returns entity by index, or `None` if index is out of bounds.
+    pub fn try_get_entity(&self, stable_index: Ref) -> Option<ImportOrDefined<&I, &D>> {
         let num_imports = self.imports.len();
         if stable_index.index() < num_imports {
-            ImportOrDefined::Import(&self.imports[stable_index.index()])
+            Some(ImportOrDefined::Import(&self.imports[stable_index.index()]))
         } else {
-            ImportOrDefined::Defined(&self.defined[stable_index.index() - num_imports])
+            let defined_index = stable_index.index() - num_imports;
+            if defined_index < self.defined.len() {
+                Some(ImportOrDefined::Defined(&self.defined[defined_index]))
+            } else {
+                None
+            }
         }
     }
 }

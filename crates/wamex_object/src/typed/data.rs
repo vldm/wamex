@@ -5,7 +5,7 @@
 
 use std::{borrow::Cow, collections::BTreeSet, ops::Range};
 
-use cranelift_entity::{EntityRef, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 use wasmparser::{DataKind, SymbolFlags};
 
 use crate::{
@@ -17,20 +17,99 @@ use crate::{
         reloc::AnyRelocationEntry,
     },
     raw::DataSegmentId,
-    typed::{Module, SymbolId},
+    typed::{GlobalRef, Module, SymbolId},
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MemSpec<'src> {
+    /// before - is a space for stack
+    pub mem_start: SpecificLocation,
+    pub data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>>,
+}
+
+impl<'src> MemSpec<'src> {
+    const DEFAULT_HEAP_SIZE: SpecificLocation = SpecificLocation::ConstantOffset(0x100000);
+    pub fn new() -> Self {
+        Self {
+            mem_start: Self::DEFAULT_HEAP_SIZE,
+            data_segments: PrimaryMap::new(),
+        }
+    }
+    pub fn from_reader(reader: &ObjectReader<'src>) -> Result<Self> {
+        let mut mem_start = None;
+        let mut data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>> = PrimaryMap::new();
+
+        for (id, segment) in reader.data.data_segments.iter() {
+            let info = reader.linking.segments_info[id.index()];
+            let name = info.name.into();
+            let pow2align = info.alignment as u8;
+            let mut segment_info = DataSegmentInfo::from_parts(&segment.kind, name, pow2align)?;
+            match segment_info.location {
+                SegmentPlacement::Passive | SegmentPlacement::ContinuesMemory => {}
+                SegmentPlacement::Specific(v) => {
+                    //if mem_start exist find lower offset between it and v
+                    let new = if let Some(mem_start) = mem_start {
+                        match (mem_start, v) {
+                            (
+                                SpecificLocation::ConstantOffset(m),
+                                SpecificLocation::ConstantOffset(v),
+                            ) => SpecificLocation::ConstantOffset(m.min(v)),
+                            (
+                                SpecificLocation::GotBased {
+                                    global: mg,
+                                    offset: mo,
+                                },
+                                SpecificLocation::GotBased {
+                                    global: vg,
+                                    offset: vo,
+                                },
+                            ) if mg == vg => SpecificLocation::GotBased {
+                                global: mg,
+                                offset: mo.min(vo),
+                            },
+                            _ => {
+                                panic!(
+                                    "Incompatible segment placements: {:?} and {:?}, using the first one",
+                                    mem_start, v
+                                );
+                            }
+                        }
+                    } else {
+                        v
+                    };
+                    if segment_info.location != SegmentPlacement::ContinuesMemory {
+                        log::trace!(
+                            "Replace data location to continues memory: {:?} -> {:?}",
+                            segment_info.location,
+                            new
+                        );
+                        segment_info.location = SegmentPlacement::ContinuesMemory;
+                    }
+
+                    mem_start = Some(new);
+                }
+            }
+            assert_eq!(data_segments.push(segment_info), id);
+        }
+
+        Ok(Self {
+            mem_start: mem_start.unwrap_or(Self::DEFAULT_HEAP_SIZE),
+            data_segments,
+        })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DataSegmentInfo<'a> {
     pub name: Cow<'a, str>,
-    pub location: DataLocation,
+    pub location: SegmentPlacement,
     pub pow2align: u8,
 }
 impl<'a> DataSegmentInfo<'a> {
     pub fn from_parts(kind: &DataKind, name: Cow<'a, str>, pow2align: u8) -> Result<Self> {
         Ok(Self {
             name,
-            location: DataLocation::from_data_kind(kind)?,
+            location: SegmentPlacement::from_data_kind(kind)?,
             pow2align,
         })
     }
@@ -52,30 +131,53 @@ impl<'a> DataDefined<'a> {
     }
 }
 
-/// Memory location of data chunk
+/// Location of segment
+/// - Can be passive: mean that init function should explicitly place it
+///   in memory using `memory.init` (relocation cannot be applied to
+///   passive segments, since their offset is determined at runtime).
+///   Passive segments are represented as None in outer Option<SegmentPlacement>.
+/// - Can be constant offset: mean that data segment will be placed
+///   at some specific offset in memory by wasm loader.
+/// - Can be GOT based: mean that data segment will be placed at offset dependent on value of some global (e.g. module base) by wasm loader.
+/// - Or if it in build phase it can be not determined yet.
+///
+/// Same logic applies to element segments, but instead of offsets in memory they represent offset in table.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DataLocation {
-    /// Place chunk at offset (starting from mem_start) in active memory.
-    ActiveOffset(u32),
-    /// Don't place chunk in memory automatically.
+pub enum SegmentPlacement {
+    /// Place chunk at offset (starting from mem_start) in active memory, where offset is calculated as value of global + offset.
     Passive,
+    /// Some specific location in memory, cannot be moved.
+    Specific(SpecificLocation),
+    /// Location is not determined yet, but should be placed somewhere in active memory.
+    ContinuesMemory,
 }
-impl DataLocation {
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SpecificLocation {
+    /// Place chunk at offset (starting from mem_start) in active memory, where offset is calculated as value of global + offset.
+    GotBased { global: GlobalRef, offset: u32 },
+    /// Place chunk at offset (starting from mem_start) in active memory.
+    ConstantOffset(u32),
+}
+
+impl SegmentPlacement {
     pub fn from_data_kind(kind: &DataKind) -> Result<Self> {
-        match kind {
+        Ok(match kind {
             // TODO: add support of multiple memories, and calculated (GOT based) offsets
             DataKind::Active {
                 offset_expr,
                 memory_index: _,
             } => {
                 let offset = Module::read_const_expr(&offset_expr)?;
-                offset
+                let location = offset
                     .try_into()
-                    .map(DataLocation::ActiveOffset)
-                    .map_err(|_| anyhow::anyhow!("Negative offset in active data segment"))
+                    .map(SpecificLocation::ConstantOffset)
+                    .map_err(|_| anyhow::anyhow!("Negative offset in active data segment"))?;
+
+                SegmentPlacement::Specific(location)
             }
-            DataKind::Passive => Ok(DataLocation::Passive),
-        }
+            DataKind::Passive => SegmentPlacement::Passive,
+        })
     }
 }
 
@@ -335,11 +437,31 @@ impl<D> crate::index::PrimaryKey for DataChunk<'_, D> {
     type EntityRef = DataSymbolRef;
 }
 
-impl DataLocation {
+impl SpecificLocation {
     pub fn add_offset(&self, offset: u32) -> Self {
         match self {
-            DataLocation::ActiveOffset(base) => DataLocation::ActiveOffset(base + offset),
-            DataLocation::Passive => DataLocation::Passive,
+            SpecificLocation::GotBased {
+                global,
+                offset: base,
+            } => SpecificLocation::GotBased {
+                global: *global,
+                offset: base + offset,
+            },
+            SpecificLocation::ConstantOffset(base) => {
+                SpecificLocation::ConstantOffset(base + offset)
+            }
+        }
+    }
+    pub fn to_init_expr(&self) -> wasm_encoder::ConstExpr {
+        match self {
+            SpecificLocation::GotBased { global, offset } => {
+                wasm_encoder::ConstExpr::global_get(global.as_u32())
+                    .with_i32_const((*offset).try_into().unwrap())
+                    .with_i32_add()
+            }
+            SpecificLocation::ConstantOffset(base) => {
+                wasm_encoder::ConstExpr::i32_const((*base).try_into().unwrap())
+            }
         }
     }
 }
