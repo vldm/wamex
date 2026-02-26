@@ -158,6 +158,9 @@ where
     pub fn get(&self, key: K) -> Option<&V> {
         self.map[key].expand_ref()
     }
+    pub fn get_mut(&mut self, key: K) -> Option<&mut V> {
+        self.map[key].expand_mut()
+    }
     pub fn iter(&self) -> impl Iterator<Item = (K, &V)> {
         self.map
             .iter()

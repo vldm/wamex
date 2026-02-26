@@ -1,18 +1,20 @@
 use std::{collections::HashMap, io::Write};
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap};
+use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::FuncType;
 
 use crate::{
-    emit::memory_layout::SegmentLayout,
+    emit::memory_layout::{DataSymbolsOffsets, SegmentLayout},
     helpers::{ShiftMap, ShiftPoint},
     index::{GappedMap, IdVec},
-    linkage::reloc::RelocationEntry,
+    linkage::{file_db::FileRelocs, reloc::RelocationEntry},
     raw::{DataSegmentId, FuncTypeId},
     typed::{
-        EntityBody, FunctionRef, Module, common_index::ErasedEntityRef, data::SpecificLocation,
+        EntitiesMultiMap, EntityBody, FileId, FunctionRef, Module,
+        common_index::{EntitiesSnapshot, EntityKind, ErasedEntityRef, FlatEntityRef},
+        data::{DataSymbolRef, SpecificLocation},
     },
 };
 
@@ -20,16 +22,10 @@ pub mod memory_layout;
 pub mod modify;
 pub mod relocation;
 
-#[derive(Default, Debug, Clone, Copy)]
-pub struct ModuleConfig {
-    // Is this module is emitting as position-independent code
-    pub dyn_base: bool,
-}
-
 impl<'src> Module<'src> {
     pub fn generate(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         // TODO: Support extra segments.
-        let (mut segments, _) = SegmentLayout::build_for_module(self)?;
+        let (mut segments, mapping) = SegmentLayout::build_for_module(self)?;
 
         // self.generate_dylink0_section(output_module)?;
 
@@ -48,7 +44,7 @@ impl<'src> Module<'src> {
 
         // let code_relocs =
         //     self.generate_code_section(computed_modules, output_module, precise_modification)?;
-        // let data_relocs = self.generate_data_section(output_module)?;
+        let data_relocs = self.generate_data_section(&segments, output_module)?;
 
         // // self.generate_wasm_bindgen_sections(output_module);
         // // Names + Linking + Relocations
@@ -301,45 +297,42 @@ impl<'src> Module<'src> {
         Ok(())
     }
 
-    // fn generate_data_section(
-    //     &self,
-    //     segments: &PrimaryMap<DataSegmentId, DataSegmentOutput>,
-    //     output_module: &mut wasm_encoder::Module,
-    // ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+    fn generate_data_section(
+        &self,
+        segments: &IdVec<SegmentLayout>,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+        // TODO: Add shifter relocs
+        let relocs = Vec::new();
+        let mut section = wasm_encoder::DataSection::new();
 
-    //     // TODO: Add shifter relocs
-    //     let relocs = Vec::new();
-    //     let mut section = wasm_encoder::DataSection::new();
+        for (_id, layout) in segments.iter() {
+            if layout.is_empty() {
+                continue;
+            }
 
-    //     for (id, layout) in segments.iter() {
-    //         let out = layout.to_segment_output(lib_base_global_id, mem_start, segment_offset)
-    //         let mut data = out.data_segment(MEMORY_INDEX);
-    //         // Skip empty data segments
-    //         // if data.data.is_empty() {
-    //         //     continue;
-    //         // }
-    //         if let Some(relocs) = self.data_relocations.get(id) {
-    //             for entry in relocs.iter() {
-    //                 let state = modify::StartFnModifyContext {
-    //                     data_segment: &mut data.data,
-    //                     relocate: RelocateState {
-    //                         input_module: self.src,
-    //                         computed_modules,
-    //                         emit_module: self,
-    //                         global_id_mapper: &|global_id: GlobalRef| {
-    //                             self.globals.get_output_id(global_id)
-    //                         },
-    //                     },
-    //                 };
-    //                 state.apply_relocation(entry)?;
-    //             }
-    //         }
-    //         section.segment(data);
-    //     }
+            let expr = layout
+                .memory_location()
+                .as_ref()
+                .map(SpecificLocation::to_init_expr);
 
-    //     output_module.section(&section);
-    //     Ok(relocs)
-    // }
+            section.segment(wasm_encoder::DataSegment {
+                mode: expr
+                    .as_ref()
+                    .map_or(wasm_encoder::DataSegmentMode::Passive, |offset| {
+                        wasm_encoder::DataSegmentMode::Active {
+                            memory_index: layout.memory_index(),
+                            offset,
+                        }
+                    }),
+                data: layout.data_stream(),
+            });
+            // todo: Apply relocs
+        }
+
+        output_module.section(&section);
+        Ok(relocs)
+    }
 }
 
 /// Write byte using the modifications to the given writer.

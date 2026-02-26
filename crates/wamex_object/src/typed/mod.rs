@@ -21,10 +21,9 @@ use crate::{
         file_db::{self, FileRelocs},
     },
     raw::{self, DataSegmentId, DefinedFuncId, ImportId},
-    typed::{common_index::EntityKind, data::DataSegmentInfo},
+    typed::{data::DataSegmentInfo, entities::common_index::EntityKind},
 };
 
-pub mod common_index;
 pub mod data;
 pub mod elements;
 mod entities;
@@ -378,7 +377,7 @@ impl<'src> Module<'src> {
 impl<'src> ModuleBuilder<'src> {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let mut tables = entities::Tables::new();
+        let mut tables = entities::Tables::default();
         let _table_ref = tables.items.push_defined(&raw::Table {
             ty: TableType {
                 table64: false,
@@ -392,10 +391,10 @@ impl<'src> ModuleBuilder<'src> {
         });
 
         ModuleBuilder {
-            functions: entities::Functions::new(),
-            memories: entities::Memories::new(),
-            globals: entities::Globals::new(),
-            tags: entities::Tags::new(),
+            functions: entities::Functions::default(),
+            memories: entities::Memories::default(),
+            globals: entities::Globals::default(),
+            tags: entities::Tags::default(),
             data: IdVec::new(),
             mem_spec: data::MemSpec::new(),
             tables,

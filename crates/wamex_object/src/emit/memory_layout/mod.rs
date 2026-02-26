@@ -141,22 +141,43 @@ impl<'src> SegmentLayout<'src> {
         Ok((results, mapping))
     }
 
-    // Keeps only symbols with id is in `indexes`.
-    pub fn new_with_whitelist(mut self, indexes: &BTreeSet<DataSymbolRef>) -> Self {
-        let mut result = vec![];
-        {
-            for (item, symbol_index) in mem::take(&mut self.data_parts) {
-                let remove = !indexes.contains(&symbol_index);
-                if remove {
-                    continue;
-                }
-                result.push((item, symbol_index));
-            }
-        }
-
-        self.data_parts = result;
-        self
+    pub fn is_empty(&self) -> bool {
+        self.data_parts.is_empty()
     }
+
+    /// Convert segment layout to data segment output, which can be encoded into wasm. (excluding segment header)
+    pub fn data_stream(&self) -> impl ExactSizeIterator<Item = u8> {
+        let total_size: usize = self
+            .data_parts
+            .iter()
+            .map(|(symbol, _)| symbol.data.len())
+            .sum();
+
+        DataStream {
+            iter: self
+                .data_parts
+                .iter()
+                .flat_map(|(symbol, _)| symbol.data.iter().copied()),
+            total_size,
+        }
+    }
+
+    // Keeps only symbols with id is in `indexes`.
+    // pub fn new_with_whitelist(mut self, indexes: &BTreeSet<DataSymbolRef>) -> Self {
+    //     let mut result = vec![];
+    //     {
+    //         for (item, symbol_index) in mem::take(&mut self.data_parts) {
+    //             let remove = !indexes.contains(&symbol_index);
+    //             if remove {
+    //                 continue;
+    //             }
+    //             result.push((item, symbol_index));
+    //         }
+    //     }
+
+    //     self.data_parts = result;
+    //     self
+    // }
 
     pub fn debug_layout(
         file_relocs: &FileRelocs,
@@ -215,6 +236,9 @@ impl<'src> SegmentLayout<'src> {
 
     pub fn memory_location(&self) -> Option<SpecificLocation> {
         self.mem_location
+    }
+    pub fn memory_index(&self) -> u32 {
+        0 // TODO: support multiple memories
     }
 
     fn calculate_location(
@@ -303,6 +327,30 @@ impl ReservedValue for DataSymbolOffset {
 
 impl PrimaryKey for SegmentLayout<'_> {
     type EntityRef = DataSegmentId;
+}
+
+struct DataStream<I> {
+    iter: I,
+    total_size: usize,
+}
+impl<I> Iterator for DataStream<I>
+where
+    I: Iterator<Item = u8>,
+{
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+impl<I> ExactSizeIterator for DataStream<I>
+where
+    I: Iterator<Item = u8>,
+{
+    fn len(&self) -> usize {
+        self.total_size
+    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@
 
 use std::borrow::Cow;
 
-use cranelift_entity::EntityRef;
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 use wasmparser::SymbolFlags;
 
 use super::{
@@ -34,26 +34,27 @@ use super::{
 };
 use crate::{
     index::{Building, CompoundList, Finished, GappedMap, ImportOrDefined, NonDefault, TempIndex},
-    raw,
+    raw::{self, FuncTypeId},
     typed::{
         DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag, ImportedFunction,
-        ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag,
+        ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, common_index::EntityKind,
+        data::DataSymbolRef,
     },
 };
 
 pub type Functions<'src, BS = Finished> =
-    EntitiesCollection<'src, FunctionRef, ImportedFunction<'src>, DefinedFunction<'src>, BS>;
+    EntityCollection<'src, FunctionRef, ImportedFunction<'src>, DefinedFunction<'src>, BS>;
 pub type Tables<'src, BS = Finished> =
-    EntitiesCollection<'src, TableRef, ImportedTable<'src>, DefinedTable<'src>, BS>;
+    EntityCollection<'src, TableRef, ImportedTable<'src>, DefinedTable<'src>, BS>;
 pub type Globals<'src, BS = Finished> =
-    EntitiesCollection<'src, GlobalRef, ImportedGlobal<'src>, DefinedGlobal<'src>, BS>;
+    EntityCollection<'src, GlobalRef, ImportedGlobal<'src>, DefinedGlobal<'src>, BS>;
 pub type Memories<'src, BS = Finished> =
-    EntitiesCollection<'src, MemoryRef, ImportedMemory<'src>, DefinedMemory, BS>;
+    EntityCollection<'src, MemoryRef, ImportedMemory<'src>, DefinedMemory, BS>;
 pub type Tags<'src, BS = Finished> =
-    EntitiesCollection<'src, TagRef, ImportedTag<'src>, DefinedTag, BS>;
+    EntityCollection<'src, TagRef, ImportedTag<'src>, DefinedTag, BS>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct EntitiesCollection<'src, Ref, Import, Defined, BuilderState = Finished>
+pub struct EntityCollection<'src, Ref, Import, Defined, BuilderState = Finished>
 where
     Ref: TempIndex,
 {
@@ -71,20 +72,25 @@ where
     pub exports: Vec<ExportEntry<'src, Ref>>,
 }
 
-impl<'src, Ref, Import, Defined> EntitiesCollection<'src, Ref, Import, Defined, Building>
+impl<'src, Ref, Import, Defined> Default for EntityCollection<'src, Ref, Import, Defined, Building>
 where
     Ref: TempIndex,
 {
-    pub fn new() -> Self {
+    fn default() -> Self {
         Self {
             items: CompoundList::empty(),
             names: GappedMap::new(),
             exports: Vec::new(),
         }
     }
-    
-    pub fn into_finished(self) -> EntitiesCollection<'src, Ref, Import, Defined, Finished> {
-        EntitiesCollection {
+}
+
+impl<'src, Ref, Import, Defined> EntityCollection<'src, Ref, Import, Defined, Building>
+where
+    Ref: TempIndex,
+{
+    pub fn into_finished(self) -> EntityCollection<'src, Ref, Import, Defined, Finished> {
+        EntityCollection {
             items: self.items.into_finished(),
             names: self.names,
             exports: self.exports,
@@ -92,7 +98,7 @@ where
     }
 }
 
-impl<'src, Ref, Import, Defined> EntitiesCollection<'src, Ref, Import, Defined>
+impl<'src, Ref, Import, Defined> EntityCollection<'src, Ref, Import, Defined>
 where
     Ref: TempIndex,
 {
@@ -172,6 +178,58 @@ mod assert_covariance {
 
     // Expected to fail test
     // assert_covariance!(Invariant);
+}
+
+/// A primary map from input entity to some value.
+/// Abstract over key - use `EntityKind`.
+/// The implementation may vary, but instead of using `PrimaryMap<FlatEntityRef, Value>`
+/// this collection should allow using it when EntitiesSnapshot cannot be created.
+pub struct EntitiesMultiMap<V: ReservedValue + Clone> {
+    functions: GappedMap<FunctionRef, V>,
+    tables: GappedMap<TableRef, V>,
+    memories: GappedMap<MemoryRef, V>,
+    globals: GappedMap<GlobalRef, V>,
+    tags: GappedMap<TagRef, V>,
+    // non "wasm entities"
+    data: GappedMap<DataSymbolRef, V>,
+    types: GappedMap<FuncTypeId, V>,
+}
+macro_rules! for_entities {
+    ($entity: expr => $self:ident.$method:ident $(($($args:expr),+))?) => {
+        match $entity {
+            EntityKind::Function(func_ref) => $self.functions.$method(func_ref $(,$($args),+)?),
+            EntityKind::Table(table_ref) => $self.tables.$method(table_ref $(,$($args),+)?),
+            EntityKind::Memory(mem_ref) => $self.memories.$method(mem_ref $(,$($args),+)?),
+            EntityKind::Global(global_ref) => $self.globals.$method(global_ref $(,$($args),+)?),
+            EntityKind::Tag(tag_ref) => $self.tags.$method(tag_ref $(,$($args),+)?),
+            EntityKind::DataSymbol(data_ref) => $self.data.$method(data_ref $(,$($args),+)?),
+            EntityKind::Type(func_type_id) => $self.types.$method(func_type_id $(,$($args),+)?),
+        }
+    };
+}
+impl<V: Default + ReservedValue + Clone> Default for EntitiesMultiMap<V> {
+    fn default() -> Self {
+        Self {
+            functions: GappedMap::new(),
+            tables: GappedMap::new(),
+            memories: GappedMap::new(),
+            globals: GappedMap::new(),
+            tags: GappedMap::new(),
+            data: GappedMap::new(),
+            types: GappedMap::new(),
+        }
+    }
+}
+impl<V: ReservedValue + Clone> EntitiesMultiMap<V> {
+    pub fn get(&self, entity: impl Into<EntityKind>) -> Option<&V> {
+        for_entities!(entity.into() => self.get)
+    }
+    pub fn get_mut(&mut self, entity: impl Into<EntityKind>) -> Option<&mut V> {
+        for_entities!(entity.into() => self.get_mut)
+    }
+    pub fn insert(&mut self, entity: impl Into<EntityKind>, value: V) -> Option<V> {
+        for_entities!(entity.into() => self.insert(value))
+    }
 }
 
 //TODO: Move Output->input mapping to separate module?

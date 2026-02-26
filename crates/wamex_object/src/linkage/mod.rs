@@ -159,12 +159,7 @@ impl<'src> LinkageInfo<'src> {
     /// Returns regions of code and data symbols in the original module:
     /// - for each functions body
     /// - for each data chunks
-    pub fn build_regions(
-        input: &Module,
-    ) -> (
-        Vec<(Range<usize>, FunctionRef)>,
-        Vec<(Range<usize>, DataSymbolRef)>,
-    ) {
+    pub fn build_regions(input: &Module) -> file_db::Regions {
         let mut code_owners = Vec::with_capacity(input.functions.items.defined.len());
         let mut data_owners = Vec::with_capacity(input.data.len());
 

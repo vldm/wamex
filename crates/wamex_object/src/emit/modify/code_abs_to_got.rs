@@ -12,12 +12,14 @@ use anyhow::{Result, bail, ensure};
 use cranelift_entity::EntityRef;
 use wasmparser::{GlobalType, Operator};
 
-use super::{Cursor, HandleReloc, ModificationEntry, ModifyOrReloc, ModuleConfig, RelocationEntry};
+use super::{Cursor, HandleReloc, ModificationEntry, ModifyOrReloc, RelocationEntry};
 use crate::{
     SVec,
     emit::modify::{OutputEntityRef, OutputRelocationEntry, Rewrite, wasm_emitter::MemArgOffsets},
     linkage::reloc::{Encoding, Relative, RelocationWidth, SymbolType},
-    typed::{DefinedGlobal, EntityBody, GlobalRef, common_index::EntityKind},
+    typed::{
+        DefinedGlobal, EntityBody, GlobalRef, common_index::EntityKind, data::SpecificLocation,
+    },
 };
 
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -55,26 +57,23 @@ pub fn global_init_tmp(val_type: wasmparser::ValType) -> SVec<u8, 32> {
 #[derive(Debug)]
 pub struct CodeRelocationHandler {
     /// Global base for GOT-relative addressing
-    pub global_base: GlobalRef,
+    pub memory_base: Option<GlobalRef>,
     // Temporary globals for constant extraction
     pub global_tmps: BTreeMap<StoreType, GlobalRef>,
     // Symbols that need to be always treated as static (not converted to GOT-relative)
     pub always_static_symbols: BTreeSet<EntityKind>,
-    // Whether to convert symbols to GOT-relative
-    dyn_base: bool,
 }
 
 impl CodeRelocationHandler {
     pub fn new(always_static_symbols: &BTreeSet<EntityKind>) -> Self {
         Self {
-            global_base: GlobalRef::from_u32(0),
+            memory_base: None,
             global_tmps: BTreeMap::new(),
             always_static_symbols: always_static_symbols.clone(),
-            dyn_base: false,
         }
     }
     pub fn is_dyn_symbol(&self, entry: &RelocationEntry) -> bool {
-        self.dyn_base
+        self.memory_base.is_some()
             && !self
                 .always_static_symbols
                 .contains(&entry.symbol_id.combine(entry.symbol_type))
@@ -85,11 +84,15 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
     type ExtraData = ();
     fn setup(
         &mut self,
-        module_config: ModuleConfig,
         builder: &mut crate::typed::ModuleBuilder<'src>,
         /* extra info ?*/
     ) -> Result<()> {
-        if !module_config.dyn_base {
+        let memory_base = match builder.mem_spec.mem_start {
+            SpecificLocation::GotBased { global, .. } => Some(global),
+            _ => None,
+        };
+
+        if memory_base.is_none() {
             return Ok(());
         }
         debug_assert!(self.global_tmps.is_empty());
@@ -114,7 +117,7 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
             });
         }
 
-        self.dyn_base = module_config.dyn_base;
+        self.memory_base = memory_base;
         Ok(())
     }
 
@@ -124,16 +127,18 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
         entry: RelocationEntry,
     ) -> Result<ModifyOrReloc<Self::ExtraData>> {
         // Only apply if dynamic base is enabled
-        if !self.dyn_base {
+        let Some(memory_base) = self.memory_base else {
             return Ok(ModifyOrReloc::OriginalReloc(entry));
-        }
+        };
 
         // TODO: move outside of this creation
         Self::check_whitelisted_code_relocation(&entry)?;
 
         match entry.symbol_type {
             SymbolType::TableIndex | SymbolType::MemoryAddr if self.is_dyn_symbol(&entry) => {
-                return self.new_entry(buffer, entry).map(ModifyOrReloc::Modify);
+                return self
+                    .new_entry(memory_base, buffer, entry)
+                    .map(ModifyOrReloc::Modify);
             }
             _ => {}
         }
@@ -145,6 +150,7 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
 impl<'src> CodeRelocationHandler {
     fn new_entry(
         &self,
+        memory_base: GlobalRef,
         mut buffer: Cursor<'src>,
         entry: RelocationEntry,
     ) -> Result<ModificationEntry<()>> {
@@ -173,26 +179,29 @@ impl<'src> CodeRelocationHandler {
             }
             instr
         };
+
         Ok(ModificationEntry {
-            rewrite: Some(self.generate_patch(entry, instruction)?),
+            rewrite: Some(self.generate_patch(memory_base, entry, instruction)?),
             original_reloc: entry,
             extra_info: (),
         })
     }
+
     fn generate_patch(
         &self,
+        memory_base: GlobalRef,
         entry: RelocationEntry,
         instruction: wasmparser::Operator<'src>,
     ) -> Result<Rewrite> {
         let rewrite = match (entry.symbol_type, entry.encoding) {
             (SymbolType::MemoryAddr, Encoding::Leb) => {
-                self.replace_memory_offset_with_global_get(entry, instruction)?
+                self.replace_memory_offset_with_global_get(memory_base, entry, instruction)?
             }
             (SymbolType::MemoryAddr, Encoding::Sleb) => {
-                self.replace_const_get_with_global_get(entry, instruction)?
+                self.replace_const_get_with_global_get(memory_base, entry, instruction)?
             }
             (SymbolType::TableIndex, Encoding::Sleb) => {
-                self.replace_const_get_with_global_get(entry, instruction)?
+                self.replace_const_get_with_global_get(memory_base, entry, instruction)?
             }
             _ => {
                 bail!("Unsupported relocation type")
@@ -206,6 +215,7 @@ impl<'src> CodeRelocationHandler {
     // Retuns size of the replacement
     fn replace_const_get_with_global_get(
         &self,
+        memory_base: GlobalRef,
         old_entry: RelocationEntry,
         instruction: Operator<'src>,
     ) -> Result<Rewrite> {
@@ -215,7 +225,7 @@ impl<'src> CodeRelocationHandler {
         );
 
         let got_offset = 0i32;
-        let got_global_index = self.global_base;
+        let got_global_index = memory_base;
         let mut new_bytes = SVec::new();
         let mut new_relocs = SVec::new();
 
@@ -282,11 +292,12 @@ impl<'src> CodeRelocationHandler {
     /// Returns size of the replacement.
     fn replace_memory_offset_with_global_get(
         &self,
+        memory_base: GlobalRef,
         entry: RelocationEntry,
         instruction: wasmparser::Operator<'_>,
     ) -> Result<Rewrite> {
         let got_offset = 0;
-        let got_global_index = self.global_base;
+        let got_global_index = memory_base;
 
         let mut new_bytes = SVec::new();
         let mut new_relocs = SVec::new();

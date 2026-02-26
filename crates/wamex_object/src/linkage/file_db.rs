@@ -49,7 +49,7 @@ pub struct FileRelocs {
     // TODO: custom section related relocs?
 }
 
-type Regions = (
+pub(crate) type Regions = (
     Vec<(Range<usize>, FunctionRef)>,
     Vec<(Range<usize>, DataSymbolRef)>,
 );

@@ -1,10 +1,6 @@
 use anyhow::Result;
 
-use crate::{
-    SVec,
-    emit::{ModuleConfig, modify::cursor::Cursor},
-    typed::common_index::ErasedEntityRef,
-};
+use crate::{SVec, emit::modify::cursor::Cursor, typed::common_index::ErasedEntityRef};
 
 pub mod code_abs_to_got;
 pub mod cursor;
@@ -96,11 +92,7 @@ pub trait HandleReloc<'src> {
     ///
     /// e.g. init some funcs/globals/types in builder
     /// that will be used during modification entries creation or application.
-    fn setup(
-        &mut self,
-        _module_config: ModuleConfig,
-        _builder: &mut crate::typed::ModuleBuilder<'src>,
-    ) -> Result<()> {
+    fn setup(&mut self, _builder: &mut crate::typed::ModuleBuilder<'src>) -> Result<()> {
         Ok(())
     }
 

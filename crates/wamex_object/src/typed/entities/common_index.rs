@@ -1,3 +1,4 @@
+use cranelift_entity::packed_option::ReservedValue;
 use derive_more::{Display, From};
 
 use crate::{
@@ -84,6 +85,16 @@ pub enum EntityKind {
     Memory(MemoryRef),
     Tag(TagRef),
     Type(FuncTypeId),
+}
+
+impl ReservedValue for EntityKind {
+    fn reserved_value() -> Self {
+        EntityKind::Type(FuncTypeId::from_u32(u32::MAX))
+    }
+
+    fn is_reserved_value(&self) -> bool {
+        matches!(self, EntityKind::Type(t) if t.as_u32() == u32::MAX)
+    }
 }
 impl EntityKind {
     pub fn is_function(&self) -> bool {
