@@ -25,6 +25,7 @@ pub_if = "0.1"
 nom = { version = "8.0.0", features = ["std"] }
 derive_more = { version = "2.1.1", features = ["display", "from"] }
 itertools = "0.14"
+yoke = { version = "0.8", features = ["derive"] }
 
 [dev-dependencies]
 tempdir = "0.3"

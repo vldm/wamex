@@ -242,7 +242,8 @@ pub trait PrimaryKey {
 }
 
 // A wrapper around `PrimaryMap` that allows only entities with defined `PrimaryKey`.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, yoke::Yokeable)]
+#[yoke(prove_covariance_manually)]
 pub struct IdVec<T: PrimaryKey>(PrimaryMap<T::EntityRef, T>);
 impl<T: PrimaryKey> IdVec<T> {
     pub fn new() -> Self {

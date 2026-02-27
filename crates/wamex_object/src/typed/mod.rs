@@ -13,6 +13,7 @@ use cranelift_entity::{EntityRef, PrimaryMap};
 pub use entities::*;
 use log::warn;
 use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
+use yoke::{Yoke, Yokeable};
 
 use crate::{
     index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, Temp},
@@ -33,6 +34,28 @@ impl_entity_index! {
 
     #[display = "sym"]
     pub struct SymbolId;
+}
+
+type FileWithData<'src> = Yoke<LinkingFile<'src>, Box<[u8]>>;
+
+///
+/// Manages files to create zero-copy wasm parsed module.
+///
+pub struct FileLoader {
+    files_readers: PrimaryMap<FileId, FileWithData<'static>>,
+}
+impl FileLoader {
+    pub fn load_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<FileId> {
+        let data = std::fs::read(path)?.into_boxed_slice();
+        let file =
+            FileWithData::try_attach_to_cart(data, |data| LinkingFile::from_wasm_bytes(data))?;
+        let id = self.files_readers.push(file);
+        Ok(id)
+    }
+
+    pub fn get_file(&self, file_id: FileId) -> &LinkingFile<'_> {
+        self.files_readers.get(file_id).unwrap().get()
+    }
 }
 
 //
@@ -68,6 +91,7 @@ impl<'src> LinkingFile<'src> {
 }
 
 pub type ModuleBuilder<'src> = Module<'src, Building>;
+
 /// Partially parsed wasm object.
 /// It expects that module has valid structure and contains additional custom sections:
 /// - name section with function and global names
@@ -437,6 +461,53 @@ impl<'src> ModuleBuilder<'src> {
     /// Add defined function to the module, returning its reference.
     pub fn add_defined_function(&mut self, func: DefinedFunction<'src>) -> Temp<FunctionRef> {
         self.functions.items.push_defined(func)
+    }
+}
+
+// it's hard to use #[derive(Yokeable)] because lot of IdVec's which cannot be proven to be covariant over lifetime to the compiller.
+unsafe impl<'a> yoke::Yokeable<'a> for LinkingFile<'static> {
+    type Output = LinkingFile<'a>;
+    #[inline]
+    fn transform(&'a self) -> &'a Self::Output {
+        // SAFETY: module and wasm_reader are covariant by its nature
+        // But due to use of IdVec with Assoc type EntityRef, we can't prove it to the compiller.
+        unsafe { ::core::mem::transmute(self) }
+    }
+    #[inline]
+    fn transform_owned(self) -> Self::Output {
+        // SAFETY1: Self::Output and Self have same layout, but we change the lifetime.
+        //
+        // SAFETY2: module and wasm_reader are covariant by its nature
+        // But due to use of IdVec with Assoc type EntityRef, we can't prove it to the compiller.
+        unsafe { ::core::mem::transmute(self) }
+    }
+    #[inline]
+    unsafe fn make(this: Self::Output) -> Self {
+        use core::mem;
+        debug_assert_eq!(mem::size_of::<Self::Output>(), mem::size_of::<Self>());
+        // let ptr: *const Self = <*const Self::Output>::cast(&this as *const Self::Output);
+        // mem::forget(this);
+
+        // // SAFETY: Self::Output and Self have same layout, but we change the lifetime.
+        // unsafe { ptr::read(ptr) }
+        // SAFETY1: Self::Output and Self have same layout, but we change the lifetime.
+        //
+        // SAFETY2: module and wasm_reader are covariant by its nature
+        // But due to use of IdVec with Assoc type EntityRef, we can't prove it to the compiller.
+        unsafe { ::core::mem::transmute(this) }
+    }
+    #[inline]
+    fn transform_mut<F>(&'a mut self, f: F)
+    where
+        F: 'static + for<'b> FnOnce(&'b mut Self::Output),
+    {
+        // SAFETY: module and wasm_reader are covariant by its nature
+        // But due to use of IdVec with Assoc type EntityRef, we can't prove it to the compiller.
+        unsafe {
+            f(core::mem::transmute::<&'a mut Self, &'a mut Self::Output>(
+                self,
+            ))
+        }
     }
 }
 
