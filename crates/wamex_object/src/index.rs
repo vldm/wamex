@@ -4,9 +4,6 @@
 //!
 //!  - trait `EntityRef` - any type-safe index for collection.
 //!  - `PrimaryMap<K, V>` - map from `EntityRef` to some data. Think of it like `Vec<V>` where index is typed `K`.
-//!  - trait `PrimaryKey` - allows defining default index type for some data type.
-//!  - `IdVec<T>` - wrapper around `PrimaryMap` that allows only types with defined `PrimaryKey`,
-//!    think of it like `PrimaryMap<_, T>`` where `K` is inferred automatically.
 //!  - `SecondaryMap<K, V>` - map from `EntityRef` to some data, but with default value in case if some entry wasn't initialized.
 //!  - `GappedMap<K, V>` - wrapper around `SecondaryMap` that handles gaps in the map using trait `ReservedValue`
 //!    that mark some defined state of `V` as invalid.
@@ -29,7 +26,7 @@ macro_rules! impl_entity_index {
     ( $(
         $(#[display = $display:literal])?
         $(#[doc = $doc:literal])*
-        $visability:vis struct $entity:ident $(($( $type:tt)*))?
+        $visability:vis struct $entity:ident
     );* $(;)? ) => {$(
 
         $(#[doc = $doc])*
@@ -76,21 +73,7 @@ macro_rules! impl_entity_index {
                 next
             }
         }
-        // Impl primary key if needed
-        $(
-            impl_entity_index!(@primary_key $entity $($type)*);
-        )?
     )*};
-    (@primary_key $entity:ident $type: ident) => {
-        impl $crate::index::PrimaryKey for $type {
-            type EntityRef = $entity;
-        }
-    };
-    (@primary_key $entity:ident for<$b: lifetime> $type: ty) => {
-        impl<$b> $crate::index::PrimaryKey for $type {
-            type EntityRef = $entity;
-        }
-    };
 
     (@entity $entity:ident, $display:literal) => {
         cranelift_entity::entity_impl!($entity, $display);
@@ -234,74 +217,6 @@ impl<K: EntityRef, V: Clone + ReservedValue> Default for GappedMap<K, V> {
     }
 }
 
-///
-/// Allows creating `IdVec` of some entity type with default index type.
-///
-pub trait PrimaryKey {
-    type EntityRef: EntityRef;
-}
-
-// A wrapper around `PrimaryMap` that allows only entities with defined `PrimaryKey`.
-#[derive(Clone, PartialEq, Eq, Hash, yoke::Yokeable)]
-#[yoke(prove_covariance_manually)]
-pub struct IdVec<T: PrimaryKey>(PrimaryMap<T::EntityRef, T>);
-impl<T: PrimaryKey> IdVec<T> {
-    pub fn new() -> Self {
-        IdVec(PrimaryMap::new())
-    }
-    pub fn into_inner(self) -> PrimaryMap<T::EntityRef, T> {
-        self.0
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn into_iter(self) -> impl Iterator<Item = (T::EntityRef, T)> {
-        self.0.into_iter()
-    }
-}
-
-impl<T> Deref for IdVec<T>
-where
-    T: PrimaryKey,
-{
-    type Target = PrimaryMap<T::EntityRef, T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl<T> DerefMut for IdVec<T>
-where
-    T: PrimaryKey,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<T: PrimaryKey> Default for IdVec<T> {
-    fn default() -> Self {
-        IdVec(PrimaryMap::new())
-    }
-}
-
-impl<T: PrimaryKey> FromIterator<T> for IdVec<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut map = PrimaryMap::new();
-        for item in iter {
-            map.push(item);
-        }
-        IdVec(map)
-    }
-}
-
-impl<T: PrimaryKey + Debug> Debug for IdVec<T>
-where
-    T::EntityRef: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
 // Test macro usage
 #[cfg(debug_assertions)]
 mod test_impl_entity_index {
@@ -317,9 +232,6 @@ mod test_impl_entity_index {
         pub struct First;
         #[display = "SecondWithDisplay"]
         pub struct SecondWithDisplay;
-        #[display = "WithPrimary"]
-        pub struct WithPrimary(SectionId);
-        pub struct WithPrimaryLf(for <'lf> Test<'lf>);
     }
 }
 

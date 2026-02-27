@@ -16,13 +16,16 @@ use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
-    index::{Building, CompoundList, Finished, IdVec, ImportOrDefined, Temp},
+    index::{Building, CompoundList, Finished, ImportOrDefined, Temp},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
     raw::{self, DataSegmentId, DefinedFuncId, ImportId},
-    typed::{data::DataSegmentInfo, entities::common_index::EntityKind},
+    typed::{
+        data::{DataSegmentInfo, DataSymbolRef},
+        entities::common_index::EntityKind,
+    },
 };
 
 pub mod data;
@@ -116,7 +119,7 @@ pub struct Module<'src, BuilderState = Finished> {
 
     /// linkage entity
     // (lack of import part?)
-    pub data: IdVec<data::RawDataChunk<'src>>,
+    pub data: PrimaryMap<DataSymbolRef, data::RawDataChunk<'src>>,
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
     pub mem_spec: data::MemSpec<'src>,
@@ -252,7 +255,7 @@ impl<'src> Module<'src> {
             // todo: make it configurable
             let slice_chunks = true;
 
-            let mut sliced_chunks = IdVec::new();
+            let mut sliced_chunks = PrimaryMap::new();
 
             for (segment_id, d) in reader.data.data_segments.iter() {
                 let segment_info = reader.linking.segments_info[segment_id.index()];
@@ -419,7 +422,7 @@ impl<'src> ModuleBuilder<'src> {
             memories: entities::Memories::default(),
             globals: entities::Globals::default(),
             tags: entities::Tags::default(),
-            data: IdVec::new(),
+            data: PrimaryMap::new(),
             mem_spec: data::MemSpec::new(),
             tables,
             // TODO: When building IndirectFunctionTable provide Temp<TableRef> instead of TableRef.

@@ -11,7 +11,7 @@ use wasmparser::{DataKind, SymbolFlags};
 use crate::{
     ObjectReader, Result,
     helpers::{RangeComp, RangeExt, cmp_range},
-    index::{GappedMap, IdVec, NonDefault},
+    index::{GappedMap, NonDefault},
     linkage::{
         file_db::{FileRelocs, FileSymbolDb, SymbolOffset},
         reloc::AnyRelocationEntry,
@@ -239,7 +239,7 @@ impl<'a> RawDataChunk<'a> {
         // Iterator over defined data symbols in this segment
         // symbol_id is used for debugging and later cleanup of bound symbols
         defined_data_symbols: impl IntoIterator<Item = (SymbolId, &'o DataDefined<'a>)>,
-    ) -> IdVec<DataChunk<'a, SymbolRelation<'a>>>
+    ) -> PrimaryMap<DataSymbolRef, DataChunk<'a, SymbolRelation<'a>>>
     where
         'a: 'o,
     {
@@ -247,7 +247,7 @@ impl<'a> RawDataChunk<'a> {
         let segment_align = 1 << pow2align;
 
         let segment_offset = self.original_offset;
-        let mut data_parts = IdVec::new();
+        let mut data_parts = PrimaryMap::new();
         let mut last_regular = 0..0;
         for (symbol_id, d) in defined_data_symbols.into_iter() {
             debug_assert_eq!(
@@ -351,16 +351,16 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
     /// and normalize indexes based on order
     /// - call `filter_event` for each update.
     fn filter_bounds_with_cleanup(
-        this: IdVec<Self>,
+        this: PrimaryMap<DataSymbolRef, Self>,
         mut filter_event: impl FnMut(FilterEvent),
-    ) -> IdVec<RawDataChunk<'a>> {
-        let mut result = IdVec::new();
+    ) -> PrimaryMap<DataSymbolRef, RawDataChunk<'a>> {
+        let mut result = PrimaryMap::new();
         let mut last_regular_data = (
             &[] as &[u8],
             SymbolId::reserved_value(),
             DataSymbolRef::reserved_value(),
         );
-        for (_, chunk) in this.into_inner().into_iter() {
+        for (_, chunk) in this.into_iter() {
             match chunk.data {
                 SymbolRelation::Regular { bytes, symbol_id } => {
                     let new = result.push(DataChunk {
@@ -397,9 +397,9 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
     /// and normalize indexes based on order
     /// - updating symbol table accordingly.
     pub fn canonicalize_data_symbols(
-        this: IdVec<Self>,
+        this: PrimaryMap<DataSymbolRef, Self>,
         table: &mut FileSymbolDb,
-    ) -> IdVec<RawDataChunk<'a>> {
+    ) -> PrimaryMap<DataSymbolRef, RawDataChunk<'a>> {
         Self::filter_bounds_with_cleanup(this, |event| match event {
             FilterEvent::RemoveBound {
                 bound_to_symbol,
@@ -430,11 +430,6 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
 impl_entity_index! {
     #[display="data"]
     pub struct DataSymbolRef;
-}
-
-// impl generic over `D`
-impl<D> crate::index::PrimaryKey for DataChunk<'_, D> {
-    type EntityRef = DataSymbolRef;
 }
 
 impl SpecificLocation {

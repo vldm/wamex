@@ -3,16 +3,14 @@
 use std::fmt::Debug;
 
 use anyhow::{Result, anyhow, bail};
+use cranelift_entity::{EntityRef, PrimaryMap};
 pub use indexes::*;
 use vec_map::VecMap;
 use wasm_encoder::CustomSection;
-use wasmparser::{BinaryReader, Payload};
+use wasmparser::{BinaryReader, FromReader, Payload, SectionLimited};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::{
-    index::{IdVec, IndexedSection},
-    typed::FunctionRef,
-};
+use crate::{index::IndexedSection, typed::FunctionRef};
 
 pub mod code;
 pub mod data;
@@ -40,17 +38,17 @@ type Ind<T> = IndexedSection<T>;
 #[derive(Default)]
 pub struct ObjectReader<'a> {
     // parsed sections
-    pub types: IdVec<FuncType>,
-    pub imports: IdVec<Import<'a>>,
-    pub exports: IdVec<Export<'a>>,
-    pub tables: IdVec<Table<'a>>,
+    pub types: PrimaryMap<FuncTypeId, FuncType>,
+    pub imports: PrimaryMap<ImportId, Import<'a>>,
+    pub exports: PrimaryMap<ExportId, Export<'a>>,
+    pub tables: PrimaryMap<DefinedTableId, Table<'a>>,
     // elements is just a table initialisation
-    pub elements: IdVec<Element<'a>>,
+    pub elements: PrimaryMap<ElementId, Element<'a>>,
     // tags are used for exceptions
-    pub tags: IdVec<TagType>,
-    pub globals: IdVec<Global<'a>>,
+    pub tags: PrimaryMap<DefinedTagId, TagType>,
+    pub globals: PrimaryMap<DefinedGlobalId, Global<'a>>,
     // Should be only one memory ?
-    pub memories: IdVec<MemoryType>,
+    pub memories: PrimaryMap<DefinedMemoryId, MemoryType>,
     // code and data is only interested section for relocation application
     pub code: Ind<CodeSection<'a>>,
     pub data: Ind<DataSection<'a>>,
@@ -91,25 +89,25 @@ impl<'a> ObjectReader<'a> {
                 Payload::TypeSection(reader) => {
                     module.types = reader
                         .into_iter_err_on_gc_types()
-                        .collect::<Result<IdVec<_>, _>>()?;
+                        .collect::<Result<PrimaryMap<_, _>, _>>()?;
                 }
                 Payload::ImportSection(reader) => {
-                    module.imports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.imports = read_map(reader)?;
                 }
                 Payload::TableSection(reader) => {
-                    module.tables = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.tables = read_map(reader)?;
                 }
                 Payload::MemorySection(reader) => {
-                    module.memories = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.memories = read_map(reader)?;
                 }
                 Payload::TagSection(reader) => {
-                    module.tags = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.tags = read_map(reader)?;
                 }
                 Payload::GlobalSection(reader) => {
-                    module.globals = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.globals = read_map(reader)?;
                 }
                 Payload::ElementSection(reader) => {
-                    module.elements = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.elements = read_map(reader)?;
                 }
                 Payload::FunctionSection(reader) => {
                     function_types = reader
@@ -118,7 +116,7 @@ impl<'a> ObjectReader<'a> {
                         .collect::<Result<Vec<_>, _>>()?;
                 }
                 Payload::ExportSection(reader) => {
-                    module.exports = reader.into_iter().collect::<Result<IdVec<_>, _>>()?;
+                    module.exports = read_map(reader)?;
                 }
                 Payload::StartSection { func, .. } => {
                     code_start = Some(FunctionRef::from_u32(func));
@@ -130,7 +128,7 @@ impl<'a> ObjectReader<'a> {
                     let starting_offset = reader.range().start;
 
                     let data = DataSection {
-                        data_segments: reader.into_iter().collect::<Result<IdVec<_>, _>>()?,
+                        data_segments: read_map(reader)?,
                     };
                     module.data = Ind {
                         section_payload: data,
@@ -203,14 +201,14 @@ impl<'a> ObjectReader<'a> {
         if parser.next().is_some() {
             bail!("Unexpected trailing data");
         }
-        if let Some(data_count) = data_count {
-            if data_count != module.data.section_payload.data_segments.len() {
-                bail!(
-                    "Data count mismatch: {} != {}",
-                    data_count,
-                    module.data.section_payload.data_segments.len()
-                );
-            }
+        if let Some(data_count) = data_count
+            && data_count != module.data.section_payload.data_segments.len()
+        {
+            bail!(
+                "Data count mismatch: {} != {}",
+                data_count,
+                module.data.section_payload.data_segments.len()
+            );
         }
 
         // merge fields into code section
@@ -224,6 +222,14 @@ impl<'a> ObjectReader<'a> {
 
         Ok(module)
     }
+}
+
+fn read_map<'lf, K, T>(reader: SectionLimited<'lf, T>) -> wasmparser::Result<PrimaryMap<K, T>>
+where
+    K: EntityRef,
+    T: FromReader<'lf>,
+{
+    reader.into_iter().collect::<Result<PrimaryMap<_, _>, _>>()
 }
 
 trait CustomSectionReader<'a> {

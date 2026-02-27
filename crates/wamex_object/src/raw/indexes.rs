@@ -4,27 +4,27 @@ use super::code::FunctionWithBody;
 
 impl_entity_index! {
     #[display = "type"]
-    pub struct FuncTypeId(FuncType);
+    pub struct FuncTypeId;
     #[display = "import"]
-    pub struct ImportId(for<'a> Import<'a>);
+    pub struct ImportId;
     #[display = "export"]
-    pub struct ExportId(for<'a> Export<'a>);
+    pub struct ExportId;
     #[display = "element"]
-    pub struct ElementId(for<'a> Element<'a>);
-    #[display = "data"]
-    pub struct DataSegmentId(for<'a> Data<'a>);
+    pub struct ElementId;
+    #[display = "segment"]
+    pub struct DataSegmentId;
     // #[display = "func"]
     // pub struct InputFuncId(for<'a> InputFunction<'a>);
     #[display = "defined_func"]
-    pub struct DefinedFuncId(for<'a> FunctionWithBody<'a>);
+    pub struct DefinedFuncId;
     // entities
-    #[display = "memory"]
-    pub struct MemoryId(MemoryType);
-    #[display = "table"]
-    pub struct TableId(for<'a> Table<'a>);
-    #[display = "global"]
-    pub struct DefinedGlobalId(for<'a> Global<'a>);
-    #[display = "tag"]
-    pub struct TagId(TagType);
+    #[display = "defined_memory"]
+    pub struct DefinedMemoryId;
+    #[display = "defined_table"]
+    pub struct DefinedTableId;
+    #[display = "defined_global"]
+    pub struct DefinedGlobalId;
+    #[display = "defined_tag"]
+    pub struct DefinedTagId;
 
 }

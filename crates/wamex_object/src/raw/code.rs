@@ -1,15 +1,11 @@
 use anyhow::{Result, bail, ensure};
+use cranelift_entity::PrimaryMap;
 use wasmparser::FuncType;
 pub use wasmparser::FunctionBody;
 
 use super::{Ind, indexes::FuncTypeId};
-use crate::{index::IdVec, typed::FunctionRef};
+use crate::{raw::DefinedFuncId, typed::FunctionRef};
 
-#[derive(Debug)]
-pub enum InputFunction<'a> {
-    Import {},
-    Defined(FunctionBody<'a>),
-}
 #[derive(Debug, Clone)]
 pub struct FunctionWithBody<'a> {
     pub func_type: FuncType,
@@ -20,14 +16,14 @@ pub struct FunctionWithBody<'a> {
 pub struct CodeSection<'a> {
     pub start_func: Option<FunctionRef>,
     // function (CodeSectionEntry)
-    pub defined_funcs: IdVec<FunctionWithBody<'a>>,
+    pub defined_funcs: PrimaryMap<DefinedFuncId, FunctionWithBody<'a>>,
 }
 impl<'a> CodeSection<'a> {
     pub fn new(
         start: Option<FunctionRef>,
         funcs: Vec<FunctionBody<'a>>,
         func_type_ids: Vec<FuncTypeId>,
-        func_types: &IdVec<FuncType>,
+        func_types: &PrimaryMap<FuncTypeId, FuncType>,
         code_header: Option<(usize, usize, u32)>,
     ) -> Result<Ind<Self>> {
         let Some((code_start, section_index, count)) = code_header else {

@@ -15,7 +15,7 @@ use crate::{
     SVec,
     emit::modify::wasm_emitter,
     helpers::RangeExt,
-    index::{GappedMap, IdVec, NonDefault, PrimaryKey, ReservedValue},
+    index::{GappedMap, NonDefault, ReservedValue},
     linkage::file_db::{FileRelocs, SymbolOffset},
     raw::DataSegmentId,
     typed::{
@@ -48,13 +48,11 @@ impl ReservedValue for SegmentLayout<'_> {
         }
     }
     fn is_reserved_value(&self) -> bool {
-        self.data_parts.is_empty()
-            && self.pow2align == u32::MAX
-            && matches!(self.mem_location, None)
+        self.data_parts.is_empty() && self.pow2align == u32::MAX && self.mem_location.is_none()
     }
 }
 
-pub type Segments<'a> = IdVec<SegmentLayout<'a>>;
+pub type Segments<'a> = PrimaryMap<DataSegmentId, SegmentLayout<'a>>;
 pub type DataSymbolsOffsets = GappedMap<DataSymbolRef, DataSymbolOffset>;
 
 impl<'src> SegmentLayout<'src> {
@@ -67,7 +65,7 @@ impl<'src> SegmentLayout<'src> {
     /// Symbols from passive segments will not be present in the mapping.
     ///
     pub fn build_for_module(module: &Module<'src>) -> Result<(Segments<'src>, DataSymbolsOffsets)> {
-        let (mut results, mut mapping) = (IdVec::new(), DataSymbolsOffsets::new());
+        let (mut results, mut mapping) = (PrimaryMap::new(), DataSymbolsOffsets::new());
 
         let (mut segment_offset, mut mem_offset) = (0, 0);
 
@@ -183,7 +181,7 @@ impl<'src> SegmentLayout<'src> {
         file_relocs: &FileRelocs,
         module: &Module<'_>,
         module_name: String,
-        data_segments: &IdVec<SegmentLayout<'_>>,
+        data_segments: &PrimaryMap<DataSegmentId, SegmentLayout<'_>>,
         print_data_format: &mut impl std::fmt::Write,
         color: bool, // std::io::stdout().is_terminal()
     ) {
@@ -323,10 +321,6 @@ impl ReservedValue for DataSymbolOffset {
     fn is_reserved_value(&self) -> bool {
         self.addr_of_symbol == usize::MAX && self.data_section_offset == usize::MAX
     }
-}
-
-impl PrimaryKey for SegmentLayout<'_> {
-    type EntityRef = DataSegmentId;
 }
 
 struct DataStream<I> {

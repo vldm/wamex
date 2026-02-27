@@ -8,7 +8,7 @@ use wasmparser::FuncType;
 use crate::{
     emit::memory_layout::{DataSymbolsOffsets, SegmentLayout},
     helpers::{ShiftMap, ShiftPoint},
-    index::{GappedMap, IdVec},
+    index::GappedMap,
     linkage::{file_db::FileRelocs, reloc::RelocationEntry},
     raw::{DataSegmentId, FuncTypeId},
     typed::{
@@ -204,7 +204,7 @@ impl<'src> Module<'src> {
     /// Start fn section - is just a number of entrypoint function.
     /// We will place one function with void signature as start function, with calls of all functions defined in `self.start_functions` array.
     fn generate_start_function_section(&self, output_module: &mut wasm_encoder::Module) {
-        if self.start_functions.len() > 0 {
+        if !self.start_functions.is_empty() {
             #[cfg(debug_assertions)]
             self.start_functions.iter().for_each(|f| {
                 let func = self.functions.items.get_entity(*f);
@@ -299,7 +299,7 @@ impl<'src> Module<'src> {
 
     fn generate_data_section(
         &self,
-        segments: &IdVec<SegmentLayout>,
+        segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
         output_module: &mut wasm_encoder::Module,
     ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
         // TODO: Add shifter relocs

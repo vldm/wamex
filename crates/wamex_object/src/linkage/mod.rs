@@ -98,9 +98,13 @@ impl<'src> LinkageInfo<'src> {
                 }
             };
 
+            #[allow(clippy::collapsible_if)]
             if let Some(name) = name {
-                if name_to_entity.insert(name.into(), idx).is_some() {
-                    error!("Duplicate symbol name: {}", name);
+                if let Some(prev) = name_to_entity.insert(name.into(), idx) {
+                    error!(
+                        "Duplicate symbol name: {}, previous: {:?}, current = {:?}, flags = {flags:#x}",
+                        name, prev, idx
+                    );
                 }
             }
 
