@@ -25,16 +25,12 @@
 
 use std::borrow::Cow;
 
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
-use wasmparser::SymbolFlags;
+use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 
-use super::{
-    FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef,
-    types::{self, ExportEntry},
-};
+use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef, types::ExportEntry};
 use crate::{
     index::{Building, CompoundList, Finished, GappedMap, ImportOrDefined, NonDefault, TempIndex},
-    raw::{self, FuncTypeId},
+    raw::FuncTypeId,
     typed::{
         DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag, ImportedFunction,
         ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, common_index::EntityKind,
@@ -139,6 +135,9 @@ where
     pub fn len(&self) -> usize {
         self.items.imports.len() + self.items.defined.len()
     }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -157,12 +156,10 @@ mod assert_covariance {
             }
         };
     }
-    #[allow(dead_code)]
     struct Invariant<'a, V> {
         _marker: std::marker::PhantomData<fn(&'a ()) -> &'a ()>,
         _marker2: std::marker::PhantomData<V>,
     }
-    #[allow(dead_code)]
     struct Covariant<'a, V> {
         _marker: std::marker::PhantomData<&'a ()>,
         _marker2: std::marker::PhantomData<V>,
@@ -231,168 +228,3 @@ impl<V: ReservedValue + Clone> EntitiesMultiMap<V> {
         for_entities!(entity.into() => self.insert(value))
     }
 }
-
-//TODO: Move Output->input mapping to separate module?
-
-// /// A type that can provide index of corresponding entity in input module.
-// pub trait GetInputRef<InputRef> {
-//     // TODO: Module ID?
-//     /// Returns index of corresponding entity in input module.
-//     fn get_input_index(&self) -> OutputMapType<InputRef>;
-// }
-
-// /// A reference that possibly linked to another entity in input module.
-// pub trait LinkedToInputRef: ReservedValue {
-//     type InputRef: EntityRef;
-// }
-
-// /// Implementation of `GetInputRef` for `ImportOrDefined`.
-// impl<Imported, Defined, InputRef> GetInputRef<InputRef> for ImportOrDefined<Imported, Defined>
-// where
-//     Imported: GetInputRef<InputRef>,
-//     Defined: GetInputRef<InputRef>,
-// {
-//     fn get_input_index(&self) -> OutputMapType<InputRef> {
-//         match self {
-//             ImportOrDefined::Import(import) => import.get_input_index(),
-//             ImportOrDefined::Defined(defined) => defined.get_input_index(),
-//         }
-//     }
-// }
-
-// impl<'a, T, InputRef> GetInputRef<InputRef> for &'a T
-// where
-//     T: GetInputRef<InputRef>,
-// {
-//     fn get_input_index(&self) -> OutputMapType<InputRef> {
-//         (*self).get_input_index()
-//     }
-// }
-
-// /// Collection of entities used in build of output module, with information about corresponding entity in input module.
-// pub struct EntitiesFromInput<'src, IDX>
-// where
-//     IDX: LinkedToInputRef + CompoundRef,
-// {
-//     entities: CompoundList<'src, IDX>,
-//     /// Map from input entity to coresponding output entity in `entities` collection.
-//     from_input: GappedMap<IDX::InputRef, IDX>,
-// }
-
-// impl<'src, IDX> EntitiesFromInput<'src, IDX>
-// where
-//     IDX: LinkedToInputRef + CompoundRef,
-//     IDX::ImportType<'src>: GetInputRef<IDX::InputRef>,
-//     IDX::DefinedType<'src>: GetInputRef<IDX::InputRef>,
-// {
-//     pub fn new(entities: CompoundList<'src, IDX>) -> Self {
-//         let from_input = entities
-//             .iter()
-//             .filter_map(|(output_id, v)| {
-//                 v.get_input_index()
-//                     .into_bidirectional()
-//                     .map(|input_id| (input_id, output_id))
-//             })
-//             .collect();
-//         Self {
-//             entities,
-//             from_input,
-//         }
-//     }
-
-//     pub fn get_output_id(&self, input_id: IDX::InputRef) -> Option<IDX> {
-//         self.from_input.get(input_id).copied()
-//     }
-//     pub fn get_input_id(&self, output_id: IDX) -> Option<IDX::InputRef> {
-//         let v = self.entities.get_entity(output_id);
-//         v.get_input_index().has_input()
-//     }
-
-//     pub fn imports(&self) -> impl ExactSizeIterator<Item = (IDX, &IDX::ImportType<'src>)> {
-//         self.entities.imports_iter()
-//     }
-//     pub fn defined(&self) -> impl ExactSizeIterator<Item = (IDX, &IDX::DefinedType<'src>)> {
-//         self.entities.defined_iter()
-//     }
-
-//     pub fn get_import_for_output_id(&self, output_id: IDX) -> Option<&IDX::ImportType<'src>> {
-//         let raw_id = output_id.index();
-//         self.entities.imports.get(EntityRef::new(raw_id))
-//     }
-
-//     pub fn get_defined_for_output_id(&self, output_id: IDX) -> Option<&IDX::DefinedType<'src>> {
-//         let raw_id = output_id.index().checked_sub(self.entities.imports.len())?;
-//         self.entities.defined.get(EntityRef::new(raw_id))
-//     }
-
-//     pub fn iter_all_ids(&self) -> impl ExactSizeIterator<Item = IDX> {
-//         (0..self.len()).map(EntityRef::new)
-//     }
-//     pub fn len(&self) -> usize {
-//         self.entities.imports.len() + self.entities.defined.len()
-//     }
-// }
-
-// pub enum OutputMapType<Input> {
-//     /// Each output type can be mapped to an input type and vice versa.
-//     BidirectionalMap(Input),
-//     /// Only Output -> Input mapping is guaranteed.
-//     OutputHasInput(Input),
-//     // The output is a new type that has no corresponding input.
-//     None,
-// }
-
-// impl<Input> OutputMapType<Input> {
-//     pub fn bidirectional_from_option(input: Option<Input>) -> Self {
-//         match input {
-//             Some(input) => OutputMapType::BidirectionalMap(input),
-//             None => OutputMapType::None,
-//         }
-//     }
-//     pub fn into_bidirectional(self) -> Option<Input> {
-//         match self {
-//             OutputMapType::BidirectionalMap(input) => Some(input),
-//             _ => None,
-//         }
-//     }
-//     pub fn has_input(self) -> Option<Input> {
-//         match self {
-//             OutputMapType::BidirectionalMap(input) | OutputMapType::OutputHasInput(input) => {
-//                 Some(input)
-//             }
-//             OutputMapType::None => None,
-//         }
-//     }
-// }
-// impl<'src, IDX> Debug for CompoundList<'src, IDX>
-// where
-//     IDX: CompoundRef,
-//     IDX::ImportType<'src>: Debug,
-//     <IDX::ImportType<'src> as PrimaryKey>::EntityRef: Debug,
-//     IDX::DefinedType<'src>: Debug,
-//     <IDX::DefinedType<'src> as PrimaryKey>::EntityRef: Debug,
-// {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         f.debug_struct("EntitiesCollection")
-//             .field("imports", &self.imports)
-//             .field("defined", &self.defined)
-//             .finish()
-//     }
-// }
-
-// impl<'src, IDX> Debug for EntitiesCollection<'src, IDX>
-// where
-//     IDX: CompoundRef + Debug,
-//     IDX::ImportType<'src>: Debug,
-//     <IDX::ImportType<'src> as PrimaryKey>::EntityRef: Debug,
-//     IDX::DefinedType<'src>: Debug,
-//     <IDX::DefinedType<'src> as PrimaryKey>::EntityRef: Debug,
-// {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         f.debug_struct("EntitiesCollection")
-//             .field("items", &self.items)
-//             .field("names", &self.names)
-//             .field("exports", &self.exports)
-//             .finish()
-//     }
-// }

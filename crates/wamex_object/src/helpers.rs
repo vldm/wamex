@@ -21,7 +21,6 @@ pub enum RangeComp {
     Right,
 }
 
-#[allow(dead_code)]
 impl RangeComp {
     /// Converts the RangeComp to a PartialOrd, usefull for sorting ranges.
     /// Returns None if the RangeComp is NonComparable.
@@ -179,19 +178,9 @@ struct Point<Offset> {
     removed_size: Option<u32>,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, PartialOrd, Ord)]
+#[derive(Debug, Default, Eq, PartialEq, Clone, PartialOrd, Ord)]
 pub struct ShiftMap<Offset> {
     points: Vec<Point<Offset>>,
-}
-
-impl<Offset> ShiftMap<Offset>
-where
-    Offset: Ord,
-{
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        Self { points: vec![] }
-    }
 }
 
 // TODO: add support usize offset.
@@ -252,7 +241,10 @@ where
             point.shift != 0,
             "Cannot add shift point with zero shift: {point:?}"
         );
-        #[allow(clippy::err_expect)] // Err in binary_search is just insertion point.
+        #[allow(
+            clippy::err_expect,
+            reason = "Err in binary_search is just insertion point."
+        )]
         // Make sure no duplicate points exist
         let partition = self
             .points
@@ -556,7 +548,7 @@ mod tests {
         }
 
         let other_map = {
-            let mut map = ShiftMap::new();
+            let mut map = ShiftMap::default();
             map.insert(10u32, 5);
             map.insert(15u32, 2);
             map.remove(20u32, 3);
@@ -641,7 +633,7 @@ mod tests {
             },
         ];
 
-        let mut shift_map = ShiftMap::new();
+        let mut shift_map = ShiftMap::default();
         for point in points {
             shift_map.add_shift_point(point);
         }
@@ -660,7 +652,7 @@ mod tests {
                 shift: 2,
             },
         ];
-        let mut shift_map = ShiftMap::new();
+        let mut shift_map = ShiftMap::default();
         for point in points {
             shift_map.add_shift_point(point);
         }
@@ -695,7 +687,7 @@ mod tests {
                 shift: -5,
             },
         ];
-        let mut shift_map = ShiftMap::new();
+        let mut shift_map = ShiftMap::default();
         for point in points {
             shift_map.add_shift_point(point);
         }
@@ -722,7 +714,7 @@ mod tests {
         let symbols = (0u32..30).collect::<Vec<_>>();
         let removed = [10, 15, 21]; // arbitrary removed symbols
 
-        let mut shift_map = ShiftMap::new();
+        let mut shift_map = ShiftMap::default();
         for &sym in &removed {
             shift_map.remove(sym, 1); // remove ony at once
         }

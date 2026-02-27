@@ -353,7 +353,7 @@ fn emit_body(
                 original_relocs.len() - filtered_relocs.len() + patches.len() * 3,
             ); // rough estimate
 
-            let mut shift_map = ShiftMap::new();
+            let mut shift_map = ShiftMap::default();
             let mut src_offset = 0usize;
             for patch in patches {
                 // write unchanged bytes before patch

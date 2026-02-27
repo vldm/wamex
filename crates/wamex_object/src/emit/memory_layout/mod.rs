@@ -1,26 +1,18 @@
-use std::{
-    borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
-    fmt::Debug,
-    io::IsTerminal,
-    mem, usize,
-};
+use std::{borrow::Cow, fmt::Debug};
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
+use cranelift_entity::PrimaryMap;
 use itertools::Itertools;
-use wasm_encoder::Encode;
 
 use crate::{
     SVec,
     emit::modify::wasm_emitter,
     helpers::RangeExt,
     index::{GappedMap, NonDefault, ReservedValue},
-    linkage::file_db::{FileRelocs, SymbolOffset},
+    linkage::file_db::FileRelocs,
     raw::DataSegmentId,
     typed::{
         Module,
-        common_index::EntityKind,
         data::{DataSymbolRef, RawDataChunk, SegmentPlacement, SpecificLocation},
     },
 };
@@ -188,14 +180,14 @@ impl<'src> SegmentLayout<'src> {
         writeln!(print_data_format, "<Module {module_name}>").unwrap();
 
         let mut base = 0;
-        for (segment_id, segment) in data_segments.iter() {
+        for (_, segment) in data_segments.iter() {
             for (symbol, symbol_index) in segment.data_parts.iter() {
                 if symbol_index.is_reserved_value() {
                     writeln!(
                         print_data_format,
                         "[{segment}:{symbol_index}] <padding> (size: {})",
                         symbol.data.len(),
-                        segment = module.mem_spec.data_segments[segment_id].name,
+                        segment = segment.segment_name,
                     )
                     .unwrap();
                     base += symbol.data.len();
@@ -204,7 +196,7 @@ impl<'src> SegmentLayout<'src> {
                 writeln!(
                     print_data_format,
                     "[{segment}:{symbol_index}] {name}",
-                    segment = module.mem_spec.data_segments[segment_id].name,
+                    segment = segment.segment_name,
                     name = symbol.name
                 )
                 .unwrap();
@@ -349,11 +341,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use cranelift_entity::EntityRef;
 
     use super::*;
     use crate::typed::LinkingFile;
-    const WASM_BYTES: &[u8] = crate::testfiles::SIMPLE_GRAPH;
 
     #[test]
     fn test_layouts() {

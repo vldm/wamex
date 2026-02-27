@@ -7,7 +7,7 @@ use wasmparser::TypeRef;
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
-    emit::modify::{OutputEntityRef, Rewrite},
+    emit::modify::Rewrite,
     linkage::reloc::RelocationEntry,
     raw::{self, FunctionWithBody},
     typed::common_index::ErasedEntityRef,
@@ -148,7 +148,6 @@ pub enum EntityBody<'src> {
 }
 
 impl EntityBody<'_> {
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         match self {
             EntityBody::Copied { bytes, patches, .. } => {
@@ -159,6 +158,9 @@ impl EntityBody<'_> {
             }
             EntityBody::New { new_bytes, .. } => new_bytes.len(),
         }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

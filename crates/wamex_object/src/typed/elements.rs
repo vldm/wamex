@@ -107,7 +107,8 @@ impl<T: ReservedValue + Clone> ElementTable<T> {
                     let has_gap = *prev != id;
                     let id_eq_extra = extra_segments
                         .peek()
-                        .map_or(false, |&extra_id| id == extra_id);
+                        .is_some_and(|&extra_id| id == extra_id);
+
                     if id_eq_extra {
                         extra_segments.next();
                     }

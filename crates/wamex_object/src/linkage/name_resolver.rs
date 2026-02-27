@@ -45,6 +45,7 @@ pub struct SymbolRecord {
     // other_entities: Vec<TaggedEntityRef>,
 }
 
+#[derive(Default, Clone, Debug)]
 pub struct NameResolver<'src> {
     names: std::collections::HashMap<Cow<'src, str>, SymbolRecord>,
 }

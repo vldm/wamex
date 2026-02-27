@@ -14,7 +14,7 @@
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
-    ops::{Deref, DerefMut},
+    ops::Deref,
 };
 
 use cranelift_entity::packed_option::PackedOption;
@@ -221,8 +221,6 @@ impl<K: EntityRef, V: Clone + ReservedValue> Default for GappedMap<K, V> {
 #[cfg(debug_assertions)]
 mod test_impl_entity_index {
     use std::marker::PhantomData;
-
-    use super::SectionId;
 
     #[allow(dead_code, reason = "used for compile test only")]
     struct Test<'f> {

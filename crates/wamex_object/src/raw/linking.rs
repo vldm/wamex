@@ -5,7 +5,6 @@ use wasmparser::{Comdat, InitFunc, Segment};
 
 use super::CustomSectionReader;
 
-#[allow(dead_code)]
 pub mod section {
     use std::ops::Range;
 

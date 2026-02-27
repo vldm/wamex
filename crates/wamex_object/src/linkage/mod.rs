@@ -7,7 +7,7 @@ pub mod file_db;
 pub mod name_resolver;
 pub mod reloc;
 
-use std::{borrow::Cow, collections::HashMap, ops::Range};
+use std::{borrow::Cow, collections::HashMap};
 
 use cranelift_entity::PrimaryMap;
 use file_db::FileSymbolDb;
@@ -16,11 +16,7 @@ use wasmparser::SymbolInfo;
 
 use crate::{
     ObjectReader,
-    index::GappedMap,
-    linkage::{
-        file_db::{RelocRange, SymbolOffset},
-        reloc::AnyRelocationEntry,
-    },
+    linkage::{file_db::SymbolOffset, reloc::AnyRelocationEntry},
     typed::{
         FunctionRef, GlobalRef, Module, SymbolId, TableRef, TagRef,
         common_index::EntityKind,
@@ -98,7 +94,10 @@ impl<'src> LinkageInfo<'src> {
                 }
             };
 
-            #[allow(clippy::collapsible_if)]
+            #[allow(
+                clippy::collapsible_if,
+                reason = "it's more clear when insert in separate line"
+            )]
             if let Some(name) = name {
                 if let Some(prev) = name_to_entity.insert(name.into(), idx) {
                     error!(
@@ -153,9 +152,9 @@ impl<'src> LinkageInfo<'src> {
             }
         }
 
-        code.into_iter()
+        code.iter()
             .map(|entry| AnyRelocationEntry::from_raw(*entry, input.code.starting_offset as isize)) // save original offset
-            .chain(data.into_iter().map(|entry| {
+            .chain(data.iter().map(|entry| {
                 AnyRelocationEntry::from_raw(*entry, input.data.starting_offset as isize)
             }))
     }

@@ -21,11 +21,8 @@ use crate::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
-    raw::{self, DataSegmentId, DefinedFuncId, ImportId},
-    typed::{
-        data::{DataSegmentInfo, DataSymbolRef},
-        entities::common_index::EntityKind,
-    },
+    raw::{self, DefinedFuncId, ImportId},
+    typed::{data::DataSymbolRef, entities::common_index::EntityKind},
 };
 
 pub mod data;
@@ -64,8 +61,10 @@ impl FileLoader {
 //
 // Wasm module + extra information required for applying relocations of symbols from this module.
 //
+#[derive(Yokeable)]
 pub struct LinkingFile<'src> {
     // used for tests
+    #[allow(dead_code, reason = "tests")]
     pub(crate) wasm_reader: raw::ObjectReader<'src>,
     pub file_symbol_db: file_db::FileSymbolDb,
     pub relocs: FileRelocs,
@@ -402,7 +401,10 @@ impl<'src> Module<'src> {
 }
 
 impl<'src> ModuleBuilder<'src> {
-    #[allow(clippy::new_without_default)]
+    #[allow(
+        clippy::new_without_default,
+        reason = "it's api only for building state, so make it default might be confusing"
+    )]
     pub fn new() -> Self {
         let mut tables = entities::Tables::default();
         let _table_ref = tables.items.push_defined(&raw::Table {
@@ -422,12 +424,12 @@ impl<'src> ModuleBuilder<'src> {
             memories: entities::Memories::default(),
             globals: entities::Globals::default(),
             tags: entities::Tags::default(),
-            data: PrimaryMap::new(),
-            mem_spec: data::MemSpec::new(),
+            data: PrimaryMap::default(),
+            mem_spec: data::MemSpec::default(),
             tables,
             // TODO: When building IndirectFunctionTable provide Temp<TableRef> instead of TableRef.
             indirect_function_table: elements::IndirectFunctionTable::new(TableRef::from_u32(0)),
-            start_functions: Vec::new(),
+            start_functions: Vec::default(),
         }
     }
 
@@ -464,53 +466,6 @@ impl<'src> ModuleBuilder<'src> {
     /// Add defined function to the module, returning its reference.
     pub fn add_defined_function(&mut self, func: DefinedFunction<'src>) -> Temp<FunctionRef> {
         self.functions.items.push_defined(func)
-    }
-}
-
-// it's hard to use #[derive(Yokeable)] because lot of IdVec's which cannot be proven to be covariant over lifetime to the compiller.
-unsafe impl<'a> yoke::Yokeable<'a> for LinkingFile<'static> {
-    type Output = LinkingFile<'a>;
-    #[inline]
-    fn transform(&'a self) -> &'a Self::Output {
-        // SAFETY: module and wasm_reader are covariant by its nature
-        // But due to use of IdVec with Assoc type EntityRef, we can't prove it to the compiller.
-        unsafe { ::core::mem::transmute(self) }
-    }
-    #[inline]
-    fn transform_owned(self) -> Self::Output {
-        // SAFETY1: Self::Output and Self have same layout, but we change the lifetime.
-        //
-        // SAFETY2: module and wasm_reader are covariant by its nature
-        // But due to use of IdVec with Assoc type EntityRef, we can't prove it to the compiller.
-        unsafe { ::core::mem::transmute(self) }
-    }
-    #[inline]
-    unsafe fn make(this: Self::Output) -> Self {
-        use core::mem;
-        debug_assert_eq!(mem::size_of::<Self::Output>(), mem::size_of::<Self>());
-        // let ptr: *const Self = <*const Self::Output>::cast(&this as *const Self::Output);
-        // mem::forget(this);
-
-        // // SAFETY: Self::Output and Self have same layout, but we change the lifetime.
-        // unsafe { ptr::read(ptr) }
-        // SAFETY1: Self::Output and Self have same layout, but we change the lifetime.
-        //
-        // SAFETY2: module and wasm_reader are covariant by its nature
-        // But due to use of IdVec with Assoc type EntityRef, we can't prove it to the compiller.
-        unsafe { ::core::mem::transmute(this) }
-    }
-    #[inline]
-    fn transform_mut<F>(&'a mut self, f: F)
-    where
-        F: 'static + for<'b> FnOnce(&'b mut Self::Output),
-    {
-        // SAFETY: module and wasm_reader are covariant by its nature
-        // But due to use of IdVec with Assoc type EntityRef, we can't prove it to the compiller.
-        unsafe {
-            f(core::mem::transmute::<&'a mut Self, &'a mut Self::Output>(
-                self,
-            ))
-        }
     }
 }
 

@@ -190,7 +190,7 @@ pub struct FunctionOffset {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-#[repr(packed)] // always first element, so can be unaligned
+#[repr(Rust, packed)] // always first element, so can be unaligned
 pub struct SectionOffset {
     pub section: SectionId,
 }

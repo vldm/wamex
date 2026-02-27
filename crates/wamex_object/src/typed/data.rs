@@ -3,19 +3,15 @@
 //! Or in case of linkage info provded can be part of a segment.
 //!
 
-use std::{borrow::Cow, collections::BTreeSet, ops::Range};
+use std::{borrow::Cow, ops::Range};
 
 use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
-use wasmparser::{DataKind, SymbolFlags};
+use wasmparser::DataKind;
 
 use crate::{
     ObjectReader, Result,
-    helpers::{RangeComp, RangeExt, cmp_range},
-    index::{GappedMap, NonDefault},
-    linkage::{
-        file_db::{FileRelocs, FileSymbolDb, SymbolOffset},
-        reloc::AnyRelocationEntry,
-    },
+    helpers::{RangeComp, cmp_range},
+    linkage::file_db::{FileSymbolDb, SymbolOffset},
     raw::DataSegmentId,
     typed::{GlobalRef, Module, SymbolId},
 };
@@ -27,14 +23,17 @@ pub struct MemSpec<'src> {
     pub data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>>,
 }
 
-impl<'src> MemSpec<'src> {
-    const DEFAULT_HEAP_SIZE: SpecificLocation = SpecificLocation::ConstantOffset(0x100000);
-    pub fn new() -> Self {
+impl Default for MemSpec<'_> {
+    fn default() -> Self {
         Self {
             mem_start: Self::DEFAULT_HEAP_SIZE,
             data_segments: PrimaryMap::new(),
         }
     }
+}
+impl<'src> MemSpec<'src> {
+    const DEFAULT_HEAP_SIZE: SpecificLocation = SpecificLocation::ConstantOffset(0x100000);
+
     pub fn from_reader(reader: &ObjectReader<'src>) -> Result<Self> {
         let mut mem_start = None;
         let mut data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>> = PrimaryMap::new();
@@ -168,7 +167,7 @@ impl SegmentPlacement {
                 offset_expr,
                 memory_index: _,
             } => {
-                let offset = Module::read_const_expr(&offset_expr)?;
+                let offset = Module::read_const_expr(offset_expr)?;
                 let location = offset
                     .try_into()
                     .map(SpecificLocation::ConstantOffset)

@@ -1,7 +1,3 @@
-use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
-
-use super::code::FunctionWithBody;
-
 impl_entity_index! {
     #[display = "type"]
     pub struct FuncTypeId;
