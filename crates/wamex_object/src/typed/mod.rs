@@ -36,24 +36,37 @@ impl_entity_index! {
     pub struct SymbolId;
 }
 
-type FileWithData<'src> = Yoke<LinkingFile<'src>, Box<[u8]>>;
+type FileWithData<'src> = Yoke<LoadedFile<'src>, Box<[u8]>>;
 
 ///
 /// Manages files to create zero-copy wasm parsed module.
 ///
+#[derive(Default)]
 pub struct FileLoader {
     files_readers: PrimaryMap<FileId, FileWithData<'static>>,
 }
 impl FileLoader {
+    pub fn new() -> Self {
+        Self {
+            files_readers: PrimaryMap::new(),
+        }
+    }
     pub fn load_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<FileId> {
         let data = std::fs::read(path)?.into_boxed_slice();
         let file =
-            FileWithData::try_attach_to_cart(data, |data| LinkingFile::from_wasm_bytes(data))?;
+            FileWithData::try_attach_to_cart(data, |data| LoadedFile::from_wasm_bytes(data))?;
         let id = self.files_readers.push(file);
         Ok(id)
     }
 
-    pub fn get_file(&self, file_id: FileId) -> &LinkingFile<'_> {
+    pub(crate) fn load_from_bytes(&mut self, data: Box<[u8]>) -> Result<FileId> {
+        let file =
+            FileWithData::try_attach_to_cart(data, |data| LoadedFile::from_wasm_bytes(data))?;
+        let id = self.files_readers.push(file);
+        Ok(id)
+    }
+
+    pub fn get_file(&self, file_id: FileId) -> &LoadedFile<'_> {
         self.files_readers.get(file_id).unwrap().get()
     }
 }
@@ -62,7 +75,7 @@ impl FileLoader {
 // Wasm module + extra information required for applying relocations of symbols from this module.
 //
 #[derive(Yokeable)]
-pub struct LinkingFile<'src> {
+pub struct LoadedFile<'src> {
     // used for tests
     #[allow(dead_code, reason = "tests")]
     pub(crate) wasm_reader: raw::ObjectReader<'src>,
@@ -71,7 +84,7 @@ pub struct LinkingFile<'src> {
     pub module: Module<'src>,
 }
 
-impl<'src> LinkingFile<'src> {
+impl<'src> LoadedFile<'src> {
     pub fn from_wasm_bytes(wasm_bytes: &'src [u8]) -> Result<Self> {
         let reader = raw::ObjectReader::parse(wasm_bytes)?;
 
@@ -347,20 +360,38 @@ impl<'src> Module<'src> {
         val
     }
     // Get entity name
-    pub fn get_name(&self, entity: EntityKind) -> Cow<'_, str> {
-        let debug_name = match entity {
-            EntityKind::Function(func_id) => self.functions.names.get(func_id).map(|n| &n[..]),
-            EntityKind::Global(global_id) => self.globals.names.get(global_id).map(|n| &n[..]),
-            EntityKind::Table(table_id) => self.tables.names.get(table_id).map(|n| &n[..]),
-            EntityKind::Memory(mem_id) => self.memories.names.get(mem_id).map(|n| &n[..]),
-            EntityKind::Tag(tag_id) => self.tags.names.get(tag_id).map(|n| &n[..]),
-            EntityKind::DataSymbol(d) => self.data.get(d).map(|v| &v.name[..]),
+    pub fn get_name(&self, entity: EntityKind) -> Cow<'src, str> {
+        let entity = entity.into();
+
+        let debug_name: Option<Cow<'src, str>> = match entity {
+            EntityKind::Function(func_id) => self
+                .functions
+                .names
+                .get(func_id)
+                .map(|n| n.into_inner().into()),
+            EntityKind::Global(global_id) => self
+                .globals
+                .names
+                .get(global_id)
+                .map(|n| n.into_inner().into()),
+            EntityKind::Table(table_id) => self
+                .tables
+                .names
+                .get(table_id)
+                .map(|n| n.into_inner().into()),
+            EntityKind::Memory(mem_id) => self
+                .memories
+                .names
+                .get(mem_id)
+                .map(|n| n.into_inner().into()),
+            EntityKind::Tag(tag_id) => self.tags.names.get(tag_id).map(|n| n.into_inner().into()),
+            EntityKind::DataSymbol(d) => self.data.get(d).map(|v| v.name.clone()),
             EntityKind::Type(_) => None, // types don't have names in name section
         };
-        debug_name
-            .map(Cow::Borrowed)
-            .unwrap_or_else(|| format!("{entity}").into())
+
+        debug_name.unwrap_or_else(|| format!("{entity}").into())
     }
+
     pub fn function_id_iter<'any>(
         &'any self,
     ) -> impl Iterator<Item = FunctionRef> + use<'any, 'src> {
@@ -467,13 +498,40 @@ impl<'src> ModuleBuilder<'src> {
     pub fn add_defined_function(&mut self, func: DefinedFunction<'src>) -> Temp<FunctionRef> {
         self.functions.items.push_defined(func)
     }
+
+    /// Add imported table to the module, returning its reference.
+    pub fn add_imported_table(&mut self, import: ImportedTable<'src>) -> Temp<TableRef> {
+        self.tables.items.push_import(import)
+    }
+    /// Add defined table to the module, returning its reference.
+    pub fn add_defined_table(&mut self, table: DefinedTable<'src>) -> Temp<TableRef> {
+        self.tables.items.push_defined(table)
+    }
+
+    /// Add imported memory to the module, returning its reference.
+    pub fn add_imported_memory(&mut self, import: ImportedMemory<'src>) -> Temp<MemoryRef> {
+        self.memories.items.push_import(import)
+    }
+    /// Add defined memory to the module, returning its reference.
+    pub fn add_defined_memory(&mut self, memory: DefinedMemory) -> Temp<MemoryRef> {
+        self.memories.items.push_defined(memory)
+    }
+
+    /// Add imported tag to the module, returning its reference.
+    pub fn add_imported_tag(&mut self, import: ImportedTag<'src>) -> Temp<TagRef> {
+        self.tags.items.push_import(import)
+    }
+    /// Add defined tag to the module, returning its reference.
+    pub fn add_defined_tag(&mut self, tag: DefinedTag) -> Temp<TagRef> {
+        self.tags.items.push_defined(tag)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use wasmparser::FuncType;
 
-    use super::{LinkingFile, Module};
+    use super::{LoadedFile, Module};
     use crate::typed::ImportedFunction;
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
@@ -484,7 +542,7 @@ mod tests {
 
         println!("Reading wasm file: {}", file);
         let wasm_bytes = std::fs::read(file).unwrap();
-        let file = LinkingFile::from_wasm_bytes(&wasm_bytes).unwrap();
+        let file = LoadedFile::from_wasm_bytes(&wasm_bytes).unwrap();
         let input_object = file.module;
         assert_eq!(input_object.data.len(), 127);
         assert_eq!(input_object.functions.len(), 706);

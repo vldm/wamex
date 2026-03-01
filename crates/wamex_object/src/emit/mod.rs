@@ -1,19 +1,27 @@
-use std::{collections::HashMap, io::Write};
+use std::{collections::HashMap, io::Write, ops::DerefMut};
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::FuncType;
 
 use crate::{
-    emit::memory_layout::{DataSymbolsOffsets, SegmentLayout},
-    helpers::{ShiftMap, ShiftPoint},
-    index::GappedMap,
+    analysis::{DepGraph, OutputModuleInfo},
+    emit::{
+        memory_layout::{DataSymbolOffset, DataSymbolsOffsets, SegmentLayout},
+        modify::OutputEntityRef,
+        relocation::{EntityLocation, file_mapping::OutputFileInfo},
+    },
+    helpers::{RangeExt, ShiftMap, ShiftPoint, encoding_size},
+    index::{Building, GappedMap, ImportOrDefined},
     linkage::{file_db::FileRelocs, reloc::RelocationEntry},
     raw::{DataSegmentId, FuncTypeId},
     typed::{
-        EntitiesMultiMap, EntityBody, FileId, FunctionRef, Module,
-        common_index::{EntitiesSnapshot, EntityKind, ErasedEntityRef, FlatEntityRef},
+        DefinedFunction, EntitiesMultiMap, EntityBody, FileId, FileLoader, FunctionRef,
+        ImportedEntity, Module,
+        common_index::{
+            EntitiesSnapshot, EntityKind, ErasedEntityRef, FlatEntityRef, TempEntityKind,
+        },
         data::{DataSymbolRef, SpecificLocation},
     },
 };
@@ -23,11 +31,31 @@ pub mod modify;
 pub mod relocation;
 
 impl<'src> Module<'src> {
-    pub fn generate(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
-        // TODO: Support extra segments.
-        let (mut segments, mapping) = SegmentLayout::build_for_module(self)?;
+    pub fn generate(
+        &self,
+        file_info: &OutputFileInfo,
+        input_files: &FileLoader,
+        segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<()> {
+        // // TODO: Support extra segments.
+        // let (mut segments, mapping) = SegmentLayout::build_for_module(self)?;
 
         // self.generate_dylink0_section(output_module)?;
+
+        // self.generate_export_section(output_module);
+        // self.generate_start_function_section(output_module)?;
+        // self.generate_element_section(output_module)?;
+
+        // let code_relocs =
+        //     self.generate_code_section(computed_modules, output_module, precise_modification)?;
+        // let data_relocs = self.generate_data_section(computed_modules, output_module)?;
+
+        // // self.generate_wasm_bindgen_sections(output_module);
+        // // Names + Linking + Relocations
+        // self.generate_compiler_tools_sections(output_module, code_relocs, data_relocs)?;
+        // self.generate_target_features_section(output_module)?;
+        // self.generate_custom_sections(output_module)?;
 
         let fn_type_map = self.generate_type_section(output_module);
 
@@ -35,35 +63,64 @@ impl<'src> Module<'src> {
         self.generate_function_type_ids_section(&fn_type_map, output_module);
         self.generate_table_sections(output_module);
         self.generate_memory_section(output_module);
-        self.generate_global_section(output_module)?;
+
         self.generate_tag_section(output_module);
+        self.generate_global_section(file_info, input_files, output_module)?;
         self.generate_export_section(output_module);
         self.generate_start_function_section(output_module);
 
         self.generate_element_section(output_module)?;
+        generate_data_count_section(segments, output_module);
+        let code_start = output_module.len() + 1; // +1 for code section id, we need to know offset of code section for code relocs.
 
-        // let code_relocs =
-        //     self.generate_code_section(computed_modules, output_module, precise_modification)?;
-        let data_relocs = self.generate_data_section(&segments, output_module)?;
+        let code_relocs = self.generate_code_section(file_info, input_files, output_module)?;
+        let data_start = output_module.len() + 1; // +1 for data section id, we need to know offset of data section for data relocs.
+
+        let data_relocs =
+            self.generate_data_section(file_info, input_files, segments, output_module)?;
 
         // // self.generate_wasm_bindgen_sections(output_module);
         // // Names + Linking + Relocations
         // self.generate_compiler_tools_sections(output_module, code_relocs, data_relocs)?;
         // self.generate_target_features_section(output_module)?;
         // self.generate_custom_sections(output_module)?;
-        todo!()
+        // todo!()
+        Ok(())
     }
+
+    fn start_fn_type(&self) -> Option<(FunctionRef, FuncType)> {
+        if self.start_functions.is_empty() {
+            None
+        } else {
+            Some((
+                FunctionRef::new(self.functions.len()),
+                FuncType::new([], []),
+            ))
+        }
+    }
+
     /// Generate type section, return map from FunctionId to type index.
     pub fn generate_type_section(
         &self,
         output_module: &mut wasm_encoder::Module,
-    ) -> PrimaryMap<FunctionRef, FuncTypeId> {
-        let mut function_types = PrimaryMap::new();
+    ) -> SecondaryMap<FunctionRef, FuncTypeId> {
+        let mut function_types = SecondaryMap::new();
         let mut uniq_types = HashMap::<&wasmparser::FuncType, FuncTypeId>::new();
 
+        // add start fn void type if start fn exist
+        let start_fn = self.start_fn_type();
+        let start_fn_iter = start_fn
+            .iter()
+            .map(|(func_ref, func_type)| (*func_ref, func_type));
+
+        let func_types = self
+            .functions
+            .iter()
+            .map(|(id, func)| (id, func.get_type()))
+            .chain(start_fn_iter.clone());
+
         // Collect unique types
-        for (id, func) in self.functions.iter() {
-            let func_type = func.get_type();
+        for (id, func_type) in func_types {
             let new_func_type_id = FuncTypeId::new(uniq_types.len());
 
             let func_type_id = uniq_types.entry(func_type).or_insert(new_func_type_id);
@@ -90,7 +147,7 @@ impl<'src> Module<'src> {
     }
     pub fn generate_import_section(
         &self,
-        fn_type_map: &PrimaryMap<FunctionRef, FuncTypeId>,
+        fn_type_map: &SecondaryMap<FunctionRef, FuncTypeId>,
         output_module: &mut wasm_encoder::Module,
     ) {
         let mut section = wasm_encoder::ImportSection::new();
@@ -148,11 +205,15 @@ impl<'src> Module<'src> {
 
     fn generate_function_type_ids_section(
         &self,
-        fn_type_map: &PrimaryMap<FunctionRef, FuncTypeId>,
+        fn_type_map: &SecondaryMap<FunctionRef, FuncTypeId>,
         output_module: &mut wasm_encoder::Module,
     ) {
+        dbg!(fn_type_map.iter().count());
+
+        dbg!(self.functions.iter().count());
+
         let mut section = FunctionSection::new();
-        for (_, type_id) in fn_type_map {
+        for (_, type_id) in fn_type_map.iter() {
             section.function(type_id.as_u32());
         }
         output_module.section(&section);
@@ -182,15 +243,23 @@ impl<'src> Module<'src> {
         output_module.section(&section);
     }
 
-    fn generate_global_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
+    fn generate_global_section(
+        &self,
+        file_info: &OutputFileInfo,
+        input_files: &FileLoader,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<()> {
         let mut section = wasm_encoder::GlobalSection::new();
-        for (_global_ref, global) in self.globals.defined_iter() {
+        for (global_ref, global) in self.globals.defined_iter() {
             let mut bytes = Vec::new();
             let entity_type: wasm_encoder::GlobalType = global.entity_type.try_into().unwrap();
             entity_type.encode(&mut bytes);
             let relocs = emit_body(
+                0,
                 &global.body,
-                &[], // no relocs for global
+                global_ref.into(),
+                file_info,
+                input_files,
                 &mut bytes,
             )?;
             assert_eq!(relocs.len(), 0); // global cannot have relocs, so this should be always 0.
@@ -297,8 +366,84 @@ impl<'src> Module<'src> {
         Ok(())
     }
 
+    fn _generate_defined_function(
+        &self,
+        file_info: &OutputFileInfo,
+        input_files: &FileLoader,
+
+        function_start_offset: usize,
+        func_id: FunctionRef,
+        func: &DefinedFunction<'_>,
+
+        section: &mut wasm_encoder::CodeSection,
+    ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+        let mut writer = Vec::new();
+        let function_name = self.get_name(func_id.into());
+        log::debug!("Emitting function {function_name}");
+
+        // TODO: We can write bytes directly.
+        let modified_relocs = emit_body(
+            function_start_offset,
+            &func.body,
+            func_id.into(),
+            file_info,
+            input_files,
+            &mut writer,
+        )?;
+
+        section.raw(&writer);
+
+        Ok(modified_relocs)
+    }
+    fn generate_code_section(
+        &self,
+        file_info: &OutputFileInfo,
+        input_files: &FileLoader,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+        let defined_functions_count = self.functions.defined_iter().len() as u32
+            + if !self.start_functions.is_empty() {
+                1 // start function
+            } else {
+                0
+            };
+
+        let mut section = wasm_encoder::CodeSection::new();
+        let mut code_relocs = Vec::new();
+        for (id, output_func) in self.functions.defined_iter() {
+            let function_start_offset = encoding_size(defined_functions_count) + section.byte_len();
+            let relocs = self._generate_defined_function(
+                file_info,
+                input_files,
+                function_start_offset,
+                id,
+                output_func,
+                &mut section,
+            )?;
+
+            code_relocs.extend(relocs);
+        }
+
+        if !self.start_functions.is_empty() {
+            // generate start function as last function in code section, and add call to all start functions in its body
+            let mut func = wasm_encoder::Function::new([]);
+            let mut sink = func.instructions();
+            for func_ref in &self.start_functions {
+                sink.call(func_ref.as_u32()); // TODO: Relocs?
+            }
+            sink.end();
+            section.function(&func);
+        }
+
+        output_module.section(&section);
+
+        Ok(code_relocs)
+    }
+
     fn generate_data_section(
         &self,
+        file_info: &OutputFileInfo,
+        input_files: &FileLoader,
         segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
         output_module: &mut wasm_encoder::Module,
     ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
@@ -327,21 +472,45 @@ impl<'src> Module<'src> {
                     }),
                 data: layout.data_stream(),
             });
-            // todo: Apply relocs
+            // todo: collect relocs
         }
 
         output_module.section(&section);
+
         Ok(relocs)
     }
 }
 
+fn generate_data_count_section(
+    segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
+    output_module: &mut wasm_encoder::Module,
+) {
+    output_module.section(&wasm_encoder::DataCountSection {
+        count: segments.len() as u32,
+    });
+}
+
 /// Write byte using the modifications to the given writer.
-/// Returns relocations shifted to body start.
+/// Returns relocations with id's that can be found in and offsets relative to section start.
 fn emit_body(
+    body_start_offset: usize,
     body: &EntityBody,
-    original_relocs: &[RelocationEntry<ErasedEntityRef>],
+    // ref to entity kind
+    entity_kind: EntityKind,
+    module_info: &OutputFileInfo,
+    input_files: &FileLoader,
+    // output
     writer: &mut impl Write,
 ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+    let src_ref = module_info
+        .get_entity_src(entity_kind)
+        .expect("module_info must have a corresponding src entity");
+    let src_file = input_files.get_file(src_ref.file_id);
+    let original_relocs = src_file
+        .relocs
+        .get_entity_relocs(src_ref.entity)
+        .unwrap_or_default();
+
     match body {
         EntityBody::Copied {
             bytes,
@@ -366,13 +535,33 @@ fn emit_body(
                     let shifted_offset = shift_map
                         .get_shifted_offset(reloc.offset)
                         .expect("new relocation cannot be in removed area");
-                    // relocs.push(RelocationEntry {
-                    //     offset: shifted_offset,
-                    //     ..reloc.clone()
-                    // });
-
-                    // map symbol_id
-                    relocs.push(todo!());
+                    let symbol_id = match reloc.symbol_id {
+                        OutputEntityRef::Resolved(v) => v,
+                        OutputEntityRef::FromInput(v) => {
+                            // id from input file, map to id in output file.
+                            let symbol_id = v.combine(reloc.symbol_type);
+                            if matches!(symbol_id, EntityKind::Type(_) | EntityKind::Table(_)) {
+                                log::error!(
+                                    " relocs are not supported yet, skipping reloc with symbol id {symbol_id}"
+                                );
+                                continue; // TODO: support type relocs
+                            }
+                            let file_entity_ref = src_ref.other_entity(symbol_id);
+                            let entity = module_info
+                                .get_output_entity(&file_entity_ref)
+                                .expect("reloc symbol not found in output file");
+                            entity.erase()
+                        }
+                    };
+                    relocs.push(RelocationEntry {
+                        offset: shifted_offset,
+                        symbol_id,
+                        addend: reloc.addend,
+                        symbol_type: reloc.symbol_type,
+                        relation: reloc.relation,
+                        encoding: reloc.encoding,
+                        width: reloc.width,
+                    });
                 }
                 // then add new shift point
                 shift_map.add_shift_point(ShiftPoint {
@@ -395,16 +584,33 @@ fn emit_body(
                     // reloc was removed.
                     continue;
                 }
+
+                // id from input file, map to id in output file.
+                let symbol_id = reloc.symbol_id.combine(reloc.symbol_type);
+                if matches!(symbol_id, EntityKind::Type(_) | EntityKind::Table(_)) {
+                    log::error!(
+                        " relocs are not supported yet, skipping reloc with symbol id {symbol_id}"
+                    );
+                    continue; // TODO: support type relocs
+                }
+                let file_entity_ref = src_ref.other_entity(symbol_id);
+
+                let entity = module_info
+                    .get_output_entity(&file_entity_ref)
+                    .expect("reloc symbol not found in output file");
+
                 // offset relative to body.
                 let reloc_offset = reloc.offset - original_range.start as u32;
 
                 let shifted_offset = shift_map
                     .get_shifted_offset(reloc_offset)
-                    .expect("relocation cannot be in removed area");
+                    .expect("relocation cannot be in removed area")
+                    + body_start_offset as u32; // and then shift to section-relative offset
 
                 relocs.push(RelocationEntry {
                     offset: shifted_offset,
-                    ..reloc.clone()
+                    symbol_id: entity.erase(),
+                    ..*reloc
                 });
             }
             Ok(relocs)
@@ -414,8 +620,242 @@ fn emit_body(
             new_relocs,
         } => {
             writer.write_all(new_bytes)?;
-            let mapped_relocs = todo!();
+            let mapped_relocs = new_relocs
+                .iter()
+                .map(|reloc| reloc.shift_right(body_start_offset))
+                .collect();
             return Ok(mapped_relocs);
         }
+    }
+}
+
+pub fn create_split_module<'src>(
+    input_file: FileId,
+    src: &Module<'src>,
+    snapshot: &EntitiesSnapshot,
+    output_info: OutputModuleInfo,
+) -> Module<'src> {
+    let mut module: Module<'src, Building> = Module::new();
+    // map of entities from input file to entities in output module.
+    let mut file_info = OutputFileInfo::new();
+
+    type OutputModuleId = ();
+    let mut imported_data_symbols =
+        HashMap::<EntityLocation<DataSymbolRef>, (OutputModuleId, DataSymbolOffset)>::new();
+
+    let mut used_queue: Vec<(_, TempEntityKind)> = Vec::new();
+
+    // Copy defined symbols to the output module.
+    for entity in output_info.defined_symbols {
+        match snapshot.unpack_ref(entity) {
+            EntityKind::Function(f) => {
+                let new = match src.functions.get_entity(f) {
+                    ImportOrDefined::Import(i) => module.add_imported_function(i.clone()),
+
+                    ImportOrDefined::Defined(func) => module.add_defined_function(func.clone()),
+                };
+                used_queue.push((EntityLocation::from_parts(input_file, f.into()), new.into()));
+            }
+            EntityKind::Global(g) => {
+                let new = match src.globals.get_entity(g) {
+                    ImportOrDefined::Import(i) => module.add_imported_global(i.clone()),
+                    ImportOrDefined::Defined(global) => module.add_defined_global(global.clone()),
+                };
+                used_queue.push((EntityLocation::from_parts(input_file, g.into()), new.into()));
+            }
+            EntityKind::Memory(m) => {
+                let new = match src.memories.get_entity(m) {
+                    ImportOrDefined::Import(i) => module.add_imported_memory(i.clone()),
+                    ImportOrDefined::Defined(memory) => module.add_defined_memory(memory.clone()),
+                };
+                used_queue.push((EntityLocation::from_parts(input_file, m.into()), new.into()));
+            }
+            EntityKind::Table(t) => {
+                let new = match src.tables.get_entity(t) {
+                    ImportOrDefined::Import(i) => module.add_imported_table(i.clone()),
+                    ImportOrDefined::Defined(table) => module.add_defined_table(table.clone()),
+                };
+                used_queue.push((EntityLocation::from_parts(input_file, t.into()), new.into()));
+            }
+            EntityKind::Tag(tag) => {
+                let new = match src.tags.get_entity(tag) {
+                    ImportOrDefined::Import(i) => module.add_imported_tag(i.clone()),
+                    ImportOrDefined::Defined(t) => module.add_defined_tag(t.clone()),
+                };
+                used_queue.push((
+                    EntityLocation::from_parts(input_file, tag.into()),
+                    new.into(),
+                ));
+            }
+            EntityKind::DataSymbol(d) => {
+                let new = module.data.push(src.data.get(d).unwrap().clone());
+                // Data symbols have no imports - they index are always stable.
+                file_info.add_entity_mapping(
+                    EntityLocation::from_parts(input_file, d.into()),
+                    new.into(),
+                );
+            }
+            EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
+        }
+    }
+
+    // Add imports for used symbols (even if they are defined in source).
+    for import in output_info.imports {
+        match snapshot.unpack_ref(import) {
+            EntityKind::Function(f) => {
+                let id = module.add_imported_function(ImportedEntity {
+                    module: input_file.to_string().into(), // use file_id
+                    name: src.get_name(f.into()),          // use original name
+                    entity_type: src.functions.get_entity(f).get_type().clone(),
+                });
+                used_queue.push((EntityLocation::from_parts(input_file, f.into()), id.into()));
+            }
+            // stack_pointer, mb heap_base/__data_end, etc.
+            EntityKind::Global(g) => {
+                let id = module.add_imported_global(ImportedEntity {
+                    module: input_file.to_string().into(), // use file_id
+                    name: src.get_name(g.into()),          // use original name
+                    entity_type: *src.globals.get_entity(g).get_type(),
+                });
+                used_queue.push((EntityLocation::from_parts(input_file, g.into()), id.into()));
+            }
+            // indirect_function_table
+            EntityKind::Table(t) => {
+                let id = module.add_imported_table(ImportedEntity {
+                    module: input_file.to_string().into(), // use file_id
+                    name: src.get_name(t.into()),          // use original name
+                    entity_type: *src.tables.get_entity(t).get_type(),
+                });
+                used_queue.push((EntityLocation::from_parts(input_file, t.into()), id.into()));
+            }
+            // only one memory
+            EntityKind::Memory(m) => {
+                let id = module.add_imported_memory(ImportedEntity {
+                    module: input_file.to_string().into(), // use file_id
+                    name: src.get_name(m.into()),          // use original name
+                    entity_type: *src.memories.get_entity(m).inner(),
+                });
+                used_queue.push((EntityLocation::from_parts(input_file, m.into()), id.into()));
+            }
+
+            // Future support
+            EntityKind::Tag(m) => {
+                let id = module.add_imported_tag(ImportedEntity {
+                    module: input_file.to_string().into(), // use file_id
+                    name: src.get_name(m.into()),          // use original name
+                    entity_type: *src.tags.get_entity(m).inner(),
+                });
+                used_queue.push((EntityLocation::from_parts(input_file, m.into()), id.into()));
+            }
+            EntityKind::DataSymbol(d) => {}
+            // EntityKind::Tag(tag) => {},
+            // EntityKind::Type(_) => {},
+            _ => todo!(),
+        }
+    }
+
+    let module = module.into_finished();
+    // Fill mapping for all used entities.
+    for (src, entity) in used_queue {
+        file_info.add_entity_mapping(src, entity.to_stable(&module));
+    }
+
+    module
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        emit::{
+            memory_layout::SegmentLayout,
+            relocation::{EntityLocation, file_mapping::OutputFileInfo},
+        },
+        typed::{DefinedEntity, FileLoader, Module, common_index::TempEntityKind},
+    };
+
+    #[test]
+    fn emit_loaded() {
+        let module_name = "simple_graph";
+        let src = crate::testfiles::SIMPLE_GRAPH;
+
+        let mut file_loader = FileLoader::new();
+
+        let data = src.to_vec().into_boxed_slice();
+        let input_file = file_loader.load_from_bytes(data).unwrap();
+
+        let input = file_loader.get_file(input_file);
+        let mut file_info = OutputFileInfo::new();
+
+        let mut output = Module::new();
+        let mut queue_link: Vec<(_, TempEntityKind)> = Vec::new();
+
+        for (id, func) in input.module.functions.defined_iter() {
+            let new = output.add_defined_function(func.clone());
+            queue_link.push((
+                EntityLocation::from_parts(input_file, id.into()),
+                new.into(),
+            ));
+        }
+        for (id, func) in input.module.functions.imports_iter() {
+            let new = output.add_imported_function(func.clone());
+            queue_link.push((
+                EntityLocation::from_parts(input_file, id.into()),
+                new.into(),
+            ));
+        }
+        for (id, global) in input.module.globals.defined_iter() {
+            let new = output.add_defined_global(global.clone());
+            queue_link.push((
+                EntityLocation::from_parts(input_file, id.into()),
+                new.into(),
+            ));
+        }
+        for (id, global) in input.module.globals.imports_iter() {
+            let new = output.add_imported_global(global.clone());
+            queue_link.push((
+                EntityLocation::from_parts(input_file, id.into()),
+                new.into(),
+            ));
+        }
+
+        for (id, data) in input.module.data.iter() {
+            let new: crate::typed::data::DataSymbolRef = output.data.push(data.clone());
+            file_info.add_entity_mapping(
+                EntityLocation::from_parts(input_file, id.into()),
+                new.into(),
+            );
+        }
+
+        dbg!(&queue_link);
+        // finalize module and add mapping
+        let output = output.into_finished();
+
+        for (src, entity) in queue_link {
+            file_info.add_entity_mapping(src, entity.to_stable(&output));
+        }
+
+        let (mut segments, mapping) = SegmentLayout::build_for_module(&output).unwrap();
+        let mut out = String::new();
+        SegmentLayout::debug_layout(
+            &file_loader.get_file(input_file).relocs,
+            &output,
+            module_name.into(),
+            &segments,
+            &mut out,
+            false,
+        );
+
+        println!("{out}");
+
+        let mut buf = wasm_encoder::Module::new();
+        output
+            .generate(&file_info, &file_loader, &Default::default(), &mut buf)
+            .unwrap();
+        let res = buf.finish();
+
+        // ensure loadable, and compare with original
+        let new_file = file_loader.load_from_bytes(res.into_boxed_slice()).unwrap();
+
+        todo!()
     }
 }

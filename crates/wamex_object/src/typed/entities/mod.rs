@@ -1,4 +1,7 @@
-use crate::{index::TempIndex, raw};
+use crate::{
+    index::TempIndex,
+    raw::{self},
+};
 
 mod collections;
 pub mod common_index;

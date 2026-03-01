@@ -776,7 +776,7 @@ fn calculate_deps(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typed::LinkingFile;
+    use crate::typed::LoadedFile;
 
     #[test]
     fn test_is_part_of() {
@@ -823,7 +823,7 @@ mod tests {
     }
 
     fn test_snapshot_split_structure_for_file(name: &str, wasm_bytes: &[u8]) {
-        let info = LinkingFile::from_wasm_bytes(wasm_bytes).expect("Failed to parse wasm file");
+        let info = LoadedFile::from_wasm_bytes(wasm_bytes).expect("Failed to parse wasm file");
 
         // todo: snapshot entities.
 

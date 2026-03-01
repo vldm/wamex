@@ -13,7 +13,7 @@ use crate::{
     helpers::{RangeComp, cmp_range},
     linkage::file_db::{FileSymbolDb, SymbolOffset},
     raw::DataSegmentId,
-    typed::{GlobalRef, Module, SymbolId},
+    typed::{FileId, GlobalRef, Module, SymbolId},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -211,6 +211,11 @@ pub enum SymbolRelation<'a> {
 }
 
 impl<'a> RawDataChunk<'a> {
+    /// Hack: Imported data symbol for future resolution.
+    pub fn new_imported() -> Self {
+        todo!()
+    }
+
     pub fn from_segment(
         segment_id: DataSegmentId,
         segment_data: &'a [u8],

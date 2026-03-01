@@ -2,6 +2,7 @@ use cranelift_entity::packed_option::ReservedValue;
 use derive_more::{Display, From};
 
 use crate::{
+    index::Temp,
     linkage::reloc::SymbolType,
     raw::FuncTypeId,
     typed::{FunctionRef, GlobalRef, MemoryRef, Module, TableRef, TagRef, data::DataSymbolRef},
@@ -89,19 +90,34 @@ pub enum EntityKind {
 
 impl ReservedValue for EntityKind {
     fn reserved_value() -> Self {
-        EntityKind::Type(FuncTypeId::from_u32(u32::MAX))
+        EntityKind::Type(FuncTypeId::reserved_value())
     }
 
     fn is_reserved_value(&self) -> bool {
-        matches!(self, EntityKind::Type(t) if t.as_u32() == u32::MAX)
+        matches!(self, EntityKind::Type(t) if t.is_reserved_value())
     }
 }
+
 impl EntityKind {
     pub fn is_function(&self) -> bool {
         matches!(self, EntityKind::Function(_))
     }
     pub fn is_data(&self) -> bool {
         matches!(self, EntityKind::DataSymbol(_))
+    }
+    pub fn is_type(&self) -> bool {
+        matches!(self, EntityKind::Type(_))
+    }
+    pub fn erase(&self) -> ErasedEntityRef {
+        match self {
+            EntityKind::Function(func_ref) => (*func_ref).into(),
+            EntityKind::Global(global_ref) => (*global_ref).into(),
+            EntityKind::Table(table_ref) => (*table_ref).into(),
+            EntityKind::DataSymbol(data_symbol_ref) => (*data_symbol_ref).into(),
+            EntityKind::Type(func_type_id) => ErasedEntityRef::from_u32(func_type_id.as_u32()),
+            EntityKind::Tag(tag_ref) => ErasedEntityRef::from_u32(tag_ref.as_u32()),
+            EntityKind::Memory(mem_ref) => ErasedEntityRef::from_u32(mem_ref.as_u32()),
+        }
     }
 }
 
@@ -110,6 +126,9 @@ impl EntityKind {
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntitiesSnapshot {
+    // if this module is loaded into same address space with others,
+    // the offset of entities in flat index space is needed to pack/unpack refs.
+    num_file_offset: u32,
     num_function_refs: u32,
     num_data_symbol_refs: u32,
     num_global_refs: u32,
@@ -122,6 +141,7 @@ impl EntitiesSnapshot {
     /// Create a snapshot with arbitrary numbers for testing purposes.
     pub fn for_testing() -> Self {
         Self {
+            num_file_offset: 150,
             num_function_refs: 10,
             num_data_symbol_refs: 5,
             num_global_refs: 3,
@@ -132,6 +152,7 @@ impl EntitiesSnapshot {
     }
     pub fn new(object: &Module<'_>) -> Self {
         Self {
+            num_file_offset: 0,
             num_function_refs: object.functions.len() as u32,
             num_data_symbol_refs: object.data.len() as u32,
             num_global_refs: object.globals.len() as u32,
@@ -141,45 +162,53 @@ impl EntitiesSnapshot {
         }
     }
 
+    #[inline]
     pub fn pack_ref(&self, symbol: impl Into<EntityKind>) -> FlatEntityRef {
-        match symbol.into() {
-            EntityKind::Function(f) => FlatEntityRef::from_u32(f.as_u32()),
-
-            EntityKind::Global(g) => FlatEntityRef::from_u32(g.as_u32() + self.num_function_refs),
-            EntityKind::Table(t) => {
-                FlatEntityRef::from_u32(t.as_u32() + self.num_function_refs + self.num_global_refs)
-            }
-            EntityKind::Memory(m) => FlatEntityRef::from_u32(
-                m.as_u32() + self.num_function_refs + self.num_global_refs + self.num_table_refs,
-            ),
-            EntityKind::Tag(t) => FlatEntityRef::from_u32(
-                t.as_u32()
-                    + self.num_function_refs
-                    + self.num_global_refs
-                    + self.num_table_refs
-                    + self.num_memory_refs,
-            ),
-            EntityKind::DataSymbol(d) => FlatEntityRef::from_u32(
-                d.as_u32()
-                    + self.num_function_refs
-                    + self.num_global_refs
-                    + self.num_table_refs
-                    + self.num_memory_refs
-                    + self.num_tag_refs,
-            ),
-            EntityKind::Type(t) => FlatEntityRef::from_u32(
-                t.as_u32()
-                    + self.num_function_refs
-                    + self.num_global_refs
-                    + self.num_table_refs
-                    + self.num_memory_refs
-                    + self.num_tag_refs
-                    + self.num_data_symbol_refs,
-            ),
-        }
+        FlatEntityRef::from_u32(
+            self.num_file_offset
+                + match symbol.into() {
+                    EntityKind::Function(f) => f.as_u32(),
+                    EntityKind::Global(g) => g.as_u32() + self.num_function_refs,
+                    EntityKind::Table(t) => {
+                        t.as_u32() + self.num_function_refs + self.num_global_refs
+                    }
+                    EntityKind::Memory(m) => {
+                        m.as_u32()
+                            + self.num_function_refs
+                            + self.num_global_refs
+                            + self.num_table_refs
+                    }
+                    EntityKind::Tag(t) => {
+                        t.as_u32()
+                            + self.num_function_refs
+                            + self.num_global_refs
+                            + self.num_table_refs
+                            + self.num_memory_refs
+                    }
+                    EntityKind::DataSymbol(d) => {
+                        d.as_u32()
+                            + self.num_function_refs
+                            + self.num_global_refs
+                            + self.num_table_refs
+                            + self.num_memory_refs
+                            + self.num_tag_refs
+                    }
+                    EntityKind::Type(t) => {
+                        t.as_u32()
+                            + self.num_function_refs
+                            + self.num_global_refs
+                            + self.num_table_refs
+                            + self.num_memory_refs
+                            + self.num_tag_refs
+                            + self.num_data_symbol_refs
+                    }
+                },
+        )
     }
+
+    #[inline]
     pub fn unpack_ref(&self, any_ref: FlatEntityRef) -> EntityKind {
-        let idx = any_ref.as_u32();
+        let idx = any_ref.as_u32().checked_sub(self.num_file_offset).unwrap();
         if idx < self.num_function_refs {
             EntityKind::Function(FunctionRef::from_u32(idx))
         } else if idx < self.num_function_refs + self.num_global_refs {
@@ -238,18 +267,53 @@ impl EntitiesSnapshot {
     }
 }
 
+/// A temp version of `EntityKind` for building purposes, where imports/defined indexes are not stable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Display)]
+#[display("{_0}")]
+pub enum TempEntityKind {
+    Function(Temp<FunctionRef>),
+    Global(Temp<GlobalRef>),
+    Table(Temp<TableRef>),
+    Memory(Temp<MemoryRef>),
+    Tag(Temp<TagRef>),
+    // No import/defined distinction - no reason for temp refs.
+    // DataSymbol(Temp<DataSymbolRef>),
+    // Type(Temp<FuncTypeId>),
+}
+impl TempEntityKind {
+    pub fn to_stable(self, module: &Module<'_>) -> EntityKind {
+        match self {
+            TempEntityKind::Function(func_ref) => {
+                EntityKind::Function(func_ref.to_stable(module.functions.imports_iter().len()))
+            }
+            TempEntityKind::Global(global_ref) => {
+                EntityKind::Global(global_ref.to_stable(module.globals.imports_iter().len()))
+            }
+            TempEntityKind::Table(table_ref) => {
+                EntityKind::Table(table_ref.to_stable(module.tables.imports_iter().len()))
+            }
+            TempEntityKind::Tag(tag_ref) => {
+                EntityKind::Tag(tag_ref.to_stable(module.tags.imports_iter().len()))
+            }
+            TempEntityKind::Memory(mem_ref) => {
+                EntityKind::Memory(mem_ref.to_stable(module.memories.imports_iter().len()))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::EntitiesSnapshot;
     use crate::{
         raw::FuncTypeId,
-        typed::{FunctionRef, LinkingFile, common_index::EntityKind, data::DataSymbolRef},
+        typed::{FunctionRef, LoadedFile, common_index::EntityKind, data::DataSymbolRef},
     };
 
     #[test]
     fn test_entity_ref_mapping() {
         let file = crate::testfiles::EXAMPLE_WASM;
-        let info = LinkingFile::from_wasm_bytes(file).unwrap();
+        let info = LoadedFile::from_wasm_bytes(file).unwrap();
         let module = info.module;
 
         let snapshot = EntitiesSnapshot::new(&module);

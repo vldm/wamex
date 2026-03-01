@@ -343,7 +343,7 @@ where
 mod tests {
 
     use super::*;
-    use crate::typed::LinkingFile;
+    use crate::typed::LoadedFile;
 
     #[test]
     fn test_layouts() {
@@ -352,7 +352,7 @@ mod tests {
         assert_layout_same("lazy_routes", crate::testfiles::LAZY_ROUTES);
     }
     fn assert_layout_same(file_name: &str, bytes: &[u8]) {
-        let file = LinkingFile::from_wasm_bytes(bytes).unwrap();
+        let file = LoadedFile::from_wasm_bytes(bytes).unwrap();
         let (segments, _) = SegmentLayout::build_for_module(&file.module).unwrap();
         let mut print_data_format = String::new();
         SegmentLayout::debug_layout(

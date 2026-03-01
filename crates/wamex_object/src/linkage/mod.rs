@@ -140,16 +140,6 @@ impl<'src> LinkageInfo<'src> {
                     );
                 }
             }
-            for pair in data.windows(2) {
-                let first = &pair[0];
-                let second = &pair[1];
-                let first_end = first.relocation_range().end as u32;
-                if first_end > second.offset {
-                    panic!(
-                        "Overlapping relocations found: first={first:?} (end={first_end}), second={second:?}"
-                    );
-                }
-            }
         }
 
         code.iter()

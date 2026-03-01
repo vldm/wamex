@@ -10,7 +10,7 @@ use crate::{
     emit::modify::Rewrite,
     linkage::reloc::RelocationEntry,
     raw::{self, FunctionWithBody},
-    typed::common_index::ErasedEntityRef,
+    typed::{self, common_index::ErasedEntityRef},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -40,17 +40,19 @@ impl<Type> DefinedEntity<'_, Type> {
     }
 }
 
-pub type ImportedFunction<'a> = ImportedEntity<'a, wasmparser::FuncType>;
-pub type ImportedTable<'a> = ImportedEntity<'a, wasmparser::TableType>;
-pub type ImportedMemory<'a> = ImportedEntity<'a, wasmparser::MemoryType>;
-pub type ImportedGlobal<'a> = ImportedEntity<'a, wasmparser::GlobalType>;
-pub type ImportedTag<'a> = ImportedEntity<'a, wasmparser::TagType>;
+pub type ImportedFunction<'src> = ImportedEntity<'src, wasmparser::FuncType>;
+pub type ImportedTable<'src> = ImportedEntity<'src, wasmparser::TableType>;
+pub type ImportedMemory<'src> = ImportedEntity<'src, wasmparser::MemoryType>;
+pub type ImportedGlobal<'src> = ImportedEntity<'src, wasmparser::GlobalType>;
+pub type ImportedTag<'src> = ImportedEntity<'src, wasmparser::TagType>;
+pub type ImportedDataChunk<'src> = ImportedEntity<'src, ()>; // it's untyped chunk of data - so no "type" can be assigned to it.
 
 pub type DefinedFunction<'src> = DefinedEntity<'src, wasmparser::FuncType>;
 pub type DefinedTable<'src> = DefinedEntity<'src, wasmparser::TableType>;
 pub type DefinedGlobal<'src> = DefinedEntity<'src, wasmparser::GlobalType>;
 pub type DefinedMemory = wasmparser::MemoryType;
 pub type DefinedTag = wasmparser::TagType;
+pub type DefinedDataChunk<'src> = typed::data::RawDataChunk<'src>;
 
 impl<'src> From<&FunctionWithBody<'src>> for DefinedFunction<'src> {
     fn from(v: &FunctionWithBody<'src>) -> DefinedFunction<'src> {

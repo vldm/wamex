@@ -1,112 +1,108 @@
+//! Code can be only in current module, all external symbols converted to:
+//! - import fn
+//! - trampoline to some indirect import (in general needs GOT base), but we use fixed offsets in indirect calls (part of layout)
+//!
+//! Data cannot be imported, so we need to know memory layout of external module, and we import GOT base for each dep module.
+//! - main module, or current module should be referenced by offset
+//! - other modules should be converted to GOT + offset.
+//!
+//! For relocs, we need to know:
+//! - is it symbol rel based/or absolute.
+//! - what GOT entry we need.
+//!   so before processing relocs we need to provide:
+//!
+//! Common:
+//! - Vec<MemLayout> for each module
+//! - parent module: IndirectFnLayout
+//!
+//! Local info:
+//! - Map<ImportDataSymbolRef, GotRef> // builded with module itself
+//! - Map<(File, EntityKind), EntityKind> // mapping from input entity to entity in current module (How to deal with imported data?).
+//! - Map<EntityKind, FileId> // to know where to search relocs/deps for each entity.
+//!
+
+use std::collections::HashMap;
+
 use anyhow::Result;
 use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
 
 use crate::{
-    emit::memory_layout::{DataSymbolOffset, DataSymbolsOffsets},
-    index::GappedMap,
+    emit::{
+        memory_layout::{DataSymbolOffset, DataSymbolsOffsets},
+        relocation::EntityLocation,
+    },
+    index::{Building, Finished, GappedMap},
     linkage::file_db::FileRelocs,
     typed::{
-        EntitiesMultiMap, FileId, Module,
+        EntitiesMultiMap, FileId, FileLoader, GlobalRef, Module, ModuleBuilder,
         common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+        data::DataSymbolRef,
     },
 };
 
-/// Composite reference to an entity in some file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FileEntityRef {
-    pub file_id: FileId,
-    pub entity_kind: EntityKind,
+///
+/// Currently module doesn't provide mem layout.
+/// So we need to recalculate it before emitting.
+///
+/// As a temporary solution this type exists.
+// TODO: merge data_offsets awith module itself.
+pub struct ModuleAndDataInfo<'src, S = Finished> {
+    pub module: Module<'src, S>,
+    pub data_offsets: DataSymbolsOffsets,
 }
-impl FileEntityRef {
-    pub fn from_parts(file_id: FileId, entity_kind: EntityKind) -> Self {
+impl<'src> ModuleAndDataInfo<'src, Building> {
+    pub fn new() -> Self {
         Self {
-            file_id,
-            entity_kind,
+            module: Module::new(),
+            data_offsets: DataSymbolsOffsets::new(),
         }
     }
 }
 
-/// Input file information:
-/// - list of relocs for entities in file - we avoid storing them in entity itself, since every reloc is bound to other symbol.
-/// - Information where to find entity in output modules (output_map) - needed to find lib base and entity offset/index of specific relocs.
-/// - also contain snapshot - just to be able to process FlatEntityRef of specific file.
-struct InputFileInfo {
-    relocs: FileRelocs,
-    // Map from entity in input module to entity in output module.
-    // Used to apply relocs.
-    // There could be more than one output module, in case of split.
-    output_map: GappedMap<FlatEntityRef, FileEntityRef>,
-
-    snapshot: EntitiesSnapshot,
-}
-impl InputFileInfo {
-    pub fn new(module: &Module, relocs: FileRelocs) -> Self {
-        Self {
-            snapshot: EntitiesSnapshot::new(module),
-            relocs,
-            output_map: GappedMap::new(),
-        }
-    }
-    pub fn push_mapping(
-        &mut self,
-        src: impl Into<EntityKind>,
-        output_file: FileId,
-        output_ref: impl Into<EntityKind>,
-    ) {
-        let src = self.snapshot.pack_ref(src.into());
-        self.output_map.insert(
-            src,
-            FileEntityRef::from_parts(output_file, output_ref.into()),
-        );
-    }
-
-    pub fn get_output_ref(&self, src: impl Into<EntityKind>) -> Option<FileEntityRef> {
-        let src = self.snapshot.pack_ref(src.into());
-        self.get_output_flat_ref(src)
-    }
-
-    pub fn get_output_flat_ref(&self, src: FlatEntityRef) -> Option<FileEntityRef> {
-        self.output_map.get(src).cloned()
-    }
+pub struct OutputModules<'src> {
+    modules: PrimaryMap<FileId, ModuleAndDataInfo<'src>>,
 }
 
-///
-/// Information about linkages between files.
-///
-struct FileLinkageInfo<'src> {
-    input_files: PrimaryMap<FileId, InputFileInfo>,
-    output_files: PrimaryMap<FileId, OutputFileInfo<'src>>,
-}
+// pub struct OutputModuleInfo {
+//     // Map<ImportDataSymbolRef, GotRef>
+//     import_data_symbols: GappedMap<DataSymbolRef, GlobalRef>,
+// }
+#[derive(Debug)]
+pub struct OutputFileInfo {
+    // pub module: ModuleAndDataInfo<'src, Building>,
 
-struct OutputFileInfo<'src> {
-    module: Module<'src>,
-    data_offsets: DataSymbolsOffsets,
     // We don't copy relocs, so we need FileId to get needed `FileRelocs` and request it with relocs list for entity.
-    input_map: EntitiesMultiMap<FileEntityRef>,
+    src_map: EntitiesMultiMap<EntityLocation>,
+    // Map from output entity to src entities.
+    remapped_entity: HashMap<EntityLocation, EntityKind>,
 }
 
-impl OutputFileInfo<'_> {
-    // fn apply_relocs(
-    //     &self,
-    //     target: &mut [u8],
-    //     relocs: impl Iterator<Item = RelocationEntry<ErasedEntityRef>>,
-    // ) -> Result<()> {
-    //     for reloc in relocs {
-    //         todo!()
-    //     }
-    //     Ok(())
-    // }
-}
-
-impl ReservedValue for FileEntityRef {
-    fn reserved_value() -> Self {
-        FileEntityRef {
-            file_id: FileId::reserved_value(),
-            entity_kind: EntityKind::reserved_value(),
+impl OutputFileInfo {
+    pub fn new() -> Self {
+        Self {
+            // module: ModuleAndDataInfo::new(),
+            src_map: EntitiesMultiMap::default(),
+            remapped_entity: HashMap::new(),
         }
     }
+    pub fn add_entity_mapping(&mut self, src: EntityLocation, output: EntityKind) {
+        self.src_map.insert(output, src);
+        self.remapped_entity.insert(src, output);
+    }
 
-    fn is_reserved_value(&self) -> bool {
-        self.file_id.is_reserved_value() && self.entity_kind.is_reserved_value()
+    /// Return src entity reference for given output entity, if exist.
+    ///
+    /// 1-st step of relocation processing:
+    ///  - we need to know where to search array of relocs for given entity (get file id)
+    pub fn get_entity_src(&self, output: EntityKind) -> Option<EntityLocation> {
+        self.src_map.get(output).cloned()
+    }
+
+    /// Return output entity reference for given src entity, if exist.
+    ///
+    /// 2-nd step of relocation processing:
+    ///  - we need to know where to search this entity
+    pub fn get_output_entity(&self, src: &EntityLocation) -> Option<EntityKind> {
+        self.remapped_entity.get(src).copied()
     }
 }

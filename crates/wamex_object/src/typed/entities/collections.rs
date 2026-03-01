@@ -32,9 +32,9 @@ use crate::{
     index::{Building, CompoundList, Finished, GappedMap, ImportOrDefined, NonDefault, TempIndex},
     raw::FuncTypeId,
     typed::{
-        DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag, ImportedFunction,
-        ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, common_index::EntityKind,
-        data::DataSymbolRef,
+        DefinedDataChunk, DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag,
+        ImportedDataChunk, ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable,
+        ImportedTag, common_index::EntityKind, data::DataSymbolRef,
     },
 };
 
@@ -48,6 +48,9 @@ pub type Memories<'src, BS = Finished> =
     EntityCollection<'src, MemoryRef, ImportedMemory<'src>, DefinedMemory, BS>;
 pub type Tags<'src, BS = Finished> =
     EntityCollection<'src, TagRef, ImportedTag<'src>, DefinedTag, BS>;
+
+pub type DataSymbols<'src, BS = Finished> =
+    EntityCollection<'src, DataSymbolRef, ImportedDataChunk<'src>, DefinedDataChunk<'src>, BS>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EntityCollection<'src, Ref, Import, Defined, BuilderState = Finished>
@@ -120,10 +123,10 @@ where
             exports,
         }
     }
-    pub fn defined_iter(&self) -> impl Iterator<Item = (Ref, &Defined)> {
+    pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Defined)> {
         self.items.defined_iter()
     }
-    pub fn imports_iter(&self) -> impl Iterator<Item = (Ref, &Import)> {
+    pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Import)> {
         self.items.imports_iter()
     }
     pub fn iter(&self) -> impl Iterator<Item = (Ref, ImportOrDefined<&Import, &Defined>)> {
@@ -131,6 +134,9 @@ where
     }
     pub fn iter_all_ids(&self) -> impl ExactSizeIterator<Item = Ref> {
         (0..(self.items.imports.len() + self.items.defined.len())).map(EntityRef::new)
+    }
+    pub fn get_entity(&self, entity: Ref) -> ImportOrDefined<&Import, &Defined> {
+        self.items.get_entity(entity)
     }
     pub fn len(&self) -> usize {
         self.items.imports.len() + self.items.defined.len()
@@ -156,10 +162,18 @@ mod assert_covariance {
             }
         };
     }
+    #[allow(
+        dead_code,
+        reason = "static assertion for covariance, not used directly"
+    )]
     struct Invariant<'a, V> {
         _marker: std::marker::PhantomData<fn(&'a ()) -> &'a ()>,
         _marker2: std::marker::PhantomData<V>,
     }
+    #[allow(
+        dead_code,
+        reason = "static assertion for covariance, not used directly"
+    )]
     struct Covariant<'a, V> {
         _marker: std::marker::PhantomData<&'a ()>,
         _marker2: std::marker::PhantomData<V>,
@@ -181,6 +195,8 @@ mod assert_covariance {
 /// Abstract over key - use `EntityKind`.
 /// The implementation may vary, but instead of using `PrimaryMap<FlatEntityRef, Value>`
 /// this collection should allow using it when EntitiesSnapshot cannot be created.
+
+#[derive(Debug)]
 pub struct EntitiesMultiMap<V: ReservedValue + Clone> {
     functions: GappedMap<FunctionRef, V>,
     tables: GappedMap<TableRef, V>,
@@ -218,13 +234,13 @@ impl<V: Default + ReservedValue + Clone> Default for EntitiesMultiMap<V> {
     }
 }
 impl<V: ReservedValue + Clone> EntitiesMultiMap<V> {
-    pub fn get(&self, entity: impl Into<EntityKind>) -> Option<&V> {
-        for_entities!(entity.into() => self.get)
+    pub fn get(&self, entity: EntityKind) -> Option<&V> {
+        for_entities!(entity => self.get)
     }
-    pub fn get_mut(&mut self, entity: impl Into<EntityKind>) -> Option<&mut V> {
-        for_entities!(entity.into() => self.get_mut)
+    pub fn get_mut(&mut self, entity: EntityKind) -> Option<&mut V> {
+        for_entities!(entity => self.get_mut)
     }
-    pub fn insert(&mut self, entity: impl Into<EntityKind>, value: V) -> Option<V> {
-        for_entities!(entity.into() => self.insert(value))
+    pub fn insert(&mut self, entity: EntityKind, value: V) -> Option<V> {
+        for_entities!(entity => self.insert(value))
     }
 }

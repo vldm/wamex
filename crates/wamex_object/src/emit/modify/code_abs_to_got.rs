@@ -9,16 +9,21 @@ use std::{
 };
 
 use anyhow::{Result, bail, ensure};
-use cranelift_entity::EntityRef;
+use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 use wasmparser::{GlobalType, Operator};
 
 use super::{Cursor, HandleReloc, ModificationEntry, ModifyOrReloc, RelocationEntry};
 use crate::{
     SVec,
-    emit::modify::{OutputEntityRef, OutputRelocationEntry, Rewrite, wasm_emitter::MemArgOffsets},
+    emit::{
+        modify::{OutputEntityRef, OutputRelocationEntry, Rewrite, wasm_emitter::MemArgOffsets},
+        relocation::EntityLocation,
+    },
+    index::GappedMap,
     linkage::reloc::{Encoding, Relative, RelocationWidth, SymbolType},
     typed::{
-        DefinedGlobal, EntityBody, GlobalRef, common_index::EntityKind, data::SpecificLocation,
+        DefinedGlobal, EntityBody, FileId, GlobalRef, common_index::EntityKind,
+        data::SpecificLocation,
     },
 };
 
@@ -54,29 +59,52 @@ pub fn global_init_tmp(val_type: wasmparser::ValType) -> SVec<u8, 32> {
     SVec::from(buffer)
 }
 
+#[derive(Debug, Clone)]
+pub struct GotInfo {
+    memory_base: GlobalRef,
+    table_base: GlobalRef,
+}
+
+impl ReservedValue for GotInfo {
+    fn reserved_value() -> Self {
+        Self {
+            memory_base: GlobalRef::reserved_value(),
+            table_base: GlobalRef::reserved_value(),
+        }
+    }
+    fn is_reserved_value(&self) -> bool {
+        self.memory_base.is_reserved_value() && self.table_base.is_reserved_value()
+    }
+}
+
 #[derive(Debug)]
 pub struct CodeRelocationHandler {
-    /// Global base for GOT-relative addressing
-    pub memory_base: Option<GlobalRef>,
+    /// Information about external modules GOTs (if any)
+    pub import_module_got: GappedMap<FileId, GotInfo>,
+    /// Defines where to search for symbols.
+    /// It might be our local
+    pub symbols_location: BTreeMap<EntityLocation, FileId>,
     // Temporary globals for constant extraction
     pub global_tmps: BTreeMap<StoreType, GlobalRef>,
     // Symbols that need to be always treated as static (not converted to GOT-relative)
-    pub always_static_symbols: BTreeSet<EntityKind>,
+    // pub always_static_symbols: BTreeSet<EntityKind>,
 }
 
 impl CodeRelocationHandler {
     pub fn new(always_static_symbols: &BTreeSet<EntityKind>) -> Self {
-        Self {
-            memory_base: None,
-            global_tmps: BTreeMap::new(),
-            always_static_symbols: always_static_symbols.clone(),
-        }
+        todo!()
+        // Self {
+        //     memory_base: None,
+        //     global_tmps: BTreeMap::new(),
+        //     always_static_symbols: always_static_symbols.clone(),
+        // }
     }
     pub fn is_dyn_symbol(&self, entry: &RelocationEntry) -> bool {
-        self.memory_base.is_some()
-            && !self
-                .always_static_symbols
-                .contains(&entry.symbol_id.combine(entry.symbol_type))
+        todo!()
+        // self.memory_base.is_some()
+        //     && !self
+        //         .always_static_symbols
+        //         .contains(&entry.symbol_id.combine(entry.symbol_type))
     }
 }
 
@@ -117,7 +145,8 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
             });
         }
 
-        self.memory_base = memory_base;
+        todo!();
+        // self.memory_base = memory_base;
         Ok(())
     }
 
@@ -127,21 +156,22 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
         entry: RelocationEntry,
     ) -> Result<ModifyOrReloc<Self::ExtraData>> {
         // Only apply if dynamic base is enabled
-        let Some(memory_base) = self.memory_base else {
-            return Ok(ModifyOrReloc::OriginalReloc(entry));
-        };
+        // let Some(memory_base) = self.memory_base else {
+        //     return Ok(ModifyOrReloc::OriginalReloc(entry));
+        // };
 
         // TODO: move outside of this creation
         Self::check_whitelisted_code_relocation(&entry)?;
 
-        match entry.symbol_type {
-            SymbolType::TableIndex | SymbolType::MemoryAddr if self.is_dyn_symbol(&entry) => {
-                return self
-                    .new_entry(memory_base, buffer, entry)
-                    .map(ModifyOrReloc::Modify);
-            }
-            _ => {}
-        }
+        todo!();
+        // match entry.symbol_type {
+        //     SymbolType::TableIndex | SymbolType::MemoryAddr if self.is_dyn_symbol(&entry) => {
+        //         return self
+        //             .new_entry(memory_base, buffer, entry)
+        //             .map(ModifyOrReloc::Modify);
+        //     }
+        //     _ => {}
+        // }
 
         Ok(ModifyOrReloc::OriginalReloc(entry))
     }

@@ -211,6 +211,17 @@ impl FileRelocs {
             .get(func)
             .map(|range| &self.array[range.relocs.clone()])
     }
+
+    pub fn get_entity_relocs(
+        &self,
+        entity: EntityKind,
+    ) -> Option<&[RelocationEntry<ErasedEntityRef>]> {
+        match entity {
+            EntityKind::Function(func) => self.get_code_relocs(func),
+            EntityKind::DataSymbol(data) => self.get_data_relocs(data),
+            _ => None,
+        }
+    }
     /// Convert enum to erased form.
     fn unwrap_entity_ref(src: EntityKind, symbol_type: SymbolType) -> ErasedEntityRef {
         match (src, symbol_type) {

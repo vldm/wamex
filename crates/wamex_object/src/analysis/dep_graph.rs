@@ -6,7 +6,7 @@ use std::{
 use crate::{
     index::{GappedMap, ReservedValue},
     typed::{
-        LinkingFile, Module,
+        LoadedFile, Module,
         common_index::{EntitiesSnapshot, EntityKind, ErasedEntityRef, FlatEntityRef},
     },
 };
@@ -145,7 +145,7 @@ pub struct SharedEntry<Id> {
     pub imports: DepMiniSet,
 }
 
-pub fn get_dependencies(info: &LinkingFile) -> anyhow::Result<DepGraph> {
+pub fn get_dependencies(info: &LoadedFile) -> anyhow::Result<DepGraph> {
     let mut deps = DepGraph::for_module(&info.module);
 
     let is_fn_or_data =
@@ -333,7 +333,7 @@ mod tests {
     use crate::{
         analysis::{debug::print_deps_inner, dep_graph::DepMiniSet, testing},
         typed::{
-            LinkingFile, Module,
+            LoadedFile, Module,
             common_index::{EntityKind, FlatEntityRef},
         },
     };
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn load_dep_graph() {
-        let info = LinkingFile::from_wasm_bytes(&WASM_FILE).unwrap();
+        let info = LoadedFile::from_wasm_bytes(&WASM_FILE).unwrap();
         let dep_graph = super::get_dependencies(&info).unwrap();
 
         let no_inline_fn = info
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn reachablity_graph() {
-        let info = LinkingFile::from_wasm_bytes(&WASM_FILE).unwrap();
+        let info = LoadedFile::from_wasm_bytes(&WASM_FILE).unwrap();
         let dep_graph = super::get_dependencies(&info).unwrap();
 
         let no_inline_fn = info

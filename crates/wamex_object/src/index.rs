@@ -19,6 +19,7 @@ use std::{
 
 use cranelift_entity::packed_option::PackedOption;
 pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
+use derive_more::Display;
 
 use crate::typed::{DefinedEntity, ImportedEntity};
 
@@ -360,7 +361,8 @@ pub trait TempIndex: EntityRef {
     fn as_u32(&self) -> u32;
 }
 /// Temporary index type that gives packed representation of import|defined index.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[display("{_0}")]
 pub struct Temp<Idx: TempIndex>(u32, std::marker::PhantomData<Idx>);
 impl<Idx: TempIndex> Temp<Idx> {
     const DEFINED_FLAG: u32 = 1 << 31;
@@ -406,6 +408,9 @@ impl<Idx: TempIndex> Temp<Idx> {
         }
     }
 }
+
+enum TempEntityKind {}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Finished {}
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -625,6 +630,15 @@ impl<Import, Defined> ImportOrDefined<Import, Defined> {
         match self {
             ImportOrDefined::Import(i) => Some(i),
             _ => None,
+        }
+    }
+}
+
+impl<Same> ImportOrDefined<&ImportedEntity<'_, Same>, &Same> {
+    pub fn inner(&self) -> &Same {
+        match self {
+            ImportOrDefined::Defined(d) => d,
+            ImportOrDefined::Import(i) => &i.entity_type,
         }
     }
 }

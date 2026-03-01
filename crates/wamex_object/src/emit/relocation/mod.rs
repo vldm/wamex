@@ -1,3 +1,15 @@
+//! During module creation, we copy entities from input modules to output module.
+//! Some methods can be patched in the process.
+//! But after emission, we need to fix indexes and offsets in output module, so they will point to correct entities and addresses.
+//! This process is called relocation.
+//!
+//! Relocation is performed in 2 steps:
+//! 1. Symbol index resolution - remap relocs to point to correct entities. Currently it consist of 2 sub-steps:
+//!    1.1. map from entity -> (file, file_relocs) - find file and relocastions of the entity.
+//!    1.2. map from (file, entity) -> output entity - find coresponding entity in output module, which will be used for relocation.
+//! 2. Offset calculation/encoding - calculate final offset for each relocation and encode it in output module.
+//!
+
 pub mod encode;
 pub mod file_mapping;
 
@@ -11,61 +23,44 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, Copy)]
-pub struct EntityLocation {
-    file_id: FileId,
-    entity: EntityKind,
+/// Composite reference to an entity in some file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EntityLocation<Entity = EntityKind> {
+    pub file_id: FileId,
+    pub entity: Entity,
+}
+
+impl<Entity> EntityLocation<Entity> {
+    pub fn from_parts(file_id: FileId, entity: Entity) -> Self {
+        Self { file_id, entity }
+    }
+    pub fn other_entity(&self, entity: Entity) -> Self {
+        Self {
+            file_id: self.file_id,
+            entity,
+        }
+    }
 }
 
 impl ReservedValue for EntityLocation {
     fn is_reserved_value(&self) -> bool {
-        self.file_id.is_reserved_value()
-            && matches!(self.entity, EntityKind::Tag(t) if t.is_reserved_value())
+        self.file_id.is_reserved_value() && self.entity.is_reserved_value()
     }
 
     fn reserved_value() -> Self {
         EntityLocation {
             file_id: ReservedValue::reserved_value(),
-            entity: EntityKind::Tag(ReservedValue::reserved_value()),
+            entity: EntityKind::reserved_value(),
         }
     }
 }
 
-pub struct InputMapping {
-    entity_map: GappedMap<FlatEntityRef, EntityLocation>,
-    snapshot: EntitiesSnapshot,
-}
-impl InputMapping {
-    pub fn new(prealocated_snapshot: EntitiesSnapshot) -> Self {
-        Self {
-            entity_map: GappedMap::new(),
-            snapshot: prealocated_snapshot,
-        }
-    }
-
-    /// Saves the mapping from source entity to output entity, and the file it belongs to.
-    /// Panics if the same source entity is inserted more than once.
-    pub fn insert(&mut self, src: EntityKind, file_id: FileId, entity: EntityKind) {
-        let src = self.snapshot.pack_ref(src);
-        let any_ref = self
-            .entity_map
-            .insert(src, EntityLocation { file_id, entity });
-
-        assert!(any_ref.is_none(), "Duplicate entity saved")
-    }
-
-    /// Returns the file id of the source entity, if it exists in the map
-    pub fn get_file_id(&self, src: EntityKind) -> Option<FileId> {
-        let src = self.snapshot.pack_ref(src);
-        self.entity_map.get(src).map(|f| f.file_id)
-    }
-
-    /// Returns source entity ref, if it exists in the map
-    pub fn get_entity(&self, src: EntityKind) -> Option<EntityKind> {
-        let src = self.snapshot.pack_ref(src);
-        self.entity_map.get(src).map(|f| f.entity)
+impl Default for EntityLocation {
+    fn default() -> Self {
+        Self::reserved_value()
     }
 }
+
 // use std::fmt::Debug;
 
 // use anyhow::{Result, anyhow, bail};
