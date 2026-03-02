@@ -13,7 +13,7 @@ use crate::{
     helpers::{RangeComp, cmp_range},
     linkage::file_db::{FileSymbolDb, SymbolOffset},
     raw::DataSegmentId,
-    typed::{FileId, GlobalRef, Module, SymbolId},
+    typed::{GlobalRef, Module, SymbolId},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -158,6 +158,14 @@ pub enum SpecificLocation {
     /// Place chunk at offset (starting from mem_start) in active memory.
     ConstantOffset(u32),
 }
+impl SpecificLocation {
+    pub fn offset(&self) -> u32 {
+        match self {
+            SpecificLocation::GotBased { offset, .. } => *offset,
+            SpecificLocation::ConstantOffset(offset) => *offset,
+        }
+    }
+}
 
 impl SegmentPlacement {
     pub fn from_data_kind(kind: &DataKind) -> Result<Self> {
@@ -178,6 +186,13 @@ impl SegmentPlacement {
             DataKind::Passive => SegmentPlacement::Passive,
         })
     }
+}
+
+/// Data chunk information.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DataChunkType {
+    pub segment_id: DataSegmentId,
+    pub pow2align: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

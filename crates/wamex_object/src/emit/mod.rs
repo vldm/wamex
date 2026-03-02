@@ -1,28 +1,25 @@
-use std::{collections::HashMap, io::Write, ops::DerefMut};
+use std::{collections::HashMap, io::Write};
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::FuncType;
 
 use crate::{
-    analysis::{DepGraph, OutputModuleInfo},
+    analysis::OutputModuleInfo,
     emit::{
-        memory_layout::{DataSymbolOffset, DataSymbolsOffsets, SegmentLayout},
+        memory_layout::SegmentLayout,
         modify::OutputEntityRef,
         relocation::{EntityLocation, file_mapping::OutputFileInfo},
     },
     helpers::{RangeExt, ShiftMap, ShiftPoint, encoding_size},
-    index::{Building, GappedMap, ImportOrDefined},
-    linkage::{file_db::FileRelocs, reloc::RelocationEntry},
+    index::Building,
+    linkage::reloc::RelocationEntry,
     raw::{DataSegmentId, FuncTypeId},
     typed::{
-        DefinedFunction, EntitiesMultiMap, EntityBody, FileId, FileLoader, FunctionRef,
-        ImportedEntity, Module,
-        common_index::{
-            EntitiesSnapshot, EntityKind, ErasedEntityRef, FlatEntityRef, TempEntityKind,
-        },
-        data::{DataSymbolRef, SpecificLocation},
+        DefinedFunction, EntityBody, FileId, FileLoader, FunctionRef, ImportedEntity, Module,
+        common_index::{EntitiesSnapshot, EntityKind, ErasedEntityRef, TempEntityKind},
+        data::SpecificLocation,
     },
 };
 
@@ -42,20 +39,6 @@ impl<'src> Module<'src> {
         // let (mut segments, mapping) = SegmentLayout::build_for_module(self)?;
 
         // self.generate_dylink0_section(output_module)?;
-
-        // self.generate_export_section(output_module);
-        // self.generate_start_function_section(output_module)?;
-        // self.generate_element_section(output_module)?;
-
-        // let code_relocs =
-        //     self.generate_code_section(computed_modules, output_module, precise_modification)?;
-        // let data_relocs = self.generate_data_section(computed_modules, output_module)?;
-
-        // // self.generate_wasm_bindgen_sections(output_module);
-        // // Names + Linking + Relocations
-        // self.generate_compiler_tools_sections(output_module, code_relocs, data_relocs)?;
-        // self.generate_target_features_section(output_module)?;
-        // self.generate_custom_sections(output_module)?;
 
         let fn_type_map = self.generate_type_section(output_module);
 
@@ -595,6 +578,9 @@ fn emit_body(
                 }
                 let file_entity_ref = src_ref.other_entity(symbol_id);
 
+                dbg!(&module_info);
+                dbg!(&file_entity_ref);
+                dbg!(&reloc);
                 let entity = module_info
                     .get_output_entity(&file_entity_ref)
                     .expect("reloc symbol not found in output file");
@@ -631,17 +617,13 @@ fn emit_body(
 
 pub fn create_split_module<'src>(
     input_file: FileId,
-    src: &Module<'src>,
-    snapshot: &EntitiesSnapshot,
+    src: &Module<'src>,          // tmp field, should be FileLoader instead.
+    snapshot: &EntitiesSnapshot, // this is
     output_info: OutputModuleInfo,
-) -> Module<'src> {
+) -> (Module<'src>, OutputFileInfo) {
     let mut module: Module<'src, Building> = Module::new();
     // map of entities from input file to entities in output module.
     let mut file_info = OutputFileInfo::new();
-
-    type OutputModuleId = ();
-    let mut imported_data_symbols =
-        HashMap::<EntityLocation<DataSymbolRef>, (OutputModuleId, DataSymbolOffset)>::new();
 
     let mut used_queue: Vec<(_, TempEntityKind)> = Vec::new();
 
@@ -649,51 +631,34 @@ pub fn create_split_module<'src>(
     for entity in output_info.defined_symbols {
         match snapshot.unpack_ref(entity) {
             EntityKind::Function(f) => {
-                let new = match src.functions.get_entity(f) {
-                    ImportOrDefined::Import(i) => module.add_imported_function(i.clone()),
-
-                    ImportOrDefined::Defined(func) => module.add_defined_function(func.clone()),
-                };
+                let func = src.functions.get_entity(f);
+                let new = module.functions.push_entity(func.cloned());
                 used_queue.push((EntityLocation::from_parts(input_file, f.into()), new.into()));
             }
             EntityKind::Global(g) => {
-                let new = match src.globals.get_entity(g) {
-                    ImportOrDefined::Import(i) => module.add_imported_global(i.clone()),
-                    ImportOrDefined::Defined(global) => module.add_defined_global(global.clone()),
-                };
+                let global = src.globals.get_entity(g);
+                let new = module.globals.push_entity(global.cloned());
                 used_queue.push((EntityLocation::from_parts(input_file, g.into()), new.into()));
             }
             EntityKind::Memory(m) => {
-                let new = match src.memories.get_entity(m) {
-                    ImportOrDefined::Import(i) => module.add_imported_memory(i.clone()),
-                    ImportOrDefined::Defined(memory) => module.add_defined_memory(memory.clone()),
-                };
+                let memory = src.memories.get_entity(m);
+                let new = module.memories.push_entity(memory.cloned());
                 used_queue.push((EntityLocation::from_parts(input_file, m.into()), new.into()));
             }
             EntityKind::Table(t) => {
-                let new = match src.tables.get_entity(t) {
-                    ImportOrDefined::Import(i) => module.add_imported_table(i.clone()),
-                    ImportOrDefined::Defined(table) => module.add_defined_table(table.clone()),
-                };
+                let table = src.tables.get_entity(t);
+                let new = module.tables.push_entity(table.cloned());
                 used_queue.push((EntityLocation::from_parts(input_file, t.into()), new.into()));
             }
-            EntityKind::Tag(tag) => {
-                let new = match src.tags.get_entity(tag) {
-                    ImportOrDefined::Import(i) => module.add_imported_tag(i.clone()),
-                    ImportOrDefined::Defined(t) => module.add_defined_tag(t.clone()),
-                };
-                used_queue.push((
-                    EntityLocation::from_parts(input_file, tag.into()),
-                    new.into(),
-                ));
+            EntityKind::Tag(t) => {
+                let tag = src.tags.get_entity(t);
+                let new = module.tags.push_entity(tag.cloned());
+                used_queue.push((EntityLocation::from_parts(input_file, t.into()), new.into()));
             }
             EntityKind::DataSymbol(d) => {
-                let new = module.data.push(src.data.get(d).unwrap().clone());
-                // Data symbols have no imports - they index are always stable.
-                file_info.add_entity_mapping(
-                    EntityLocation::from_parts(input_file, d.into()),
-                    new.into(),
-                );
+                let data = src.data.get_entity(d);
+                let new = module.data.push_entity(data.cloned());
+                used_queue.push((EntityLocation::from_parts(input_file, d.into()), new.into()));
             }
             EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
         }
@@ -703,7 +668,7 @@ pub fn create_split_module<'src>(
     for import in output_info.imports {
         match snapshot.unpack_ref(import) {
             EntityKind::Function(f) => {
-                let id = module.add_imported_function(ImportedEntity {
+                let id = module.functions.push_import(ImportedEntity {
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(f.into()),          // use original name
                     entity_type: src.functions.get_entity(f).get_type().clone(),
@@ -712,7 +677,7 @@ pub fn create_split_module<'src>(
             }
             // stack_pointer, mb heap_base/__data_end, etc.
             EntityKind::Global(g) => {
-                let id = module.add_imported_global(ImportedEntity {
+                let id = module.globals.push_import(ImportedEntity {
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(g.into()),          // use original name
                     entity_type: *src.globals.get_entity(g).get_type(),
@@ -721,7 +686,7 @@ pub fn create_split_module<'src>(
             }
             // indirect_function_table
             EntityKind::Table(t) => {
-                let id = module.add_imported_table(ImportedEntity {
+                let id = module.tables.push_import(ImportedEntity {
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(t.into()),          // use original name
                     entity_type: *src.tables.get_entity(t).get_type(),
@@ -730,7 +695,7 @@ pub fn create_split_module<'src>(
             }
             // only one memory
             EntityKind::Memory(m) => {
-                let id = module.add_imported_memory(ImportedEntity {
+                let id = module.memories.push_import(ImportedEntity {
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(m.into()),          // use original name
                     entity_type: *src.memories.get_entity(m).inner(),
@@ -740,17 +705,22 @@ pub fn create_split_module<'src>(
 
             // Future support
             EntityKind::Tag(m) => {
-                let id = module.add_imported_tag(ImportedEntity {
+                let id = module.tags.push_import(ImportedEntity {
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(m.into()),          // use original name
                     entity_type: *src.tags.get_entity(m).inner(),
                 });
                 used_queue.push((EntityLocation::from_parts(input_file, m.into()), id.into()));
             }
-            EntityKind::DataSymbol(d) => {}
-            // EntityKind::Tag(tag) => {},
-            // EntityKind::Type(_) => {},
-            _ => todo!(),
+            EntityKind::DataSymbol(d) => {
+                let id = module.data.push_import(ImportedEntity {
+                    module: input_file.to_string().into(), // use file_id
+                    name: src.get_name(d.into()),          // use original name
+                    entity_type: (), // TODO: add type for data symbols if needed
+                });
+                used_queue.push((EntityLocation::from_parts(input_file, d.into()), id.into()));
+            }
+            EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
         }
     }
 
@@ -760,17 +730,21 @@ pub fn create_split_module<'src>(
         file_info.add_entity_mapping(src, entity.to_stable(&module));
     }
 
-    module
+    (module, file_info)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         emit::{
+            create_split_module,
             memory_layout::SegmentLayout,
             relocation::{EntityLocation, file_mapping::OutputFileInfo},
         },
-        typed::{DefinedEntity, FileLoader, Module, common_index::TempEntityKind},
+        typed::{
+            DefinedEntity, FileLoader, Module,
+            common_index::{EntitiesSnapshot, TempEntityKind},
+        },
     };
 
     #[test]
@@ -784,74 +758,41 @@ mod tests {
         let input_file = file_loader.load_from_bytes(data).unwrap();
 
         let input = file_loader.get_file(input_file);
-        let mut file_info = OutputFileInfo::new();
 
-        let mut output = Module::new();
-        let mut queue_link: Vec<(_, TempEntityKind)> = Vec::new();
-
-        for (id, func) in input.module.functions.defined_iter() {
-            let new = output.add_defined_function(func.clone());
-            queue_link.push((
-                EntityLocation::from_parts(input_file, id.into()),
-                new.into(),
-            ));
-        }
-        for (id, func) in input.module.functions.imports_iter() {
-            let new = output.add_imported_function(func.clone());
-            queue_link.push((
-                EntityLocation::from_parts(input_file, id.into()),
-                new.into(),
-            ));
-        }
-        for (id, global) in input.module.globals.defined_iter() {
-            let new = output.add_defined_global(global.clone());
-            queue_link.push((
-                EntityLocation::from_parts(input_file, id.into()),
-                new.into(),
-            ));
-        }
-        for (id, global) in input.module.globals.imports_iter() {
-            let new = output.add_imported_global(global.clone());
-            queue_link.push((
-                EntityLocation::from_parts(input_file, id.into()),
-                new.into(),
-            ));
-        }
-
-        for (id, data) in input.module.data.iter() {
-            let new: crate::typed::data::DataSymbolRef = output.data.push(data.clone());
-            file_info.add_entity_mapping(
-                EntityLocation::from_parts(input_file, id.into()),
-                new.into(),
-            );
-        }
-
-        dbg!(&queue_link);
-        // finalize module and add mapping
-        let output = output.into_finished();
-
-        for (src, entity) in queue_link {
-            file_info.add_entity_mapping(src, entity.to_stable(&output));
-        }
-
-        let (mut segments, mapping) = SegmentLayout::build_for_module(&output).unwrap();
-        let mut out = String::new();
-        SegmentLayout::debug_layout(
-            &file_loader.get_file(input_file).relocs,
-            &output,
-            module_name.into(),
-            &segments,
-            &mut out,
-            false,
+        let dep_graph = crate::analysis::get_dependencies(input).unwrap();
+        let split = crate::analysis::compute_split_modules(
+            &input.module,
+            &dep_graph,
+            &[],
+            &Default::default(),
+            true,
+        )
+        .unwrap();
+        assert!(
+            split.output_modules.len() == 1,
+            "There should be at least one split module"
         );
 
-        println!("{out}");
+        dbg!(&dep_graph);
+        dbg!(&split);
+        // panic!();
+
+        let (output, file_info) = create_split_module(
+            input_file,
+            &input.module,
+            &EntitiesSnapshot::new(&input.module),
+            split.output_modules[0].1.clone(),
+        );
 
         let mut buf = wasm_encoder::Module::new();
         output
             .generate(&file_info, &file_loader, &Default::default(), &mut buf)
             .unwrap();
-        let res = buf.finish();
+        let res: Vec<u8> = buf.finish();
+
+        let raw = crate::raw::ObjectReader::parse(&res).unwrap();
+        dbg!(&input.wasm_reader);
+        dbg!(&raw);
 
         // ensure loadable, and compare with original
         let new_file = file_loader.load_from_bytes(res.into_boxed_slice()).unwrap();

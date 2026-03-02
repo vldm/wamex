@@ -1,9 +1,8 @@
 use std::{borrow::Cow, fmt::Write, ops::Range};
 
-#[derive(Clone, Debug)]
 pub struct DataPart<'a> {
     // pub name: &'a str,
-    pub bytes: &'a [u8],
+    pub bytes: &'a mut dyn Iterator<Item = u8>,
     pub refs: Vec<Ref<'a>>,
 }
 
@@ -17,9 +16,12 @@ pub struct Ref<'a> {
 /// part_base - initial offset of the part in the overall data segment.
 /// color - whether to use ANSI color codes for highlighting.
 /// part - the DataPart to render.
-pub fn render_part(mut out: impl Write, part_base: usize, part: &DataPart, color: bool) {
+pub fn render_part(mut out: impl Write, part_base: usize, part: DataPart, color: bool) {
+    // Collect bytes into a vector for indexing
+    let bytes: Vec<u8> = part.bytes.collect();
+    dbg!(&bytes);
     // Mark bytes to ref index
-    let mut byte_to_ref: Vec<Option<usize>> = vec![None; part.bytes.len()];
+    let mut byte_to_ref: Vec<Option<usize>> = vec![None; bytes.len()];
     for (idx, r) in part.refs.iter().enumerate() {
         for b in r.range.clone() {
             byte_to_ref[b] = Some(idx);
@@ -30,7 +32,7 @@ pub fn render_part(mut out: impl Write, part_base: usize, part: &DataPart, color
     let hex_cell = 3; // "AB "
     let extra_gap_after = 8;
 
-    for (line_idx, chunk) in part.bytes.chunks(cols).enumerate() {
+    for (line_idx, chunk) in bytes.chunks(cols).enumerate() {
         let line_abs_off = part_base + line_idx * cols;
 
         write!(out, "{line_abs_off:08X}  ").ok();
@@ -173,13 +175,15 @@ mod tests {
     #[test]
     fn show_example() {
         let part = DataPart {
-            bytes: &[
+            bytes: &mut [
                 0x01, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0xDE, 0xAD,
                 0xBE, 0xEF, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x00, 0x00, 0x00, 0x34, 0x12, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22, 0x33, 0x44,
                 0x55, 0x66, 0x77, 0x88, 0x99, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
                 0xEE, 0xFF, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
-            ],
+            ]
+            .iter()
+            .copied(),
             refs: vec![
                 Ref {
                     range: 0..6,
@@ -201,7 +205,7 @@ mod tests {
         };
 
         let mut res = String::new();
-        render_part(&mut res, 0, &part, false);
+        render_part(&mut res, 0, part, false);
         println!("{res}");
     }
 }

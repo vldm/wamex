@@ -49,7 +49,7 @@ pub type Memories<'src, BS = Finished> =
 pub type Tags<'src, BS = Finished> =
     EntityCollection<'src, TagRef, ImportedTag<'src>, DefinedTag, BS>;
 
-pub type DataSymbols<'src, BS = Finished> =
+pub type DataChunks<'src, BS = Finished> =
     EntityCollection<'src, DataSymbolRef, ImportedDataChunk<'src>, DefinedDataChunk<'src>, BS>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -64,7 +64,7 @@ where
     /// Name information is gathered from name section,
     /// if no name is present in name section, name is retrieved from export entry.
     /// Note: name can be different from one in linkage Symbols.
-    pub names: GappedMap<Ref, NonDefault<&'src str>>,
+    pub names: GappedMap<Ref, NonDefault<Cow<'src, str>>>,
 
     /// List of exported entries.
     /// Because exports array are usually small, no need to store them as `IdMap`
@@ -95,6 +95,24 @@ where
             exports: self.exports,
         }
     }
+    /// Pushes a defined entity and returns its temporary reference.
+    pub fn push_defined(&mut self, import: Defined) -> crate::index::Temp<Ref> {
+        self.items.push_defined(import)
+    }
+    /// Pushes an import entity and returns its temporary reference.
+    pub fn push_import(&mut self, import: Import) -> crate::index::Temp<Ref> {
+        self.items.push_import(import)
+    }
+    /// Pushes either import or defined entity, depending on the variant of `ImportOrDefined`.
+    pub fn push_entity(
+        &mut self,
+        entity: ImportOrDefined<Import, Defined>,
+    ) -> crate::index::Temp<Ref> {
+        match entity {
+            ImportOrDefined::Import(import) => self.push_import(import),
+            ImportOrDefined::Defined(defined) => self.push_defined(defined),
+        }
+    }
 }
 
 impl<'src, Ref, Import, Defined> EntityCollection<'src, Ref, Import, Defined>
@@ -103,17 +121,14 @@ where
 {
     pub fn from_parts(
         declared: CompoundList<Ref, Import, Defined>,
-        mut names: GappedMap<Ref, NonDefault<&'src str>>,
+        mut names: GappedMap<Ref, NonDefault<Cow<'src, str>>>,
         exports: Vec<ExportEntry<'src, Ref>>,
     ) -> Self {
         for exports in &exports {
             // if name is not present in names map
             if names.get(exports.entity_index).is_none() {
-                // and if it can be borrowed from export entry
-                if let Cow::Borrowed(name) = exports.name {
-                    // insert it into names map
-                    names.insert(exports.entity_index, NonDefault::from(name));
-                }
+                // insert it into names map
+                names.insert(exports.entity_index, NonDefault::from(exports.name.clone()));
             }
         }
 

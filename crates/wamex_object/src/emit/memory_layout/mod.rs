@@ -8,42 +8,27 @@ use crate::{
     SVec,
     emit::modify::wasm_emitter,
     helpers::RangeExt,
-    index::{GappedMap, NonDefault, ReservedValue},
+    index::{GappedMap, ReservedValue},
     linkage::file_db::FileRelocs,
     raw::DataSegmentId,
     typed::{
-        Module,
+        DefinedDataChunk, Module,
         data::{DataSymbolRef, RawDataChunk, SegmentPlacement, SpecificLocation},
     },
 };
 
 mod hexdump;
 
-// Default is reserved value
-type Str<'a> = NonDefault<Cow<'a, str>>;
+#[derive(Clone, Debug)]
+struct ChunkRepr<'a>(DefinedDataChunk<'a>, Cow<'a, str>, DataSymbolRef);
 
 #[derive(Clone, Debug)]
 pub struct SegmentLayout<'a> {
-    segment_name: Str<'a>,
+    segment_name: Cow<'a, str>,
     mem_location: Option<SpecificLocation>,
     pow2align: u32,
-    data_parts: Vec<(RawDataChunk<'a>, DataSymbolRef)>,
+    data_parts: Vec<ChunkRepr<'a>>,
 }
-
-impl ReservedValue for SegmentLayout<'_> {
-    fn reserved_value() -> Self {
-        Self {
-            pow2align: u32::MAX,
-            segment_name: Str::reserved_value(),
-            data_parts: Vec::new(),
-            mem_location: None,
-        }
-    }
-    fn is_reserved_value(&self) -> bool {
-        self.data_parts.is_empty() && self.pow2align == u32::MAX && self.mem_location.is_none()
-    }
-}
-
 pub type Segments<'a> = PrimaryMap<DataSegmentId, SegmentLayout<'a>>;
 pub type DataSymbolsOffsets = GappedMap<DataSymbolRef, DataSymbolOffset>;
 
@@ -57,16 +42,30 @@ impl<'src> SegmentLayout<'src> {
     /// Symbols from passive segments will not be present in the mapping.
     ///
     pub fn build_for_module(module: &Module<'src>) -> Result<(Segments<'src>, DataSymbolsOffsets)> {
+        // Align base of memory to 16 bytes, if it wasn't already aligned.
+        const BASE_ALIGNMENT: u32 = 2 << 4;
+        let mem_start = module.mem_spec.mem_start;
+        let padding = Self::calculate_padding(mem_start.offset(), BASE_ALIGNMENT);
+        let mem_start = mem_start.add_offset(padding);
+
         let (mut results, mut mapping) = (PrimaryMap::new(), DataSymbolsOffsets::new());
 
         let (mut segment_offset, mut mem_offset) = (0, 0);
 
         debug_assert!(
-            module.data.values().map(|v| v.segment_id).is_sorted(),
+            module
+                .data
+                .defined_iter()
+                .map(|(_, v)| v.entity_type.segment_id)
+                .is_sorted(),
             "Data symbols should be grouped by segment id"
         );
 
-        let chunks = module.data.iter().chunk_by(|(_, v)| v.segment_id);
+        let chunks = module
+            .data
+            .defined_iter()
+            .chunk_by(|(_, v)| v.entity_type.segment_id);
+
         let symbols_iter = chunks
             .into_iter()
             .zip(module.mem_spec.data_segments.iter())
@@ -83,31 +82,40 @@ impl<'src> SegmentLayout<'src> {
             );
             // Original segment info
             let alignment = (2u32).pow(info.pow2align as u32);
-            let location =
-                Self::calculate_location(info.location, module.mem_spec.mem_start, mem_offset);
 
+            // Align memory offset of segment to its alignment requirement.
+            let padding = Self::calculate_padding(mem_offset, alignment);
+            mem_offset += padding;
+            let location = Self::calculate_location(info.location, mem_start, mem_offset);
+
+            // and shift segment offset by len of header.
             segment_offset += Self::segment_header(location)?.len() as u32;
 
-            let mut data_parts = Vec::new();
+            let mut data_parts: Vec<ChunkRepr<'src>> = Vec::new();
             for (symbol_index, symbol) in grp {
-                let field_alignment = 1 << symbol.pow2align;
+                let field_alignment = 1 << symbol.entity_type.pow2align;
                 // add padding for alignment
-                if let Some(padding_symbol) =
+                if let Some((padding_symbol, name)) =
                     Self::padding_symbol(segment_offset, field_alignment, segment_id)
                 {
-                    let padding = padding_symbol.data.len() as u32;
+                    let padding = padding_symbol.body.len() as u32;
                     log::trace!(
                         "Add padding placeholder before symbol {}: {padding} bytes",
                         symbol_index
                     );
 
-                    data_parts.push((padding_symbol, DataSymbolRef::reserved_value()));
+                    data_parts.push(ChunkRepr(
+                        padding_symbol,
+                        name,
+                        DataSymbolRef::reserved_value(),
+                    ));
 
                     segment_offset += padding;
                     mem_offset += padding;
                 }
+                let name = module.get_name(symbol_index.into());
 
-                data_parts.push((symbol.clone(), symbol_index));
+                data_parts.push(ChunkRepr(symbol.clone(), name, symbol_index));
                 mapping.insert(
                     symbol_index,
                     DataSymbolOffset {
@@ -116,12 +124,12 @@ impl<'src> SegmentLayout<'src> {
                     },
                 );
 
-                segment_offset += symbol.data.len() as u32;
-                mem_offset += symbol.data.len() as u32;
+                segment_offset += symbol.body.len() as u32;
+                mem_offset += symbol.body.len() as u32;
             }
 
             let layout = SegmentLayout {
-                segment_name: info.name.clone().into(),
+                segment_name: info.name.clone(),
                 pow2align: alignment,
                 data_parts,
                 mem_location: location,
@@ -137,37 +145,16 @@ impl<'src> SegmentLayout<'src> {
 
     /// Convert segment layout to data segment output, which can be encoded into wasm. (excluding segment header)
     pub fn data_stream(&self) -> impl ExactSizeIterator<Item = u8> {
-        let total_size: usize = self
-            .data_parts
-            .iter()
-            .map(|(symbol, _)| symbol.data.len())
-            .sum();
+        let total_size: usize = self.data_parts.iter().map(|chunk| chunk.0.body.len()).sum();
 
         DataStream {
             iter: self
                 .data_parts
                 .iter()
-                .flat_map(|(symbol, _)| symbol.data.iter().copied()),
+                .flat_map(|chunk| chunk.0.body.iter_bytes()),
             total_size,
         }
     }
-
-    // Keeps only symbols with id is in `indexes`.
-    // pub fn new_with_whitelist(mut self, indexes: &BTreeSet<DataSymbolRef>) -> Self {
-    //     let mut result = vec![];
-    //     {
-    //         for (item, symbol_index) in mem::take(&mut self.data_parts) {
-    //             let remove = !indexes.contains(&symbol_index);
-    //             if remove {
-    //                 continue;
-    //             }
-    //             result.push((item, symbol_index));
-    //         }
-    //     }
-
-    //     self.data_parts = result;
-    //     self
-    // }
 
     pub fn debug_layout(
         file_relocs: &FileRelocs,
@@ -181,29 +168,26 @@ impl<'src> SegmentLayout<'src> {
 
         let mut base = 0;
         for (_, segment) in data_segments.iter() {
-            for (symbol, symbol_index) in segment.data_parts.iter() {
-                if symbol_index.is_reserved_value() {
+            for chunk in segment.data_parts.iter() {
+                let segment = &segment.segment_name;
+                let name = &chunk.1;
+                let symbol_index = chunk.2;
+
+                if chunk.2.is_reserved_value() {
                     writeln!(
                         print_data_format,
                         "[{segment}:{symbol_index}] <padding> (size: {})",
-                        symbol.data.len(),
-                        segment = segment.segment_name,
+                        chunk.0.body.len(),
                     )
                     .unwrap();
-                    base += symbol.data.len();
+                    base += chunk.0.body.len();
                     continue;
                 }
-                writeln!(
-                    print_data_format,
-                    "[{segment}:{symbol_index}] {name}",
-                    segment = segment.segment_name,
-                    name = symbol.name
-                )
-                .unwrap();
-                let chunk = symbol.data;
+                writeln!(print_data_format, "[{segment}:{symbol_index}] {name}",).unwrap();
+                let chunk = &chunk.0.body;
 
                 let input_symbol = file_relocs
-                    .get_data_relocs(*symbol_index)
+                    .get_data_relocs(symbol_index)
                     .unwrap_or_default();
                 let refs = input_symbol
                     .iter()
@@ -211,13 +195,18 @@ impl<'src> SegmentLayout<'src> {
                         let id = reloc.symbol_id.combine(reloc.symbol_type);
                         let name = module.get_name(id);
                         hexdump::Ref {
-                            range: reloc.relocation_range().shift_left(symbol.original_offset),
+                            range: reloc
+                                .relocation_range()
+                                .shift_left(chunk.original_range().start),
                             name,
                         }
                     })
                     .collect();
-                let part = hexdump::DataPart { bytes: chunk, refs };
-                hexdump::render_part(&mut *print_data_format, base, &part, color);
+                let part = hexdump::DataPart {
+                    bytes: &mut chunk.iter_bytes(),
+                    refs,
+                };
+                hexdump::render_part(&mut *print_data_format, base, part, color);
                 // TODO: add padding
                 base += chunk.len();
             }
@@ -279,16 +268,21 @@ impl<'src> SegmentLayout<'src> {
         segment_offset: u32,
         alignment: u32,
         segment_id: DataSegmentId,
-    ) -> Option<RawDataChunk<'src>> {
+    ) -> Option<(DefinedDataChunk<'src>, Cow<'src, str>)> {
+        let name = Cow::Borrowed("padding");
         let padding = Self::calculate_padding(segment_offset, alignment);
         if padding > 0 {
-            Some(RawDataChunk {
-                data: &[0; 64][..padding as usize],
-                pow2align: 0,
-                original_offset: 0,
-                segment_id,
-                name: Cow::Borrowed("padding"),
-            })
+            Some((
+                RawDataChunk {
+                    data: &[0; 64][..padding as usize],
+                    pow2align: 0,
+                    original_offset: 0,
+                    segment_id,
+                    name: name.clone(),
+                }
+                .into(),
+                name,
+            ))
         } else {
             None
         }

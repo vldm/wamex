@@ -12,6 +12,7 @@
 //!
 
 use std::{
+    borrow::Cow,
     fmt::{Debug, Display},
     hash::Hash,
     ops::Deref,
@@ -324,6 +325,14 @@ impl<T: Default + Eq> From<T> for NonDefault<T> {
     }
 }
 
+impl<'a> From<NonDefault<&'a str>> for NonDefault<Cow<'a, str>> {
+    fn from(value: NonDefault<&'a str>) -> Self {
+        NonDefault {
+            value: Cow::Borrowed(value.into_inner()),
+        }
+    }
+}
+
 impl<T> Deref for NonDefault<T> {
     type Target = T;
 
@@ -361,6 +370,7 @@ pub trait TempIndex: EntityRef {
     fn as_u32(&self) -> u32;
 }
 /// Temporary index type that gives packed representation of import|defined index.
+/// Used during building phase, when final indexes are not known, because some imports may shift defined entities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 #[display("{_0}")]
 pub struct Temp<Idx: TempIndex>(u32, std::marker::PhantomData<Idx>);
@@ -408,8 +418,6 @@ impl<Idx: TempIndex> Temp<Idx> {
         }
     }
 }
-
-enum TempEntityKind {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Finished {}
@@ -630,6 +638,18 @@ impl<Import, Defined> ImportOrDefined<Import, Defined> {
         match self {
             ImportOrDefined::Import(i) => Some(i),
             _ => None,
+        }
+    }
+}
+impl<Import, Defined> ImportOrDefined<&Import, &Defined> {
+    pub fn cloned(&self) -> ImportOrDefined<Import, Defined>
+    where
+        Import: Clone,
+        Defined: Clone,
+    {
+        match *self {
+            ImportOrDefined::Import(i) => ImportOrDefined::Import(i.clone()),
+            ImportOrDefined::Defined(d) => ImportOrDefined::Defined(d.clone()),
         }
     }
 }

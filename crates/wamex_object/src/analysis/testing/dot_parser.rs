@@ -23,8 +23,8 @@ use nom::{
 use crate::typed::common_index::FlatEntityRef;
 
 fn parse_symbol_id(input: &str) -> IResult<&str, FlatEntityRef> {
-    let (input, val) = map_res(take_while(|c: char| c.is_digit(10)), |s: &str| {
-        s.parse::<u32>().map(|id| FlatEntityRef::from_u32(id))
+    let (input, val) = map_res(take_while(|c: char| c.is_ascii_digit()), |s: &str| {
+        s.parse::<u32>().map(FlatEntityRef::from_u32)
     })
     .parse(input)?;
 

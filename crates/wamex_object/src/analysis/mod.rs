@@ -8,5 +8,6 @@ mod dep_graph;
 mod split_point;
 #[cfg(test)]
 pub mod testing;
+
 pub use dep_graph::*;
 pub use split_point::*;

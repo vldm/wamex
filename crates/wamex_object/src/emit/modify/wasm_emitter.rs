@@ -32,13 +32,13 @@ where
     }
 
     pub fn push_byte(&mut self, byte: u8) -> Result<(), std::io::Error> {
-        let _ = self.writer.write_all(&[byte])?;
+        self.writer.write_all(&[byte])?;
         self.offset += 1;
         Ok(())
     }
 
     pub fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
-        let _ = self.writer.write_all(bytes)?;
+        self.writer.write_all(bytes)?;
         self.offset += bytes.len() as u32;
         Ok(())
     }

@@ -12,7 +12,7 @@ use crate::{
     analysis::dep_graph::SharedEntry,
     typed::{
         FunctionRef, Module,
-        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+        common_index::{EntitiesSnapshot, FlatEntityRef},
     },
 };
 
@@ -92,7 +92,7 @@ impl OutputModuleInfo {
         static_export || lazy_export
     }
 
-    fn fmt_table<'a, T, I>(f: &mut dyn std::fmt::Write, label: &str, items: I) -> std::fmt::Result
+    fn fmt_table<T, I>(f: &mut dyn std::fmt::Write, label: &str, items: I) -> std::fmt::Result
     where
         T: Debug,
         I: IntoIterator<Item = T>,
@@ -117,7 +117,7 @@ impl OutputModuleInfo {
         }
         Ok(())
     }
-    fn fmt_map<'a, ID, T, U, I>(
+    fn fmt_map<ID, T, U, I>(
         f: &mut std::fmt::Formatter<'_>,
         label: &str,
         items: I,
@@ -299,13 +299,13 @@ pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(
     Some((module_name, fn_name))
 }
 
-fn parse_entries<'i, I: 'i, Id>(
+fn parse_entries<'i, I, Id>(
     prefix: &str,
     postfix: &str,
     collection: I,
 ) -> BTreeMap<(String, String), Id>
 where
-    I: Iterator<Item = (Id, &'i str)>,
+    I: Iterator<Item = (Id, &'i str)> + 'i,
 {
     collection
         .filter_map(|(id, name)| {
@@ -470,93 +470,8 @@ pub fn main_roots(
     roots
 }
 
-// // Merge modules that shared with main module into main itself.
-// pub fn merge_main_shared(program_info: &mut SplitProgramInfo) {
-//     let (shared_with_main, mut other): (Vec<_>, Vec<_>) =
-//         std::mem::take(&mut program_info.output_modules)
-//             .into_iter()
-//             .partition(|(id, _)| {
-//                 if let SplitModuleIdentifier::Shared(shared_with) = id {
-//                     shared_with.contains(&ModuleIdentifier::Main)
-//                 } else {
-//                     false
-//                 }
-//             });
-
-//     // split iter at 3 parts: before main, main, after main
-//     let (left_to_main, main_module, right_to_main) = {
-//         let main_module_index = other
-//             .iter()
-//             .enumerate()
-//             .find(|(_, (id, _))| *id == MAIN_ID)
-//             .expect("Main module not found")
-//             .0;
-//         let (before, main_and_next) = other.split_at_mut(main_module_index);
-//         let (main_module, after) = main_and_next.split_at_mut(1);
-//         let main_module = &mut main_module[0].1;
-//         (before, main_module, after)
-//     };
-
-//     // check import in all remain modules except main
-//     let is_imported_by_other = |node: &SymbolId| {
-//         left_to_main
-//             .iter()
-//             .chain(right_to_main.iter())
-//             .any(|(_, mod_state)| mod_state.imports.contains(node))
-//             || right_to_main
-//                 .iter()
-//                 .any(|(_, mod_state)| mod_state.imports.contains(node))
-//     };
-
-//     #[cfg(debug_assertions)]
-//     let mut check_imports = vec![];
-
-//     for (id, mut shared_module) in shared_with_main {
-//         debug_assert!(shared_module.split_points.is_empty());
-
-//         for node in &shared_module.exports {
-//             // it was exported in shared module, so on main side it had been imported.
-//             // remove from main link symbols.
-//             if !main_module.imports.remove(node) {
-//                 log::trace!(
-//                     "Shared module symbol not found in main: {node:?}. It probably was removed in other shared entry."
-//                 );
-//             }
-//             // This was imported not only by main, so export is needed.
-//             if is_imported_by_other(node) {
-//                 main_module.exports.insert(*node);
-//             }
-//         }
-
-//         // imported modules should already be in main
-//         #[cfg(debug_assertions)]
-//         for node in &shared_module.imports {
-//             check_imports.push(*node);
-//         }
-//         log::trace!(
-//             "extending main defined symbols with shared ({id:?}): {:?}",
-//             shared_module.defined_symbols
-//         );
-
-//         main_module
-//             .defined_symbols
-//             .extend(std::mem::take(&mut shared_module.defined_symbols));
-//     }
-
-//     debug_assert!(main_module.imports.is_empty());
-//     #[cfg(debug_assertions)]
-//     for node in check_imports {
-//         assert!(
-//             main_module.defined_symbols.contains(&node),
-//             "Shared module import not found in main defined symbols: {node:?}"
-//         );
-//     }
-
-//     program_info.output_modules = std::mem::take(&mut other);
-// }
-
 // Merge shared modules with main module.
-pub fn merge_shared_with_main(
+fn merge_shared_with_main(
     (main_id, main): &mut (SplitModuleIdentifier, OutputModuleInfo),
     regular_modules: &[(SplitModuleIdentifier, OutputModuleInfo)],
     shared: &mut Vec<SharedEntry<ModuleIdentifier>>,
@@ -637,6 +552,75 @@ pub fn merge_shared_with_main(
 
     Ok(())
 }
+
+/// Process special entities (memory, __indirect_function_table)
+/// - Mark them as exported in main module.
+/// - Add imports to modules that use them.
+fn process_special_entities(
+    info: &Module,
+    snapshot: &EntitiesSnapshot,
+    (main_id, main): &mut (SplitModuleIdentifier, OutputModuleInfo),
+    regular_modules: &mut [(SplitModuleIdentifier, OutputModuleInfo)],
+    shared: &mut [SharedEntry<ModuleIdentifier>],
+) -> anyhow::Result<()> {
+    assert_eq!(
+        &*main_id,
+        &SplitModuleIdentifier::Single(ModuleIdentifier::Main)
+    );
+    if info.memories.len() != 1 {
+        log::error!(
+            "Expected more than one memory in source module, {:?}",
+            info.memories.items
+        );
+    };
+
+    let mut special_entities = Vec::<(&str, FlatEntityRef)>::new();
+
+    // 1. copy all memories to the list;
+    special_entities.extend(
+        info.memories
+            .iter_all_ids()
+            .map(|id| ("memory", snapshot.pack_ref(id))),
+    );
+    // 2. if indirect table exist - add it to the list as well.
+    special_entities.push((
+        "indirect_function_table",
+        snapshot.pack_ref(info.indirect_function_table.table_id),
+    ));
+
+    // now for special entities - mark them as exported in main module, and add imports to modules that use them:
+    for (name, entity) in special_entities {
+        log::trace!("Adding export of special entity {name}({entity:?}) to main module.",);
+        main.exports.insert(entity);
+        for (module_id, module_info) in regular_modules.iter_mut() {
+            if module_info.imports.contains(&entity) {
+                continue;
+            }
+            log::trace!(
+                "Adding import of special entity {name}({entity:?}) to module {module_id:?}",
+            );
+            module_info.imports.insert(entity);
+        }
+        for shared_module in shared.iter_mut() {
+            if shared_module.imports.contains(&entity) {
+                continue;
+            }
+            log::trace!(
+                "Adding import of special entity {name}({entity:?}) to module {module_id:?}",
+                module_id = shared_module
+                    .module_names
+                    .iter()
+                    .map(|m| m.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            shared_module.imports.insert(entity);
+        }
+    }
+
+    Ok(())
+}
+
 /// Compute the split modules content based on split points and dependency graph.
 pub fn compute_split_modules(
     info: &Module,
@@ -690,9 +674,13 @@ pub fn compute_split_modules(
         )
     }));
 
-    if merge_shared {
+    {
         let (main, rest) = split_module_contents.split_at_mut(1);
-        merge_shared_with_main(&mut main[0], rest, &mut shared_deps)?;
+        if merge_shared {
+            merge_shared_with_main(&mut main[0], rest, &mut shared_deps)?;
+        }
+
+        process_special_entities(info, &snapshot, &mut main[0], rest, &mut shared_deps)?;
     }
 
     for (shared_index, shared) in shared_deps.iter().enumerate() {
@@ -728,6 +716,7 @@ pub fn compute_split_modules(
     })
 }
 
+/// Module deps calculation:
 fn get_deps(
     shared_deps: &[SharedEntry<ModuleIdentifier>],
     id: &SplitModuleIdentifier,
@@ -756,7 +745,7 @@ fn calculate_deps(
     let dep_modules = get_deps(shared_deps, id);
     dep_modules
         .into_iter()
-        .filter(|dep_module_index| shared_index.map_or(true, |si| si != *dep_module_index))
+        .filter(|dep_module_index| shared_index != Some(*dep_module_index))
         .map(|dep_module_index| {
             let dep_module = &shared_deps[dep_module_index];
             let dep_id = SplitModuleIdentifier::Shared(SharedModuleIdentifier(

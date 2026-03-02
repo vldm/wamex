@@ -132,7 +132,7 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
             self.global_tmps
                 .insert(store_type, GlobalRef::new(global_id));
 
-            builder.add_defined_global(DefinedGlobal {
+            builder.globals.push_defined(DefinedGlobal {
                 entity_type: GlobalType {
                     content_type,
                     mutable: true,

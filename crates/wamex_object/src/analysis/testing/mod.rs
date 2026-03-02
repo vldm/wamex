@@ -11,7 +11,7 @@ pub fn parse_deps(input: &str) -> anyhow::Result<DepGraph> {
     let mut graph = DepGraph::for_testing();
     for (parent, childs) in val.1 {
         for child in childs {
-            graph.insert_child(parent.clone(), child);
+            graph.insert_child(parent, child);
         }
     }
     Ok(graph)

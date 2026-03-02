@@ -5,7 +5,7 @@ expression: split_info_output
 === Split Program Structure ===
 
 Module #0: main
-  Defined symbols: 815
+  Defined symbols: 830
     0 <__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static>
     1 <__wasm_split_00static_str00_import_776d8e51aac0782b17e57d45872c52d7_static_str>
     2 <wasm_bindgen::__wbindgen_string_new::hf591ae4d10501fb5>
@@ -709,6 +709,8 @@ Module #0: main
     703 <wasm_bindgen_futures::task::singlethread::Task::into_raw_waker::raw_drop::h62df557cca4cd3fd>
     704 <__wasm_split_load_callback>
     705 <memcmp>
+    706 <__stack_pointer>
+    709 <table0>
     711 <.Lanon.79b81406656296db68a0b7034c081fc6.43>
     712 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.16>
     713 <.Lanon.51aa6f4db30a08e7412a135b574a635e.3>
@@ -821,17 +823,34 @@ Module #0: main
     823 <wasm_bindgen_futures::task::singlethread::Task::into_raw_waker::VTABLE::hc9ed02da2e959ee4>
     824 <.Lanon.d8aea96bde7621720d8eebb0a9215221.5>
     825 <.Lanon.6543075fd68f4d6599bf6aebcc45076e.0>
-  Exports: 3
+    838 <type0>
+    839 <type1>
+    840 <type2>
+    841 <type3>
+    842 <type4>
+    843 <type5>
+    844 <type6>
+    845 <type7>
+    846 <type8>
+    847 <type9>
+    848 <type10>
+    849 <type11>
+    850 <type12>
+  Exports: 5
     29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
     69 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
+    709 <table0>
+    710 <memory>
     717 <.Lanon.8353eafc0686ece12291357d89b43616.8>
 
 Module #1: static_str
   Defined symbols: 2
     67 <__wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str>
     735 <.Lanon.8353eafc0686ece12291357d89b43616.15>
-  Imports: 1
+  Imports: 3
     29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
+    709 <table0>
+    710 <memory>
   Split points: 1
     "776d8e51aac0782b17e57d45872c52d7_static_str"
 
@@ -840,9 +859,11 @@ Module #2: string_from_static
     68 <__wasm_split_00string_from_static00_export_17997317cc392c52ed3bea15880aab65_string_from_static>
     730 <.Lanon.8353eafc0686ece12291357d89b43616.9>
     738 <.Lanon.8353eafc0686ece12291357d89b43616.18>
-  Imports: 3
+  Imports: 5
     29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
     69 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
+    709 <table0>
+    710 <memory>
     717 <.Lanon.8353eafc0686ece12291357d89b43616.8>
   Split points: 1
     "17997317cc392c52ed3bea15880aab65_string_from_static"

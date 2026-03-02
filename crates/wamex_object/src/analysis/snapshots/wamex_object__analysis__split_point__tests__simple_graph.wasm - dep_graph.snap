@@ -18,15 +18,26 @@ expression: dep_graph_output
   -> 12 data[0:518+8]  <".Lanon.40cffdd5158028b640e87266bd095959.2"> (size=8)
 
 3 func[3] <"indirect_fn"> (size=95)
+  -> 5 <__stack_pointer>
+  -> 8 <table0>
   -> 13 data[0:528+12]  <".Lswitch.table.indirect_fn"> (size=12)
+  -> 14 <type0>
 
 4 func[4] <"no_inline_fn"> (size=143)
   -> 0 func[0] <"hello_world"> (size=20)
   -> 1 func[1] <"version"> (size=20)
   -> 2 func[2] <"constant"> (size=20)
+  -> 5 <__stack_pointer>
   -> 10 data[0:500+13]  <".Lanon.40cffdd5158028b640e87266bd095959.0"> (size=13)
   -> 11 data[0:513+5]  <".Lanon.40cffdd5158028b640e87266bd095959.1"> (size=5)
   -> 12 data[0:518+8]  <".Lanon.40cffdd5158028b640e87266bd095959.2"> (size=8)
+
+5 <__stack_pointer>
+  <-P 3 func[3] <"indirect_fn"> (size=95)
+  <-P 4 func[4] <"no_inline_fn"> (size=143)
+
+8 <table0>
+  <-P 3 func[3] <"indirect_fn"> (size=95)
 
 10 data[0:500+13]  <".Lanon.40cffdd5158028b640e87266bd095959.0"> (size=13)
   <-P 0 func[0] <"hello_world"> (size=20)
@@ -45,3 +56,6 @@ expression: dep_graph_output
   -> 0 func[0] <"hello_world"> (size=20)
   -> 1 func[1] <"version"> (size=20)
   -> 2 func[2] <"constant"> (size=20)
+
+14 <type0>
+  <-P 3 func[3] <"indirect_fn"> (size=95)

@@ -1,6 +1,7 @@
 use crate::{
     index::TempIndex,
     raw::{self},
+    typed::data::DataSymbolRef,
 };
 
 mod collections;
@@ -65,5 +66,14 @@ impl TempIndex for TagRef {
     }
     fn from_u32(value: u32) -> Self {
         TagRef::from_u32(value)
+    }
+}
+
+impl TempIndex for DataSymbolRef {
+    fn as_u32(&self) -> u32 {
+        DataSymbolRef::as_u32(*self)
+    }
+    fn from_u32(value: u32) -> Self {
+        DataSymbolRef::from_u32(value)
     }
 }

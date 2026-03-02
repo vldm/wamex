@@ -16,13 +16,13 @@ use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
-    index::{Building, CompoundList, Finished, ImportOrDefined, Temp},
+    index::{Building, CompoundList, Finished, ImportOrDefined, NonDefault},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
     raw::{self, DefinedFuncId, ImportId},
-    typed::{data::DataSymbolRef, entities::common_index::EntityKind},
+    typed::entities::common_index::EntityKind,
 };
 
 pub mod data;
@@ -130,8 +130,7 @@ pub struct Module<'src, BuilderState = Finished> {
     pub tags: entities::Tags<'src, BuilderState>,
 
     /// linkage entity
-    // (lack of import part?)
-    pub data: PrimaryMap<DataSymbolRef, data::RawDataChunk<'src>>,
+    pub data: entities::DataChunks<'src, BuilderState>,
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
     pub mem_spec: data::MemSpec<'src>,
@@ -168,7 +167,7 @@ impl<'src> Module<'src> {
                 .functions
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (FunctionRef::from_u32(id.as_u32()), *name))
+                .map(|(id, name)| (FunctionRef::from_u32(id.as_u32()), (*name).into()))
                 .collect(),
             exports.0,
         );
@@ -180,7 +179,7 @@ impl<'src> Module<'src> {
                 .tables
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (TableRef::from_u32(id.as_u32()), *name))
+                .map(|(id, name)| (TableRef::from_u32(id.as_u32()), (*name).into()))
                 .collect(),
             exports.1,
         );
@@ -192,7 +191,7 @@ impl<'src> Module<'src> {
                 .memories
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (MemoryRef::from_u32(id.as_u32()), *name))
+                .map(|(id, name)| (MemoryRef::from_u32(id.as_u32()), (*name).into()))
                 .collect(),
             exports.2,
         );
@@ -204,7 +203,7 @@ impl<'src> Module<'src> {
                 .globals
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (GlobalRef::from_u32(id.as_u32()), *name))
+                .map(|(id, name)| (GlobalRef::from_u32(id.as_u32()), (*name).into()))
                 .collect(),
             exports.3,
         );
@@ -216,7 +215,7 @@ impl<'src> Module<'src> {
                 .tags
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (TagRef::from_u32(id.as_u32()), *name))
+                .map(|(id, name)| (TagRef::from_u32(id.as_u32()), (*name).into()))
                 .collect(),
             exports.4,
         );
@@ -252,6 +251,7 @@ impl<'src> Module<'src> {
         let indirect_function_table =
             elements::IndirectFunctionTable::from_reader(reader, table_id, true)?;
 
+        // TODO: add undefined data symbols as well.
         let LinkageInfo {
             mut file_symbol_db,
             defined_data_symbols,
@@ -267,66 +267,77 @@ impl<'src> Module<'src> {
             // todo: make it configurable
             let slice_chunks = true;
 
-            let mut sliced_chunks = PrimaryMap::new();
+            // let mut sliced_chunks = PrimaryMap::new();
+            let mut sliced_chunks = entities::DataChunks::default();
 
-            for (segment_id, d) in reader.data.data_segments.iter() {
-                let segment_info = reader.linking.segments_info[segment_id.index()];
-                let pow2align = segment_info.alignment.try_into().unwrap();
-                let segment_name = segment_info.name;
-                // Range.start is point to <length> field of data segment.
-                let data_start = d.range.end - d.data.len();
-                let segment_chunk = data::RawDataChunk::from_segment(
-                    segment_id,
-                    d.data,
-                    segment_name.into(),
-                    pow2align,
-                    data_start,
-                );
+            'iter: for (segment_id, d) in reader.data.data_segments.iter() {
+                let segment_chunk = 'chunk_segment: {
+                    let segment_info = reader.linking.segments_info[segment_id.index()];
+                    let pow2align = segment_info.alignment.try_into().unwrap();
+                    let segment_name = segment_info.name;
+                    // Range.start is point to <length> field of data segment.
+                    let data_start = d.range.end - d.data.len();
+                    let segment_chunk = data::RawDataChunk::from_segment(
+                        segment_id,
+                        d.data,
+                        segment_name.into(),
+                        pow2align,
+                        data_start,
+                    );
 
-                if !slice_chunks {
-                    warn!("Skipping data segment slicing - working with one chunk per segment");
-                    sliced_chunks.push(segment_chunk);
-                    continue;
-                }
+                    if !slice_chunks {
+                        warn!("Skipping data segment slicing - working with one chunk per segment");
+                        break 'chunk_segment segment_chunk;
+                    }
 
-                let Some(chunk) = chunks.peek() else {
-                    warn!("No more data symbols, skipping slicing for the rest of segments");
-                    sliced_chunks.push(segment_chunk);
-                    continue;
+                    let Some(chunk) = chunks.peek() else {
+                        warn!("No more data symbols, skipping slicing for the rest of segments");
+                        break 'chunk_segment segment_chunk;
+                    };
+
+                    let chunk_segment_id = chunk[0].1.segment_id;
+                    if chunk_segment_id < segment_id {
+                        // data symbols from previous segment (bug)
+                        panic!(
+                            "Segment id mismatch: expected {:?}, found {:?}. Skipping slicing for this segment.",
+                            segment_id, chunk[0].1.segment_id
+                        );
+                    } else if chunk_segment_id > segment_id {
+                        // no data symbols for this segment, just skip slicing
+                        warn!(
+                            "No data symbols for segment {:?}. Skipping slicing for this segment.",
+                            segment_id
+                        );
+                        break 'chunk_segment segment_chunk;
+                    }
+
+                    let defined_data_symbols = chunks
+                        .next()
+                        .unwrap()
+                        .iter()
+                        .map(|&(symbol_id, ref symbol_info)| (symbol_id, symbol_info))
+                        .collect::<Vec<_>>();
+
+                    let sliced = segment_chunk.slice_segment(defined_data_symbols);
+                    // LLVM provides data symbols in random order, sometimes one symbol can be a part of another symbol.
+                    let filtered =
+                        data::DataChunk::canonicalize_data_symbols(sliced, &mut file_symbol_db);
+                    for (_, chunk) in filtered {
+                        sliced_chunks.names.push(chunk.name.clone().into());
+                        sliced_chunks
+                            .items
+                            .push_defined(DefinedDataChunk::from(chunk));
+                    }
+
+                    continue 'iter;
                 };
-
-                let chunk_segment_id = chunk[0].1.segment_id;
-                if chunk_segment_id < segment_id {
-                    // data symbols from previous segment (bug)
-                    panic!(
-                        "Segment id mismatch: expected {:?}, found {:?}. Skipping slicing for this segment.",
-                        segment_id, chunk[0].1.segment_id
-                    );
-                } else if chunk_segment_id > segment_id {
-                    // no data symbols for this segment, just skip slicing
-                    warn!(
-                        "No data symbols for segment {:?}. Skipping slicing for this segment.",
-                        segment_id
-                    );
-                    sliced_chunks.push(segment_chunk);
-                    continue;
-                }
-
-                let defined_data_symbols = chunks
-                    .next()
-                    .unwrap()
-                    .iter()
-                    .map(|&(symbol_id, ref symbol_info)| (symbol_id, symbol_info))
-                    .collect::<Vec<_>>();
-
-                let sliced = segment_chunk.slice_segment(defined_data_symbols);
-                // LLVM provides data symbols in random order, sometimes one symbol can be a part of another symbol.
-                let filtered =
-                    data::DataChunk::canonicalize_data_symbols(sliced, &mut file_symbol_db);
-                sliced_chunks.extend(filtered.into_iter().map(|(_, v)| v));
+                sliced_chunks.names.push(segment_chunk.name.clone().into());
+                sliced_chunks
+                    .items
+                    .push_defined(DefinedDataChunk::from(segment_chunk));
             }
 
-            sliced_chunks
+            sliced_chunks.into_finished()
         };
 
         let mem_spec = data::MemSpec::from_reader(reader)?;
@@ -361,35 +372,20 @@ impl<'src> Module<'src> {
     }
     // Get entity name
     pub fn get_name(&self, entity: EntityKind) -> Cow<'src, str> {
-        let entity = entity.into();
-
-        let debug_name: Option<Cow<'src, str>> = match entity {
-            EntityKind::Function(func_id) => self
-                .functions
-                .names
-                .get(func_id)
-                .map(|n| n.into_inner().into()),
-            EntityKind::Global(global_id) => self
-                .globals
-                .names
-                .get(global_id)
-                .map(|n| n.into_inner().into()),
-            EntityKind::Table(table_id) => self
-                .tables
-                .names
-                .get(table_id)
-                .map(|n| n.into_inner().into()),
-            EntityKind::Memory(mem_id) => self
-                .memories
-                .names
-                .get(mem_id)
-                .map(|n| n.into_inner().into()),
-            EntityKind::Tag(tag_id) => self.tags.names.get(tag_id).map(|n| n.into_inner().into()),
-            EntityKind::DataSymbol(d) => self.data.get(d).map(|v| v.name.clone()),
+        let debug_name = match entity {
+            EntityKind::Function(func_id) => self.functions.names.get(func_id),
+            EntityKind::Global(global_id) => self.globals.names.get(global_id),
+            EntityKind::Table(table_id) => self.tables.names.get(table_id),
+            EntityKind::Memory(mem_id) => self.memories.names.get(mem_id),
+            EntityKind::Tag(tag_id) => self.tags.names.get(tag_id),
+            EntityKind::DataSymbol(d) => self.data.names.get(d),
             EntityKind::Type(_) => None, // types don't have names in name section
         };
 
-        debug_name.unwrap_or_else(|| format!("{entity}").into())
+        debug_name
+            .cloned()
+            .map(NonDefault::into_inner)
+            .unwrap_or_else(|| format!("{entity}").into())
     }
 
     pub fn function_id_iter<'any>(
@@ -455,7 +451,7 @@ impl<'src> ModuleBuilder<'src> {
             memories: entities::Memories::default(),
             globals: entities::Globals::default(),
             tags: entities::Tags::default(),
-            data: PrimaryMap::default(),
+            data: entities::DataChunks::default(),
             mem_spec: data::MemSpec::default(),
             tables,
             // TODO: When building IndirectFunctionTable provide Temp<TableRef> instead of TableRef.
@@ -472,58 +468,11 @@ impl<'src> ModuleBuilder<'src> {
             memories: self.memories.into_finished(),
             globals: self.globals.into_finished(),
             tags: self.tags.into_finished(),
-            data: self.data,
+            data: self.data.into_finished(),
             mem_spec: self.mem_spec,
             indirect_function_table: self.indirect_function_table,
             start_functions: self.start_functions,
         }
-    }
-
-    /// Add imported global to the module, returning its reference.
-    pub fn add_imported_global(&mut self, import: ImportedGlobal<'src>) -> Temp<GlobalRef> {
-        self.globals.items.push_import(import)
-    }
-
-    /// Add defined global to the module, returning its reference.
-    pub fn add_defined_global(&mut self, global: DefinedGlobal<'src>) -> Temp<GlobalRef> {
-        self.globals.items.push_defined(global)
-    }
-
-    /// Add imported function to the module, returning its reference.
-    pub fn add_imported_function(&mut self, import: ImportedFunction<'src>) -> Temp<FunctionRef> {
-        self.functions.items.push_import(import)
-    }
-
-    /// Add defined function to the module, returning its reference.
-    pub fn add_defined_function(&mut self, func: DefinedFunction<'src>) -> Temp<FunctionRef> {
-        self.functions.items.push_defined(func)
-    }
-
-    /// Add imported table to the module, returning its reference.
-    pub fn add_imported_table(&mut self, import: ImportedTable<'src>) -> Temp<TableRef> {
-        self.tables.items.push_import(import)
-    }
-    /// Add defined table to the module, returning its reference.
-    pub fn add_defined_table(&mut self, table: DefinedTable<'src>) -> Temp<TableRef> {
-        self.tables.items.push_defined(table)
-    }
-
-    /// Add imported memory to the module, returning its reference.
-    pub fn add_imported_memory(&mut self, import: ImportedMemory<'src>) -> Temp<MemoryRef> {
-        self.memories.items.push_import(import)
-    }
-    /// Add defined memory to the module, returning its reference.
-    pub fn add_defined_memory(&mut self, memory: DefinedMemory) -> Temp<MemoryRef> {
-        self.memories.items.push_defined(memory)
-    }
-
-    /// Add imported tag to the module, returning its reference.
-    pub fn add_imported_tag(&mut self, import: ImportedTag<'src>) -> Temp<TagRef> {
-        self.tags.items.push_import(import)
-    }
-    /// Add defined tag to the module, returning its reference.
-    pub fn add_defined_tag(&mut self, tag: DefinedTag) -> Temp<TagRef> {
-        self.tags.items.push_defined(tag)
     }
 }
 
@@ -552,7 +501,7 @@ mod tests {
     #[test]
     fn create_from_scratch() {
         let mut module = Module::new();
-        module.add_imported_function(ImportedFunction {
+        module.functions.push_import(ImportedFunction {
             module: "env".into(),
             name: "bar".into(),
             entity_type: FuncType::new(None, None), // void type

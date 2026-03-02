@@ -160,11 +160,8 @@ impl<'src> LinkageInfo<'src> {
             code_owners.push((func.original_range(), func_ref));
         }
 
-        for (data_ref, data) in input.data.iter() {
-            data_owners.push((
-                data.original_offset..data.original_offset + data.data.len(),
-                data_ref,
-            ));
+        for (data_ref, data) in input.data.defined_iter() {
+            data_owners.push((data.original_range(), data_ref));
         }
 
         (code_owners, data_owners)

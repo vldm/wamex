@@ -242,18 +242,53 @@ trait CustomSectionReader<'a> {
 
 impl<'a> Debug for ObjectReader<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let elements = self
+            .elements
+            .iter()
+            .map(|(id, elem)| (id, ElemWrapper(elem)))
+            .collect::<Vec<_>>();
+
         f.debug_struct("ObjectReader")
             .field("types", &self.types)
             .field("imports", &self.imports)
             .field("exports", &self.exports)
             .field("tables", &self.tables)
-            //
-            // .field("elements", &self.elements)
+            .field("elements", &elements)
             .field("tags", &self.tags)
             .field("globals", &self.globals)
             .field("memories", &self.memories)
             .field("code", &self.code)
             .field("data", &self.data)
+            .field("names", &self.names)
+            .field("linking", &self.linking)
+            .field("relocs", &self.relocs)
+            .finish()
+    }
+}
+
+struct ElemWrapper<'o, 'a>(&'o Element<'a>);
+impl<'o, 'a> Debug for ElemWrapper<'o, 'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match &self.0.kind {
+            wasmparser::ElementKind::Active {
+                table_index,
+                offset_expr,
+            } => {
+                format!(
+                    "Active(table={table_index:?}, offset_expr={:?})",
+                    offset_expr
+                )
+            }
+            wasmparser::ElementKind::Passive => "Passive".to_string(),
+            wasmparser::ElementKind::Declared => "Declared".to_string(),
+        };
+        let items = match &self.0.items {
+            wasmparser::ElementItems::Functions(funcs) => format!("Functions({:?})", funcs),
+            wasmparser::ElementItems::Expressions(..) => String::from("Expressions()"),
+        };
+        f.debug_struct("Element")
+            .field("kind", &kind)
+            .field("items", &items)
             .finish()
     }
 }

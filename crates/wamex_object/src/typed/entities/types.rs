@@ -52,7 +52,24 @@ pub type DefinedTable<'src> = DefinedEntity<'src, wasmparser::TableType>;
 pub type DefinedGlobal<'src> = DefinedEntity<'src, wasmparser::GlobalType>;
 pub type DefinedMemory = wasmparser::MemoryType;
 pub type DefinedTag = wasmparser::TagType;
-pub type DefinedDataChunk<'src> = typed::data::RawDataChunk<'src>;
+pub type DefinedDataChunk<'src> = DefinedEntity<'src, typed::data::DataChunkType>;
+
+impl<'src> From<typed::data::RawDataChunk<'src>> for DefinedDataChunk<'src> {
+    fn from(v: typed::data::RawDataChunk<'src>) -> DefinedDataChunk<'src> {
+        DefinedEntity {
+            entity_type: typed::data::DataChunkType {
+                segment_id: v.segment_id,
+                pow2align: v.pow2align,
+            },
+            body: EntityBody::Copied {
+                original_range: v.original_offset..(v.original_offset + v.data.len()),
+                bytes: v.data,
+                patches: vec![],
+                filtered_relocs: CompoundBitSet::new(),
+            },
+        }
+    }
+}
 
 impl<'src> From<&FunctionWithBody<'src>> for DefinedFunction<'src> {
     fn from(v: &FunctionWithBody<'src>) -> DefinedFunction<'src> {
@@ -163,6 +180,63 @@ impl EntityBody<'_> {
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    /// Iterate over resulting body bytes, applying patches on the fly.
+    pub fn iter_bytes(&self) -> impl Iterator<Item = u8> + '_ {
+        match self {
+            EntityBody::Copied { bytes, patches, .. } => IterBytes::new(bytes, patches),
+            EntityBody::New { new_bytes, .. } => IterBytes::new(new_bytes, &[]),
+        }
+        .flat_map(|chunk| chunk.iter().copied())
+    }
+    pub fn original_range(&self) -> Range<usize> {
+        match self {
+            EntityBody::Copied { original_range, .. } => original_range.clone(),
+            EntityBody::New { .. } => 0..0,
+        }
+    }
+}
+
+// Iter that print in place patched body.
+#[derive(Debug)]
+struct IterBytes<'a> {
+    bytes: &'a [u8],
+    patches: &'a [Rewrite],
+    original_offset: usize,
+}
+impl<'a> IterBytes<'a> {
+    fn new(bytes: &'a [u8], patches: &'a [Rewrite]) -> Self {
+        Self {
+            bytes,
+            patches,
+            original_offset: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for IterBytes<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(patch) = self.patches.first() {
+            // if in patch range
+            if patch.old_range.start >= self.original_offset {
+                self.patches = &self.patches[1..];
+                self.original_offset = patch.old_range.end;
+                return Some(&patch.new_bytes[..]);
+            } else {
+                let start = self.original_offset;
+                let end = patch.old_range.start;
+                self.original_offset = patch.old_range.start;
+                return Some(&self.bytes[start..end]);
+            }
+        }
+        if self.bytes[self.original_offset..].is_empty() {
+            return None;
+        }
+        let start = self.original_offset;
+        self.original_offset = self.bytes.len();
+        Some(&self.bytes[start..])
     }
 }
 

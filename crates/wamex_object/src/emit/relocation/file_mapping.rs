@@ -67,7 +67,7 @@ pub struct OutputModules<'src> {
 //     // Map<ImportDataSymbolRef, GotRef>
 //     import_data_symbols: GappedMap<DataSymbolRef, GlobalRef>,
 // }
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct OutputFileInfo {
     // pub module: ModuleAndDataInfo<'src, Building>,
 

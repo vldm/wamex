@@ -24,7 +24,7 @@ impl_entity_index! {
     /// - FuncTypeId => FlatEntityRef::from_u32(type_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs + num_tag_refs + num_data_symbol_refs)
     pub struct FlatEntityRef;
 
-    #[display = "entity"]
+    #[display = "erased"]
     /// A reference to entity which type is provided by external tag.
     /// used for relocs where symbols type is described by relocation type.
     ///
@@ -276,8 +276,8 @@ pub enum TempEntityKind {
     Table(Temp<TableRef>),
     Memory(Temp<MemoryRef>),
     Tag(Temp<TagRef>),
-    // No import/defined distinction - no reason for temp refs.
-    // DataSymbol(Temp<DataSymbolRef>),
+    DataSymbol(Temp<DataSymbolRef>),
+    // Type is only used for relocs, we don't really store their in separate array.
     // Type(Temp<FuncTypeId>),
 }
 impl TempEntityKind {
@@ -297,6 +297,9 @@ impl TempEntityKind {
             }
             TempEntityKind::Memory(mem_ref) => {
                 EntityKind::Memory(mem_ref.to_stable(module.memories.imports_iter().len()))
+            }
+            TempEntityKind::DataSymbol(data_symbol_ref) => {
+                EntityKind::DataSymbol(data_symbol_ref.to_stable(module.data.imports_iter().len()))
             }
         }
     }

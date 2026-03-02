@@ -57,7 +57,7 @@ impl DepGraph {
     pub fn for_module(module: &Module<'_>) -> Self {
         Self {
             nodes: GappedMap::new(),
-            snapshot: EntitiesSnapshot::new(&module),
+            snapshot: EntitiesSnapshot::new(module),
         }
     }
 
@@ -144,15 +144,17 @@ pub struct SharedEntry<Id> {
     pub exports: DepMiniSet,
     pub imports: DepMiniSet,
 }
-
 pub fn get_dependencies(info: &LoadedFile) -> anyhow::Result<DepGraph> {
+    get_dependencies_with_filter(info, |_| true)
+}
+pub fn get_dependencies_with_filter(
+    info: &LoadedFile,
+    mut filter: impl FnMut(&EntityKind) -> bool,
+) -> anyhow::Result<DepGraph> {
     let mut deps = DepGraph::for_module(&info.module);
 
-    let is_fn_or_data =
-        |id: &EntityKind| matches!(id, EntityKind::Function(_) | EntityKind::DataSymbol(_));
-
     for (entity, relocs) in info.relocs.iter_relocs() {
-        if !is_fn_or_data(&entity) {
+        if !filter(&entity) {
             continue;
         }
 
@@ -162,7 +164,7 @@ pub fn get_dependencies(info: &LoadedFile) -> anyhow::Result<DepGraph> {
             relocs
                 .iter()
                 .map(|r| ErasedEntityRef::combine(r.symbol_id, r.symbol_type))
-                .filter(is_fn_or_data)
+                .filter(|er| filter(er))
                 .map(|er| deps.snapshot.pack_ref(er)),
         );
 
@@ -379,8 +381,11 @@ mod tests {
 
     #[test]
     fn load_dep_graph() {
-        let info = LoadedFile::from_wasm_bytes(&WASM_FILE).unwrap();
-        let dep_graph = super::get_dependencies(&info).unwrap();
+        let info = LoadedFile::from_wasm_bytes(WASM_FILE).unwrap();
+        let dep_graph = super::get_dependencies_with_filter(&info, |e| {
+            matches!(e, EntityKind::Function(_) | EntityKind::DataSymbol(_))
+        })
+        .unwrap();
 
         let no_inline_fn = info
             .module
@@ -417,7 +422,7 @@ mod tests {
 
     #[test]
     fn reachablity_graph() {
-        let info = LoadedFile::from_wasm_bytes(&WASM_FILE).unwrap();
+        let info = LoadedFile::from_wasm_bytes(WASM_FILE).unwrap();
         let dep_graph = super::get_dependencies(&info).unwrap();
 
         let no_inline_fn = info
@@ -435,7 +440,7 @@ mod tests {
         //              -> func2 -> data2
         //              -> func3 -> data3
         reachability_graph.print("no_inline_fn", &info.module, &dep_graph);
-        assert_eq!(reachability_graph.len(), 7); // root +  3 data + 3 funcs
+        assert_eq!(reachability_graph.len(), 8); // root +  3 data + 3 funcs + global (__stack_pointer)
 
         let indirect_fn = info.module.find_function_id_by_name("indirect_fn").unwrap();
         let indirect_fn_sym = dep_graph.snapshot().pack_ref(indirect_fn);
@@ -446,7 +451,8 @@ mod tests {
         // indirect_fn -> switchtable -> func1 -> data1
         //                             -> func2 -> data2
         //                             -> func3 -> data3
-        assert_eq!(reachability_graph.len(), 8); // root + <switchtable> +  3 data + 3 funcs
+        assert_eq!(reachability_graph.len(), 11); // root + <switchtable> +  3 data + 3 funcs +
+        // + global (__stack_pointer) + type (for switchtable) + table (for switchtable)
     }
 
     thread_local! {
@@ -463,7 +469,7 @@ mod tests {
     #[test]
     fn test_unique_nodes() {
         let graph = TEST_GRAPH.with(|c| (*c).clone());
-        let modules = vec![
+        let modules = [
             super::NamedGraph::new(
                 "module1",
                 super::find_reachable_deps(&graph, &testing::uniq_nodes("1").unwrap()),
@@ -731,7 +737,7 @@ mod tests {
                 return false;
             }
         }
-        return true;
+        true
     }
 
     #[test]
