@@ -797,6 +797,9 @@ mod tests {
         // ensure loadable, and compare with original
         let new_file = file_loader.load_from_bytes(res.into_boxed_slice()).unwrap();
 
+        let result = file_loader.get_file(new_file);
+        dbg!(&result.module);
+
         todo!()
     }
 }

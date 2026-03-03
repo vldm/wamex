@@ -124,8 +124,18 @@ impl<'src> LinkageInfo<'src> {
         input: &ObjectReader,
     ) -> impl Iterator<Item = AnyRelocationEntry> {
         // Build a flat list of all relocations, adjusting offsets to be relative to the start of the module
-        let code = &input.relocs.relocs[input.code.section_index].entries;
-        let data = &input.relocs.relocs[input.data.section_index].entries;
+        let code = &input
+            .relocs
+            .relocs
+            .get(input.code.section_index)
+            .map(|r| &r.entries[..])
+            .unwrap_or_default();
+        let data = &input
+            .relocs
+            .relocs
+            .get(input.data.section_index)
+            .map(|r| &r.entries[..])
+            .unwrap_or_default();
 
         // make sure entries do not overlap and ordered
         #[cfg(debug_assertions)]
