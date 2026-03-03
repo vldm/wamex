@@ -610,7 +610,7 @@ fn emit_body(
                 .iter()
                 .map(|reloc| reloc.shift_right(body_start_offset))
                 .collect();
-            return Ok(mapped_relocs);
+            Ok(mapped_relocs)
         }
     }
 }
@@ -775,7 +775,6 @@ mod tests {
 
         dbg!(&dep_graph);
         dbg!(&split);
-        // panic!();
 
         let (output, file_info) = create_split_module(
             input_file,
@@ -793,6 +792,7 @@ mod tests {
         let raw = crate::raw::ObjectReader::parse(&res).unwrap();
         dbg!(&input.wasm_reader);
         dbg!(&raw);
+        dbg!(&output);
 
         // ensure loadable, and compare with original
         let new_file = file_loader.load_from_bytes(res.into_boxed_slice()).unwrap();

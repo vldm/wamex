@@ -349,7 +349,7 @@ impl<Any: Clone> RangeExt for RelocationEntry<Any> {
     }
 }
 
-// // Check size compatibility with wasmparser::RelocationEntry
+// Check size compatibility with wasmparser::RelocationEntry
 const _ASSERT_SIZE: () = const {
     // Because type entry doesn't have addend - enum tag can be packed and resulting size remains equal to non decomposed version.
     assert!(size_of::<RelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());

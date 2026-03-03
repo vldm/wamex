@@ -9,7 +9,7 @@
 use std::{borrow::Cow, fmt::Debug};
 
 use anyhow::{Result, bail};
-use cranelift_entity::{EntityRef, PrimaryMap};
+use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 pub use entities::*;
 use log::warn;
 use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
@@ -233,20 +233,8 @@ impl<'src> Module<'src> {
             }
         }
 
-        let (_table_name, table_id) = tables
-            .iter()
-            .filter_map(|(id, _)| reader.names.tables.get(id).map(|name| (name.into_inner(), id)))
-            .find(|(name, _)| *name == "__indirect_function_table")
-            .unwrap_or_else(|| {
-                assert!(
-                    tables.items.defined.len() == 1,
-                    "No named __indirect_function_table was found, and there is not one table in the module."
-                );
-                (
-                    "__indirect_function_table",
-                    tables.defined_iter().next().unwrap().0,
-                )
-            });
+        let (_table_name, table_id) = Self::init_indirect_fn_table(&tables);
+        let (_memory_name, memory_id) = Self::init_base_memory(&memories);
 
         let indirect_function_table =
             elements::IndirectFunctionTable::from_reader(reader, table_id, true)?;
@@ -340,7 +328,7 @@ impl<'src> Module<'src> {
             sliced_chunks.into_finished()
         };
 
-        let mem_spec = data::MemSpec::from_reader(reader)?;
+        let mem_spec = data::MemSpec::from_reader(reader, memory_id)?;
 
         let this = Module {
             indirect_function_table,
@@ -355,6 +343,45 @@ impl<'src> Module<'src> {
         };
 
         Ok((this, file_symbol_db))
+    }
+
+    fn init_indirect_fn_table(tables: &entities::Tables<'src>) -> (Cow<'src, str>, TableRef) {
+        tables
+            .iter()
+            .filter_map(|(id, _)| tables.names.get(id).map(|name| (name.clone().into_inner(), id)))
+            .find(|(name, _)| *name == "__indirect_function_table")
+            .unwrap_or_else(|| {
+                assert!(
+                    tables.items.defined.len() == 1,
+                    "No named __indirect_function_table was found, and there is not one table in the module."
+                );
+                (
+                    "__indirect_function_table".into(),
+                    tables.defined_iter().next().unwrap().0,
+                )
+            })
+    }
+
+    fn init_base_memory(memories: &entities::Memories<'src>) -> (Cow<'src, str>, MemoryRef) {
+        memories
+            .iter()
+            .filter_map(|(id, _)| {
+                memories
+                    .names
+                    .get(id)
+                    .map(|name| (name.clone().into_inner(), id))
+            })
+            .find(|(name, _)| *name == "__base_memory")
+            .unwrap_or_else(|| {
+                assert!(
+                    memories.items.defined.len() == 1,
+                    "No named __base_memory was found, and there is not one memory in the module."
+                );
+                (
+                    "__base_memory".into(),
+                    memories.defined_iter().next().unwrap().0,
+                )
+            })
     }
 
     pub(crate) fn read_const_expr(offset_expr: &wasmparser::ConstExpr<'_>) -> Result<i32> {
@@ -428,13 +455,43 @@ impl<'src> Module<'src> {
 }
 
 impl<'src> ModuleBuilder<'src> {
+    /// Creates a basic module, suitable for pushing entities.
+    /// Note: this module doesn't have default memory and indirect function table,
+    ///  so they should be created using [`create_base_memory`] and [`create_empty_indirect_fn_table`]
+    ///  methods before pushing entities that reference them.
+    ///
+    /// To finalize indexes, call [`into_finished`] method.
     #[allow(
         clippy::new_without_default,
         reason = "it's api only for building state, so make it default might be confusing"
     )]
     pub fn new() -> Self {
-        let mut tables = entities::Tables::default();
-        let _table_ref = tables.items.push_defined(&raw::Table {
+        ModuleBuilder {
+            functions: entities::Functions::default(),
+            memories: entities::Memories::default(),
+            globals: entities::Globals::default(),
+            tags: entities::Tags::default(),
+            data: entities::DataChunks::default(),
+            mem_spec: data::MemSpec::default(),
+            tables: entities::Tables::default(),
+            indirect_function_table: elements::IndirectFunctionTable::new(
+                TableRef::reserved_value(),
+            ),
+            start_functions: Vec::default(),
+        }
+    }
+
+    /// Defines the default indirect function table for the module.
+    ///
+    /// Panics: if table_id for indirect function table was already set.
+    pub fn create_empty_indirect_fn_table(&mut self) -> crate::index::Temp<TableRef> {
+        if !self.indirect_function_table.table_id.is_reserved_value() {
+            panic!(
+                "Indirect function table is already defined with id {:?}.",
+                self.indirect_function_table.table_id
+            );
+        }
+        self.tables.items.push_defined(&raw::Table {
             ty: TableType {
                 table64: false,
                 shared: false,
@@ -444,34 +501,60 @@ impl<'src> ModuleBuilder<'src> {
             },
             // initialized using element segments later aka <indirect_function_table>
             init: wasmparser::TableInit::RefNull,
-        });
-
-        ModuleBuilder {
-            functions: entities::Functions::default(),
-            memories: entities::Memories::default(),
-            globals: entities::Globals::default(),
-            tags: entities::Tags::default(),
-            data: entities::DataChunks::default(),
-            mem_spec: data::MemSpec::default(),
-            tables,
-            // TODO: When building IndirectFunctionTable provide Temp<TableRef> instead of TableRef.
-            indirect_function_table: elements::IndirectFunctionTable::new(TableRef::from_u32(0)),
-            start_functions: Vec::default(),
+        })
+    }
+    /// Defines the default memory for the module.
+    ///
+    /// Panics: if memory_id for base memory was already set.
+    pub fn create_base_memory(&mut self) -> crate::index::Temp<MemoryRef> {
+        if self.mem_spec.mem_id.is_reserved_value() {
+            panic!(
+                "Base memory is already defined with id {:?}.",
+                self.mem_spec.mem_id
+            );
         }
+        self.memories.items.push_defined(raw::MemoryType {
+            memory64: false,
+            shared: false,
+            initial: 0,
+            maximum: None,
+            page_size_log2: None,
+        })
     }
 
     /// Finalize building module, converting all entities to finished state and making them ready for use.
+    /// This allows converting temp indexes that was provided during buiding phase to stable indexes, that will be present in final module.
+    ///
+    /// This method will init default memory and indirect function table if they were not initialized during building phase,
+    /// so it's requiered to either call [`create_empty_indirect_fn_table`] and [`create_base_memory`]
+    /// or push tables/memories before calling this method.
+    ///
+    /// Panics: if no default memory/indirect function can be found.
+    ///
     pub fn into_finished(self) -> Module<'src, Finished> {
+        let tables = self.tables.into_finished();
+        let mut indirect_function_table = self.indirect_function_table;
+        if indirect_function_table.table_id.is_reserved_value() {
+            let (_table_name, table_id) = Module::<'src, Finished>::init_indirect_fn_table(&tables);
+            indirect_function_table.table_id = table_id;
+        }
+        let memories = self.memories.into_finished();
+        let mut mem_spec = self.mem_spec;
+        if mem_spec.mem_id.is_reserved_value() {
+            let (_memory_name, memory_id) = Module::<'src, Finished>::init_base_memory(&memories);
+            mem_spec.mem_id = memory_id;
+        }
+
         Module {
+            tables,
+            memories,
+            mem_spec,
+            indirect_function_table,
+            start_functions: self.start_functions,
             functions: self.functions.into_finished(),
-            tables: self.tables.into_finished(),
-            memories: self.memories.into_finished(),
             globals: self.globals.into_finished(),
             tags: self.tags.into_finished(),
             data: self.data.into_finished(),
-            mem_spec: self.mem_spec,
-            indirect_function_table: self.indirect_function_table,
-            start_functions: self.start_functions,
         }
     }
 }

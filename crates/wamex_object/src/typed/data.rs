@@ -13,11 +13,12 @@ use crate::{
     helpers::{RangeComp, cmp_range},
     linkage::file_db::{FileSymbolDb, SymbolOffset},
     raw::DataSegmentId,
-    typed::{GlobalRef, Module, SymbolId},
+    typed::{GlobalRef, MemoryRef, Module, SymbolId},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MemSpec<'src> {
+    pub mem_id: MemoryRef,
     /// before - is a space for stack
     pub mem_start: SpecificLocation,
     pub data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>>,
@@ -26,6 +27,7 @@ pub struct MemSpec<'src> {
 impl Default for MemSpec<'_> {
     fn default() -> Self {
         Self {
+            mem_id: MemoryRef::reserved_value(),
             mem_start: Self::DEFAULT_HEAP_SIZE,
             data_segments: PrimaryMap::new(),
         }
@@ -34,7 +36,7 @@ impl Default for MemSpec<'_> {
 impl<'src> MemSpec<'src> {
     const DEFAULT_HEAP_SIZE: SpecificLocation = SpecificLocation::ConstantOffset(0x100000);
 
-    pub fn from_reader(reader: &ObjectReader<'src>) -> Result<Self> {
+    pub fn from_reader(reader: &ObjectReader<'src>, memory_id: MemoryRef) -> Result<Self> {
         let mut mem_start = None;
         let mut data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>> = PrimaryMap::new();
 
@@ -92,6 +94,7 @@ impl<'src> MemSpec<'src> {
         }
 
         Ok(Self {
+            mem_id: memory_id,
             mem_start: mem_start.unwrap_or(Self::DEFAULT_HEAP_SIZE),
             data_segments,
         })

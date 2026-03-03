@@ -592,6 +592,7 @@ fn process_special_entities(
     for (name, entity) in special_entities {
         log::trace!("Adding export of special entity {name}({entity:?}) to main module.",);
         main.exports.insert(entity);
+        main.defined_symbols.insert(entity);
         for (module_id, module_info) in regular_modules.iter_mut() {
             if module_info.imports.contains(&entity) {
                 continue;

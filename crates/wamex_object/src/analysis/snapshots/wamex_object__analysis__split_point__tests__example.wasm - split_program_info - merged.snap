@@ -5,7 +5,7 @@ expression: split_info_output
 === Split Program Structure ===
 
 Module #0: main
-  Defined symbols: 830
+  Defined symbols: 831
     0 <__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static>
     1 <__wasm_split_00static_str00_import_776d8e51aac0782b17e57d45872c52d7_static_str>
     2 <wasm_bindgen::__wbindgen_string_new::hf591ae4d10501fb5>
@@ -711,6 +711,7 @@ Module #0: main
     705 <memcmp>
     706 <__stack_pointer>
     709 <table0>
+    710 <memory>
     711 <.Lanon.79b81406656296db68a0b7034c081fc6.43>
     712 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.16>
     713 <.Lanon.51aa6f4db30a08e7412a135b574a635e.3>

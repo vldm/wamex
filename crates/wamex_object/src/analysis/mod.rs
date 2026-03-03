@@ -3,7 +3,7 @@
 //! - Build dep graph
 //! - Split modules based on dep graph
 
-mod debug;
+pub(crate) mod debug;
 mod dep_graph;
 mod split_point;
 #[cfg(test)]
