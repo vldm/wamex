@@ -18,6 +18,11 @@ pub type EntityRelocationEntry = RelocationEntry<EntitySymbol>;
 pub struct RelocRange {
     pub(super) relocs: Range<usize>,
 }
+impl RelocRange {
+    pub fn from_range(relocs: Range<usize>) -> Self {
+        Self { relocs }
+    }
+}
 
 impl ReservedValue for RelocRange {
     fn reserved_value() -> Self {
@@ -33,6 +38,8 @@ impl ReservedValue for RelocRange {
     }
 }
 
+/// Store for relocations per file.
+/// Internal relocations representation can be ordered or no, based on constructor called.
 #[derive(Debug, PartialEq, Eq)]
 pub struct FileRelocs {
     // Relocations ordered by offsets in file.
@@ -64,6 +71,7 @@ impl FileRelocs {
             data_owners,
         }
     }
+
     /// Resolve relocations symbols (to corresponding entities).
     /// code_owners and data_owners should contain regions in original file that belongs to each symbol.
     ///

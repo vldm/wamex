@@ -141,6 +141,9 @@ where
     pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Defined)> {
         self.items.defined_iter()
     }
+    pub fn defined_iter_mut(&mut self) -> impl ExactSizeIterator<Item = (Ref, &mut Defined)> {
+        self.items.defined_iter_mut()
+    }
     pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Import)> {
         self.items.imports_iter()
     }

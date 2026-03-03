@@ -9,19 +9,20 @@
 use std::{borrow::Cow, fmt::Debug};
 
 use anyhow::{Result, bail};
-use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 pub use entities::*;
 use log::warn;
-use wasmparser::{ElementItems, FuncType, TableType, TypeRef};
+use wasmparser::{ElementItems, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
-    index::{Building, CompoundList, Finished, ImportOrDefined, NonDefault},
+    index::{Building, CompoundList, Finished, NonDefault},
     linkage::{
         LinkageInfo,
-        file_db::{self, FileRelocs},
+        file_db::{self, EntityRelocationEntry, FileRelocs},
+        reloc::EntityAddressMode,
     },
-    raw::{self, DefinedFuncId, ImportId},
+    raw::{self, ImportId},
     typed::entities::common_index::EntityKind,
 };
 
@@ -469,6 +470,29 @@ impl<'src> Module<'src> {
             .chain(self.data.defined_iter().map(|(id, v)| (id.into(), &v.body)))
     }
 
+    pub fn entities_bodies_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (EntityKind, &mut EntityBody<'src>)> + '_ {
+        self.functions
+            .defined_iter_mut()
+            .map(|(id, v)| (id.into(), &mut v.body))
+            .chain(
+                self.globals
+                    .defined_iter_mut()
+                    .map(|(id, v)| (id.into(), &mut v.body)),
+            )
+            .chain(
+                self.tables
+                    .defined_iter_mut()
+                    .map(|(id, v)| (id.into(), &mut v.body)),
+            )
+            .chain(
+                self.data
+                    .defined_iter_mut()
+                    .map(|(id, v)| (id.into(), &mut v.body)),
+            )
+    }
+
     pub fn find_function_id_by_name(&self, name: &str) -> Option<FunctionRef> {
         let func = self.functions.names.iter().find(|f| **f.1 == name)?;
         Some(func.0)
@@ -477,6 +501,31 @@ impl<'src> Module<'src> {
     pub fn find_global_id_by_name(&self, name: &str) -> Option<GlobalRef> {
         let global = self.globals.names.iter().find(|f| **f.1 == name)?;
         Some(global.0)
+    }
+
+    pub fn extend_indirect_table_from_relocs(&mut self, file_relocs: &FileRelocs) {
+        let mut result: SecondaryMap<FunctionRef, bool> = SecondaryMap::new();
+
+        let mut visit_reloc = |reloc: &EntityRelocationEntry| {
+            if let EntityKind::Function(func_ref) = reloc.symbol.ty
+                && reloc.symbol.address == EntityAddressMode::RuntimeAddr
+            {
+                result[func_ref] = true;
+            }
+        };
+        for (_, reloc) in file_relocs.iter_relocs() {
+            for reloc in reloc.iter() {
+                visit_reloc(reloc);
+            }
+        }
+
+        let result = result.iter().filter_map(
+            |(func_ref, is_indirect)| {
+                if *is_indirect { Some(func_ref) } else { None }
+            },
+        );
+
+        self.indirect_function_table.extend(result);
     }
 }
 
@@ -590,7 +639,7 @@ mod tests {
     use wasmparser::FuncType;
 
     use super::{LoadedFile, Module};
-    use crate::typed::ImportedFunction;
+    use crate::{index::GappedMap, typed::ImportedFunction};
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
     #[test]
@@ -601,9 +650,35 @@ mod tests {
         println!("Reading wasm file: {}", file);
         let wasm_bytes = std::fs::read(file).unwrap();
         let file = LoadedFile::from_wasm_bytes(&wasm_bytes).unwrap();
-        let input_object = file.module;
+        let mut input_object = file.module;
         assert_eq!(input_object.data.len(), 127);
         assert_eq!(input_object.functions.len(), 706);
+
+        let mut indirect_fns = input_object
+            .indirect_function_table
+            .items
+            .iter()
+            .map(|(_id, func_ref)| *func_ref)
+            .collect::<Vec<_>>();
+        indirect_fns.sort();
+        let len = indirect_fns.len();
+        indirect_fns.dedup();
+        assert_eq!(len, indirect_fns.len(),);
+
+        input_object.indirect_function_table.items = GappedMap::new();
+
+        input_object.extend_indirect_table_from_relocs(&file.relocs);
+        let mut recovered_fns = input_object
+            .indirect_function_table
+            .items
+            .iter()
+            .map(|(_id, func_ref)| *func_ref)
+            .collect::<Vec<_>>();
+        assert_eq!(len, recovered_fns.len());
+        // order might differ, but the content should be the same
+        recovered_fns.sort();
+
+        assert_eq!(indirect_fns, recovered_fns);
     }
 
     // 2. Create simple wasm module from scratch

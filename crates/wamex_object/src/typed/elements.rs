@@ -128,6 +128,18 @@ impl<T: ReservedValue + Clone> ElementTable<T> {
             f(segment_id, &mut group.map(|(_, item)| item))
         }
     }
+
+    pub fn extend(&mut self, items: impl IntoIterator<Item = T>) {
+        let mut id = self.items.next_key();
+        // keep 0 offset for null pointers/invalid calls.
+        if id == ElementItemId::from_u32(0) {
+            id = id.next();
+        }
+        for item in items {
+            self.items.insert(id, item);
+            id = id.next();
+        }
+    }
 }
 
 impl<'a, T: ElementType<'a> + ReservedValue + Clone> ElementTable<T> {
@@ -165,7 +177,7 @@ impl<'a, T: ElementType<'a> + ReservedValue + Clone> ElementTable<T> {
                 .with_context(|| format!("Failed to read offset expression for element {id:?}"))?;
 
             ensure!(
-                offset > 0,
+                offset >= 0,
                 "Negative offset expressions are not supported in element segments (element {id:?})",
             );
 

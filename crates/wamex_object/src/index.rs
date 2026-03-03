@@ -151,6 +151,13 @@ where
             .iter()
             .filter_map(|(k, v)| v.expand_ref().map(|v| (k, v)))
     }
+    pub fn next_key(&self) -> K {
+        self.map
+            .iter()
+            .next_back()
+            .map(|(k, _)| K::new(k.index() + 1))
+            .unwrap_or(K::new(0))
+    }
     pub fn len(&self) -> usize {
         self.length
     }
@@ -161,6 +168,11 @@ where
     pub fn entry(&mut self, key: K) -> GappedMapEntry<'_, V> {
         GappedMapEntry {
             reserved: &mut self.map[key],
+        }
+    }
+    pub fn extend(&mut self, iter: impl IntoIterator<Item = (K, V)>) {
+        for (k, v) in iter {
+            self.insert(k, v);
         }
     }
 }
@@ -582,6 +594,19 @@ where
                 (
                     // defined index is shifted by imports count
                     Ref::new(defined_id + self.imports.len()),
+                    defined,
+                )
+            })
+    }
+    pub fn defined_iter_mut(&mut self) -> impl ExactSizeIterator<Item = (Ref, &mut D)> {
+        let imports_len = self.imports.len();
+        self.defined
+            .iter_mut()
+            .enumerate()
+            .map(move |(defined_id, defined)| {
+                (
+                    // defined index is shifted by imports count
+                    Ref::new(defined_id + imports_len),
                     defined,
                 )
             })

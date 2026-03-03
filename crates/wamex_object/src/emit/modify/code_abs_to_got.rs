@@ -266,10 +266,7 @@ impl<'src> CodeRelocationHandler {
         let mut new_bytes = SVec::new();
         let mut new_relocs = SVec::new();
 
-        let mut writer = super::wasm_emitter::Encoder::new(
-            &mut new_bytes,
-            old_entry.relocation_range().start as u32,
-        );
+        let mut writer = super::wasm_emitter::Encoder::new(&mut new_bytes, 0);
 
         log::trace!(
             "Replacing {src_ix:?} with gapped entry (global.get {got_ix} + i32.const {offset})",
@@ -339,10 +336,7 @@ impl<'src> CodeRelocationHandler {
         let mut new_bytes = SVec::new();
         let mut new_relocs = SVec::new();
 
-        let mut writer = super::wasm_emitter::Encoder::new(
-            &mut new_bytes,
-            entry.relocation_range().start as u32,
-        );
+        let mut writer = super::wasm_emitter::Encoder::new(&mut new_bytes, 0);
         let store = Self::store_type(&instruction)?;
 
         log::trace!(

@@ -6,16 +6,16 @@ use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::FuncType;
 
 use crate::{
-    analysis::OutputModuleInfo,
+    analysis::{OutputModuleInfo, debug},
     emit::{
         memory_layout::SegmentLayout,
         modify::OutputEntityRef,
         relocation::{EntityLocation, file_mapping::OutputFileInfo},
     },
     helpers::{RangeExt, ShiftMap, ShiftPoint, encoding_size},
-    index::Building,
+    index::{Building, GappedMap},
     linkage::{
-        file_db::EntityRelocationEntry,
+        file_db::{EntityRelocationEntry, FileRelocs},
         reloc::{EntityAddressMode, EntitySymbol},
     },
     raw::{DataSegmentId, FuncTypeId},
@@ -485,6 +485,158 @@ impl<'src> Module<'src> {
 
         Ok(relocs)
     }
+
+    /// Copy relocs to new FileRelocs.
+    ///
+    /// - Move out all relocs from entities bodies (patches, and new entities).
+    /// - Resolve unresolved relocs (e.g. when symbol is
+    ///   copied their relocs is refer to symbol in input file, and we need to remap it to symbol in output file).
+    /// - Shift their offset to be relative to entity body start.
+    ///
+    /// Returns `FileRelocs` with relocs related to symbol start.
+    pub fn copy_and_resolve_relocs(
+        &mut self,
+        module_info: &OutputFileInfo,
+        input_files: &FileLoader,
+    ) -> anyhow::Result<FileRelocs> {
+        let mut relocs = Vec::new();
+        let mut code_owners = GappedMap::new();
+        let mut data_owners = GappedMap::new();
+
+        for (entity, body) in self.entities_bodies_mut() {
+            let src_ref = module_info
+                .get_entity_src(entity)
+                .expect("module_info must have a corresponding src entity");
+            let src_file = input_files.get_file(src_ref.file_id);
+            let original_relocs = src_file
+                .relocs
+                .get_entity_relocs(src_ref.entity)
+                .unwrap_or_default();
+
+            // Convert entity from input entity index to index in output file.
+            let resolve_entity = |input: EntityKind| -> Option<EntityKind> {
+                if matches!(input, EntityKind::Type(_)) {
+                    log::error!(
+                        "this kind of relocs are not supported yet, skipping reloc with symbol id {input}"
+                    );
+                    return None; // TODO: support type relocs
+                }
+                let file_entity_ref = src_ref.other_entity(input);
+                let entity = module_info
+                    .get_output_entity(&file_entity_ref)
+                    .expect("reloc symbol not found in output file");
+                Some(entity)
+            };
+
+            let start = relocs.len();
+
+            match body {
+                EntityBody::Copied {
+                    patches,
+                    filtered_relocs,
+                    original_range,
+                    ..
+                } => {
+                    let mut shift_map = ShiftMap::default();
+                    for patch in patches {
+                        // Apply shifts to patch relocations (this is done before adding patch shift point)
+                        for reloc in patch.new_relocs.drain(..) {
+                            let reloc_start = patch.old_range.start as u32 + reloc.offset;
+
+                            let shifted_offset = shift_map
+                                .get_shifted_offset(reloc_start)
+                                .expect("new relocation cannot be in removed area")
+                                - original_range.start as u32;
+
+                            let symbol = match reloc.symbol {
+                                OutputEntityRef::Resolved(v) => v,
+                                OutputEntityRef::FromInput(mut v) => {
+                                    let Some(entity) = resolve_entity(v.ty) else {
+                                        continue;
+                                    };
+                                    v.ty = entity;
+                                    v
+                                }
+                            };
+                            relocs.push(EntityRelocationEntry {
+                                offset: shifted_offset,
+                                symbol,
+                                addend: reloc.addend,
+                                relation: reloc.relation,
+                                encoding: reloc.encoding,
+                                width: reloc.width,
+                            });
+                        }
+                        // then add new shift point
+                        shift_map.add_shift_point(ShiftPoint {
+                            at: patch.old_range.end as u32,
+                            shift: patch.size() as i32,
+                        });
+                    }
+
+                    // Now we can add pre-existing relocs with shifts applied
+                    for (i, reloc) in original_relocs.iter().enumerate() {
+                        if filtered_relocs.contains(i) {
+                            // reloc was removed.
+                            continue;
+                        }
+
+                        // id from input file, map to id in output file.
+                        let mut symbol: EntitySymbol = reloc.symbol;
+                        let Some(entity) = resolve_entity(symbol.ty) else {
+                            continue;
+                        };
+
+                        // offset relative to body.
+                        let shifted_offset = shift_map
+                            .get_shifted_offset(reloc.offset)
+                            .expect("relocation cannot be in removed area")
+                            - original_range.start as u32; // and then shift to section-relative offset
+
+                        symbol.ty = entity;
+                        relocs.push(EntityRelocationEntry {
+                            offset: shifted_offset,
+                            symbol,
+                            ..*reloc
+                        });
+                    }
+                }
+                EntityBody::New { new_relocs, .. } => {
+                    debug_assert!(
+                        original_relocs.is_empty(),
+                        "new body cannot have original relocs"
+                    );
+                    relocs.extend(new_relocs.drain(..));
+                }
+            }
+
+            let range = start..relocs.len();
+            if range.is_empty() {
+                continue;
+            }
+            log::warn!("we can sort relocs there");
+            // relocs[range.clone()].sort_unstable_by_key(|v| v.offset);
+
+            match entity {
+                EntityKind::Function(func) => {
+                    code_owners
+                        .insert(func, crate::linkage::file_db::RelocRange::from_range(range));
+                }
+                EntityKind::DataSymbol(data) => {
+                    data_owners
+                        .insert(data, crate::linkage::file_db::RelocRange::from_range(range));
+                }
+                entity => panic!(
+                    "Only functions and data symbols can have relocs, but got entity with id {entity} relocs: {relocs:?}"
+                ),
+            };
+        }
+        Ok(FileRelocs::build_from_parts(
+            relocs.into_boxed_slice(),
+            code_owners,
+            data_owners,
+        ))
+    }
 }
 
 /// Write byte using the modifications to the given writer.
@@ -632,28 +784,13 @@ fn emit_body(
     }
 }
 
-// fn collect_indirect_fns(module: &Module<'_>) -> Vec<FunctionRef> {
-//     let mut result = Vec::new();
-//     let visit_reloc = |reloc: &EntityRelocationEntry| {
-//         if let EntityKind::Function(func_ref) = reloc.symbol.ty
-//             && reloc.symbol.address == EntityAddressMode::RuntimeAddr
-//         {
-//             result.push(func_ref.into());
-//         }
-//     };
-
-//     module
-//         .entities_bodies()
-//         .filter_map(|(kind, b)| )
-//         .collect()
-// }
-
 pub fn create_split_module<'src>(
+    input_files: &FileLoader,
     input_file: FileId,
     src: &Module<'src>,          // tmp field, should be FileLoader instead.
     snapshot: &EntitiesSnapshot, // this is
     output_info: OutputModuleInfo,
-) -> (Module<'src>, OutputFileInfo) {
+) -> Result<(Module<'src>, OutputFileInfo)> {
     let mut module: Module<'src, Building> = Module::new();
     // map of entities from input file to entities in output module.
     let mut file_info = OutputFileInfo::new();
@@ -757,13 +894,16 @@ pub fn create_split_module<'src>(
         }
     }
 
-    let module = module.into_finished();
+    let mut module = module.into_finished();
     // Fill mapping for all used entities.
     for (src, entity) in used_queue {
         file_info.add_entity_mapping(src, entity.to_stable(&module));
     }
 
-    (module, file_info)
+    let relocs = module.copy_and_resolve_relocs(&file_info, input_files)?;
+    module.extend_indirect_table_from_relocs(&relocs);
+
+    Ok((module, file_info))
 }
 
 #[cfg(test)]
@@ -811,11 +951,13 @@ mod tests {
         dbg!(&split);
 
         let (output, file_info) = create_split_module(
+            &file_loader,
             input_file,
             &input.module,
             &EntitiesSnapshot::new(&input.module),
             split.output_modules[0].1.clone(),
-        );
+        )
+        .unwrap();
 
         let mut buf = wasm_encoder::Module::new();
         output
