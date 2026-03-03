@@ -19,7 +19,9 @@ use crate::{
         relocation::EntityLocation,
     },
     index::GappedMap,
-    linkage::reloc::{Encoding, Relative, RelocationWidth, SymbolType},
+    linkage::reloc::{
+        Encoding, EntityAddressMode, EntitySymbol, Relative, RelocationWidth, SymbolType,
+    },
     typed::{
         DefinedGlobal, EntityBody, FileId, GlobalRef, common_index::EntityKind,
         data::SpecificLocation,
@@ -184,10 +186,14 @@ impl<'src> CodeRelocationHandler {
         entry: RelocationEntry,
     ) -> Result<ModificationEntry<()>> {
         assert!(matches!(
-            (entry.symbol_type, entry.encoding),
-            (SymbolType::TableIndex, Encoding::Sleb)
-                | (SymbolType::MemoryAddr, Encoding::Sleb)
-                | (SymbolType::MemoryAddr, Encoding::Leb)
+            (entry.symbol.ty, entry.encoding),
+            (EntityKind::Function(_), Encoding::Sleb)
+                | (EntityKind::DataSymbol(_), Encoding::Sleb)
+                | (EntityKind::DataSymbol(_), Encoding::Leb)
+        ));
+        assert!(matches!(
+            entry.symbol.address,
+            EntityAddressMode::StaticIndex
         ));
 
         let ix_size = match entry.encoding {
@@ -222,14 +228,16 @@ impl<'src> CodeRelocationHandler {
         entry: RelocationEntry,
         instruction: wasmparser::Operator<'src>,
     ) -> Result<Rewrite> {
-        let rewrite = match (entry.symbol_type, entry.encoding) {
-            (SymbolType::MemoryAddr, Encoding::Leb) => {
+        let rewrite = match (entry.symbol.ty, entry.encoding) {
+            (EntityKind::DataSymbol(_), Encoding::Leb) => {
                 self.replace_memory_offset_with_global_get(memory_base, entry, instruction)?
             }
-            (SymbolType::MemoryAddr, Encoding::Sleb) => {
+            (EntityKind::DataSymbol(_), Encoding::Sleb) => {
                 self.replace_const_get_with_global_get(memory_base, entry, instruction)?
             }
-            (SymbolType::TableIndex, Encoding::Sleb) => {
+            (EntityKind::Function(_), Encoding::Sleb)
+                if entry.symbol.address == EntityAddressMode::RuntimeAddr =>
+            {
                 self.replace_const_get_with_global_get(memory_base, entry, instruction)?
             }
             _ => {
@@ -274,26 +282,26 @@ impl<'src> CodeRelocationHandler {
         let const_rel_offset = writer.i32_const(got_offset)?;
         writer.i32_add()?;
 
-        // TODO: Return new list of relocations to GlobalGet and I32Const (GlobalIndexLeb + MemoryAddrLeb | TableIndexLeb)
         new_relocs.push(OutputRelocationEntry {
-            symbol_id: OutputEntityRef::resolved(got_global_index), // to symbol_id
+            // entity should have information about GOT they used, since there maybe more than one.
+            symbol: OutputEntityRef::from_input(EntitySymbol {
+                address: EntityAddressMode::BaseStaticIndex,
+                ty: old_entry.symbol.ty.clone(),
+            }),
             offset: got_rel_offset,
             encoding: Encoding::Leb,
             width: RelocationWidth::Bits32,
             relation: Relative::None,
-            symbol_type: SymbolType::GlobalIndex,
             addend: 0,
         });
 
         new_relocs.push(OutputRelocationEntry {
             // TODO: Handle old memory index
-            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
+            symbol: OutputEntityRef::from_input(old_entry.symbol),
             offset: const_rel_offset,
             relation: Relative::Got,
-
             encoding: old_entry.encoding,
             width: old_entry.width,
-            symbol_type: old_entry.symbol_type,
             addend: old_entry.addend,
         });
         Ok(Rewrite {
@@ -348,10 +356,9 @@ impl<'src> CodeRelocationHandler {
             let global_id = *self.global_tmps.get(store_type).unwrap();
             let reloc_offset = writer.global_get(global_id.as_u32())?;
             new_relocs.push(OutputRelocationEntry {
-                symbol_id: OutputEntityRef::resolved(global_id),
+                symbol: OutputEntityRef::resolved(EntitySymbol::static_index(global_id.into())),
                 offset: reloc_offset,
                 encoding: Encoding::Leb,
-                symbol_type: SymbolType::GlobalIndex,
                 width: RelocationWidth::Bits32,
                 relation: Relative::None,
                 addend: 0,
@@ -366,10 +373,9 @@ impl<'src> CodeRelocationHandler {
             let global_id = *self.global_tmps.get(store_type).unwrap();
             let reloc_offset = writer.global_get(global_id.as_u32())?;
             new_relocs.push(OutputRelocationEntry {
-                symbol_id: OutputEntityRef::resolved(global_id),
+                symbol: OutputEntityRef::resolved(EntitySymbol::static_index(global_id.into())),
                 offset: reloc_offset,
                 encoding: Encoding::Leb,
-                symbol_type: SymbolType::GlobalIndex,
                 width: RelocationWidth::Bits32,
                 relation: Relative::None,
                 addend: 0,
@@ -379,13 +385,12 @@ impl<'src> CodeRelocationHandler {
 
         new_relocs.push(OutputRelocationEntry {
             //TODO: Convert to OutputSymbolId
-            symbol_id: OutputEntityRef::from_input(entry.symbol_id),
+            symbol: OutputEntityRef::from_input(entry.symbol),
             offset: mem_offsets.offset,
             relation: Relative::Got,
 
             encoding: entry.encoding,
             width: entry.width,
-            symbol_type: entry.symbol_type,
             addend: entry.addend,
         });
 
@@ -473,11 +478,11 @@ impl<'src> CodeRelocationHandler {
         if !matches!(entry.relation, Relative::None) {
             bail!("Relocation memory pointers is currently not supported")
         }
-        if matches!(
-            entry.symbol_type,
-            SymbolType::SectionOffset | SymbolType::FunctionOffset | SymbolType::MemoryAddrLocrel
-        ) {
-            bail!("Non supported symbol type for code relocation")
+        if !matches!(entry.symbol.address, EntityAddressMode::RuntimeAddr) {
+            bail!(
+                "Non supported symbol type for code relocation {:?}",
+                entry.symbol.address
+            )
         }
         Ok(())
     }

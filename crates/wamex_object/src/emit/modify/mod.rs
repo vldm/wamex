@@ -1,6 +1,11 @@
 use anyhow::Result;
 
-use crate::{SVec, emit::modify::cursor::Cursor, typed::common_index::ErasedEntityRef};
+use crate::{
+    SVec,
+    emit::modify::cursor::Cursor,
+    linkage::{file_db::EntityRelocationEntry, reloc::EntitySymbol},
+    typed::common_index::EntityKind,
+};
 
 pub mod code_abs_to_got;
 pub mod cursor;
@@ -9,23 +14,23 @@ pub mod wasm_emitter;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum OutputEntityRef {
     /// Entity that already exist in output module.
-    Resolved(ErasedEntityRef),
+    Resolved(EntitySymbol),
     /// Entity that will be created in output module, but which id need to be resolved.
     /// The resolution bound with `FileId` and can be only done in context of processing some predefined entity from input module.
-    FromInput(ErasedEntityRef),
+    FromInput(EntitySymbol),
 }
 impl OutputEntityRef {
-    pub fn from_input(input: ErasedEntityRef) -> Self {
+    pub fn from_input(input: EntitySymbol) -> Self {
         Self::FromInput(input)
     }
 
-    pub fn resolved(resolved: impl Into<ErasedEntityRef>) -> Self {
-        Self::Resolved(resolved.into())
+    pub fn resolved(resolved: EntitySymbol) -> Self {
+        Self::Resolved(resolved)
     }
 }
 
 pub type OutputRelocationEntry = crate::linkage::reloc::RelocationEntry<OutputEntityRef>;
-type RelocationEntry = crate::linkage::reloc::RelocationEntry<ErasedEntityRef>;
+type RelocationEntry = EntityRelocationEntry;
 
 const _ASSERT_SIZE: () = {
     assert!(std::mem::size_of::<OutputRelocationEntry>() == std::mem::size_of::<RelocationEntry>());

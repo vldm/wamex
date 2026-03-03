@@ -7,14 +7,13 @@ use crate::{
     helpers::{RangeComp, cmp_range},
     index::GappedMap,
     linkage::reloc::{
-        AnyRelocationEntry, Encoding, Relative, RelocationEntry, RelocationWidth, SymbolType,
+        AnyRelocationEntry, Encoding, EntitySymbol, Relative, RelocationEntry, RelocationWidth,
+        SymbolType,
     },
-    typed::{
-        FnTypeRef, FunctionRef, SymbolId,
-        common_index::{EntityKind, ErasedEntityRef},
-        data::DataSymbolRef,
-    },
+    typed::{FnTypeRef, FunctionRef, SymbolId, common_index::EntityKind, data::DataSymbolRef},
 };
+pub type EntityRelocationEntry = RelocationEntry<EntitySymbol>;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelocRange {
     pub(super) relocs: Range<usize>,
@@ -38,9 +37,7 @@ impl ReservedValue for RelocRange {
 pub struct FileRelocs {
     // Relocations ordered by offsets in file.
     //
-    // Uses `ErasedEntityRef` as index, since relocation entry
-    // already contain type information in external tag `SymbolType`
-    array: Box<[RelocationEntry<ErasedEntityRef>]>,
+    array: Box<[EntityRelocationEntry]>,
 
     // In what symbol this relocation is placed
     code_owners: GappedMap<FunctionRef, RelocRange>,
@@ -67,28 +64,25 @@ impl FileRelocs {
             .map(|r| match r {
                 AnyRelocationEntry::Linkage(l) => {
                     let offset_info = file_db
-                        .symbol_entity(l.symbol_id)
+                        .symbol_entity(l.symbol.id)
                         .expect("Malformed wasm: relocation references unknown symbol");
+                    let symbol = EntitySymbol::from_llvm_relocs(offset_info.entity, l.symbol.ty);
                     RelocationEntry {
+                        symbol,
                         offset: l.offset,
-                        symbol_id: Self::unwrap_entity_ref(offset_info.entity, l.symbol_type),
-                        symbol_type: l.symbol_type,
                         encoding: l.encoding,
                         width: l.width,
                         relation: l.relation,
                         addend: Self::checked_addend_increase(
                             l.addend,
                             offset_info.offset_in_entity,
-                            l.symbol_type,
+                            l.symbol.ty,
                         ),
                     }
                 }
                 AnyRelocationEntry::Type(t) => RelocationEntry {
                     offset: t.offset,
-                    symbol_id: file_db
-                        .resolve_type_id(t.index)
-                        .expect("Malformed wasm: relocation references unknown type"),
-                    symbol_type: SymbolType::TypeIndex,
+                    symbol: EntitySymbol::static_index(EntityKind::Type(t.index)),
                     encoding: Encoding::Leb,
                     width: RelocationWidth::Bits32,
                     relation: Relative::None,
@@ -110,7 +104,7 @@ impl FileRelocs {
 
     // Convert region based ranges to ranges in relocs array.
     fn build_owners(
-        relocs: &[RelocationEntry<ErasedEntityRef>],
+        relocs: &[EntityRelocationEntry],
         (mut code_regions, mut data_regions): Regions,
     ) -> (
         GappedMap<FunctionRef, RelocRange>,
@@ -122,7 +116,7 @@ impl FileRelocs {
             map: &mut GappedMap<U, RelocRange>,
             symbol_regions: impl IntoIterator<Item = (Range<usize>, U)>,
             start: &mut usize,
-            relocs: &[RelocationEntry<ErasedEntityRef>],
+            relocs: &[EntityRelocationEntry],
         ) {
             let mut end = *start;
             'next_sym: for (region, sym) in symbol_regions {
@@ -182,9 +176,7 @@ impl FileRelocs {
     }
 
     /// Iter over code and data relocs.
-    pub fn iter_relocs(
-        &self,
-    ) -> impl Iterator<Item = (EntityKind, &[RelocationEntry<ErasedEntityRef>])> {
+    pub fn iter_relocs(&self) -> impl Iterator<Item = (EntityKind, &[EntityRelocationEntry])> {
         self.code_owners
             .iter()
             .map(|(k, v)| (EntityKind::Function(k), &self.array[v.relocs.clone()]))
@@ -195,63 +187,31 @@ impl FileRelocs {
             )
     }
 
-    pub fn get_data_relocs(
-        &self,
-        data_symbol: DataSymbolRef,
-    ) -> Option<&[RelocationEntry<ErasedEntityRef>]> {
+    pub fn get_data_relocs(&self, data_symbol: DataSymbolRef) -> Option<&[EntityRelocationEntry]> {
         self.data_owners
             .get(data_symbol)
             .map(|range| &self.array[range.relocs.clone()])
     }
-    pub fn get_code_relocs(
-        &self,
-        func: FunctionRef,
-    ) -> Option<&[RelocationEntry<ErasedEntityRef>]> {
+    pub fn get_code_relocs(&self, func: FunctionRef) -> Option<&[EntityRelocationEntry]> {
         self.code_owners
             .get(func)
             .map(|range| &self.array[range.relocs.clone()])
     }
 
-    pub fn get_entity_relocs(
-        &self,
-        entity: EntityKind,
-    ) -> Option<&[RelocationEntry<ErasedEntityRef>]> {
+    pub fn get_entity_relocs(&self, entity: EntityKind) -> Option<&[EntityRelocationEntry]> {
         match entity {
             EntityKind::Function(func) => self.get_code_relocs(func),
             EntityKind::DataSymbol(data) => self.get_data_relocs(data),
             _ => None,
         }
     }
-    /// Convert enum to erased form.
-    fn unwrap_entity_ref(src: EntityKind, symbol_type: SymbolType) -> ErasedEntityRef {
-        match (src, symbol_type) {
-            (
-                EntityKind::Function(f),
-                SymbolType::FunctionIndex | SymbolType::FunctionOffset | SymbolType::TableIndex,
-            ) => ErasedEntityRef::from_u32(f.as_u32()),
-            (EntityKind::Global(g), SymbolType::GlobalIndex) => {
-                ErasedEntityRef::from_u32(g.as_u32())
-            }
-            (EntityKind::DataSymbol(d), SymbolType::MemoryAddrLocrel | SymbolType::MemoryAddr) => {
-                ErasedEntityRef::from_u32(d.as_u32())
-            }
-            (EntityKind::Table(t), SymbolType::TableNumber) => {
-                ErasedEntityRef::from_u32(t.as_u32())
-            }
-            (EntityKind::Memory(_) | EntityKind::Tag(_), _) => {
-                panic!("Unsupported entity ref for relocation")
-            }
-            _ => panic!("Mismatched entity ref and symbol type"),
-        }
-    }
     // Ensure that addend increase is only applied to valid symbol types
     fn checked_addend_increase(addend: i64, increase: u32, symbol_type: SymbolType) -> i64 {
         match symbol_type {
             // only offsets in memory, or in file can be increased
-            SymbolType::SectionOffset
-            | SymbolType::FunctionOffset
-            | SymbolType::MemoryAddrLocrel
-            | SymbolType::MemoryAddr => addend + increase as i64,
+            SymbolType::SectionOffset | SymbolType::FunctionOffset | SymbolType::MemoryAddr => {
+                addend + increase as i64
+            }
             _ if addend != 0 || increase != 0 => {
                 panic!("Cannot increase addend for this symbol type")
             }
@@ -304,10 +264,10 @@ impl FileSymbolDb {
         self.symbols.get(symbol_id)
     }
 
-    /// Get `ErasedEntityRef` for `FuncTypeId`.
+    /// Get `EntityKind` for `FuncTypeId`.
     #[inline]
-    pub fn resolve_type_id(&self, type_id: FnTypeRef) -> Option<ErasedEntityRef> {
+    pub fn resolve_type_id(&self, type_id: FnTypeRef) -> Option<EntityKind> {
         //TODO: currently not supported - so just copy as is.
-        Some(ErasedEntityRef::from_u32(type_id.as_u32()))
+        Some(EntityKind::Type(type_id))
     }
 }

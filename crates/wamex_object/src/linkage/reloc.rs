@@ -33,7 +33,7 @@ use std::{fmt::Debug, hash::Hash};
 use crate::{
     helpers::RangeExt,
     index::SectionId,
-    typed::{FnTypeRef, FunctionRef, SymbolId},
+    typed::{FnTypeRef, FunctionRef, SymbolId, common_index::EntityKind},
 };
 
 /// Lossless representation of `wasmparser::RelocationEntry` with type-safe disamiguation of symbol types.
@@ -47,7 +47,7 @@ impl AnyRelocationEntry {
     /// Get symbol index if this is linkage relocation entry.
     pub fn symbol_id(&self) -> Option<SymbolId> {
         match self {
-            AnyRelocationEntry::Linkage(reloc) => Some(reloc.symbol_id),
+            AnyRelocationEntry::Linkage(reloc) => Some(reloc.symbol.id),
             AnyRelocationEntry::Type(_) => None,
         }
     }
@@ -97,25 +97,81 @@ pub struct TypeRelocationEntry {
     // pub width: RelocationWidth, // 32
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct LinkageSymbol {
+    /// Index of symbol in `Symbols` table that store information about relocated symbol.
+    /// This is generic due to fact that type relocations has no `SymbolId`
+    pub id: SymbolId,
+    /// Type of symbol stored in `Symbols` table.
+    pub ty: SymbolType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum EntityAddressMode {
+    /// Index of entity in their index space, e.g. function/global/event/table index.
+    StaticIndex,
+    /// Addr of entity in runtime, e.g. addr of memory chunk, or index of table in `__indirect_function_table`.
+    RuntimeAddr,
+    /// Offset of entity definition in wasm file, e.g. offset of function/section
+    FileOffset,
+    /// Index of base for entity, e.g. global index for GOT/TLS based addressing.
+    // TODO: Memory index in case of multiple memories.
+    // TODO: Should be combined with entry Relative?.
+    BaseStaticIndex,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct EntitySymbol {
+    pub ty: EntityKind,
+    pub address: EntityAddressMode,
+}
+impl EntitySymbol {
+    pub fn from_llvm_relocs(entity_kind: EntityKind, reloc_ty: SymbolType) -> Self {
+        let op = match (&entity_kind, reloc_ty) {
+            (EntityKind::Function(_), SymbolType::FunctionIndex)
+            | (EntityKind::Global(_), SymbolType::GlobalIndex)
+            | (EntityKind::Table(_), SymbolType::TableNumber) => EntityAddressMode::StaticIndex,
+            (EntityKind::DataSymbol(_), SymbolType::MemoryAddr)
+            | (EntityKind::Function(_), SymbolType::TableIndex) => EntityAddressMode::RuntimeAddr,
+            (EntityKind::Function(_), SymbolType::FunctionOffset) => EntityAddressMode::FileOffset,
+            (EntityKind::Memory(_) | EntityKind::Tag(_), _) => {
+                panic!("Unsupported entity ref for relocation")
+            }
+            _ => panic!("Mismatched entity ref and symbol type"),
+        };
+        Self {
+            address: op,
+            ty: entity_kind,
+        }
+    }
+    pub fn static_index(entity_kind: EntityKind) -> Self {
+        assert!(
+            !matches!(entity_kind, EntityKind::DataSymbol(_)),
+            "Unsupported entity ref for simple index symbol"
+        );
+        Self {
+            address: EntityAddressMode::StaticIndex,
+            ty: entity_kind,
+        }
+    }
+}
+
 ///
 /// Implementation of relocation entry type defined in linker symbols table.
-/// Generic Index allows to map SymbolId to EntityId and
+/// Generic Symbols allows to map SymbolId to EntityRef and
 /// decompose work with relocation into two parts:
 /// - resolution of symbol index to typed entity_id
 /// - application of symbol offset.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct RelocationEntry<Index = SymbolId> {
+pub struct RelocationEntry<Symbol = LinkageSymbol> {
     /// Optional addend to be added to the resulting value.
     pub addend: i64,
-    /// Index of symbol in `Symbols` table that store information about relocated symbol.
-    /// This is generic due to fact that type relocations has no `SymbolId`
-    pub symbol_id: Index,
     /// Offset in bytes from the start of the symbol definition
     /// targeted by this relocation.
     pub offset: u32,
-    /// Type of symbol stored in `Symbols` table.
-    pub symbol_type: SymbolType,
+    /// Symbol implementation representing reference relocated entity.
+    pub symbol: Symbol,
     /// Information about global variable base, if this is position independent relocation.
     pub relation: Relative,
     /// Representation of resulting value in the output binary.
@@ -154,7 +210,6 @@ pub enum SymbolType {
     FunctionOffset,
     SectionOffset,
     EventIndex,
-    MemoryAddrLocrel,
     // Not supported in `AnyRelocationEntry::Linkage` because type is not placed as symbol in symbols table.
     TypeIndex,
 }
@@ -228,8 +283,10 @@ pub enum Relative {
     None,
     /// Symbol relative to `__memory_base` / `__table_base` global
     Got,
-    /// Symbol relative to `__tls_base` global
+    /// Data Symbol relative to `__tls_base` global
     Tls,
+    /// Data Symbol relative to it's location in memory
+    LocRel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -265,10 +322,11 @@ impl AnyRelocationEntry {
             FunctionIndexLeb | FunctionIndexI32 => SymbolType::FunctionIndex,
             TableIndexSleb | TableIndexI32 | TableIndexI64 | TableIndexRelSleb
             | TableIndexRelSleb64 | TableIndexSleb64 => SymbolType::TableIndex,
-            MemoryAddrLocrelI32 => SymbolType::MemoryAddrLocrel,
-            MemoryAddrI32 | MemoryAddrLeb | MemoryAddrSleb | MemoryAddrRelSleb
-            | MemoryAddrTlsSleb | MemoryAddrI64 | MemoryAddrLeb64 | MemoryAddrSleb64
-            | MemoryAddrRelSleb64 | MemoryAddrTlsSleb64 => SymbolType::MemoryAddr,
+            MemoryAddrLocrelI32 | MemoryAddrI32 | MemoryAddrLeb | MemoryAddrSleb
+            | MemoryAddrRelSleb | MemoryAddrTlsSleb | MemoryAddrI64 | MemoryAddrLeb64
+            | MemoryAddrSleb64 | MemoryAddrRelSleb64 | MemoryAddrTlsSleb64 => {
+                SymbolType::MemoryAddr
+            }
         };
         let encoding: Encoding = match entry.ty {
             SectionOffsetI32 | FunctionOffsetI32 | GlobalIndexI32 | FunctionIndexI32
@@ -292,7 +350,8 @@ impl AnyRelocationEntry {
             | TableIndexI32 | MemoryAddrI32 | FunctionOffsetI64 | TableIndexI64 | MemoryAddrI64
             | TableIndexSleb64 | TableIndexSleb | MemoryAddrLeb64 | MemoryAddrSleb64
             | MemoryAddrSleb | FunctionIndexLeb | GlobalIndexLeb | TableNumberLeb
-            | MemoryAddrLeb | EventIndexLeb | MemoryAddrLocrelI32 => Relative::None,
+            | MemoryAddrLeb | EventIndexLeb => Relative::None,
+            MemoryAddrLocrelI32 => Relative::LocRel,
             TypeIndexLeb => unreachable!(),
         };
 
@@ -311,8 +370,10 @@ impl AnyRelocationEntry {
         Self::Linkage(RelocationEntry {
             offset: (entry.offset as isize + entry_offset) as u32,
             addend: entry.addend,
-            symbol_id: SymbolId::from_u32(entry.index),
-            symbol_type,
+            symbol: LinkageSymbol {
+                id: SymbolId::from_u32(entry.index),
+                ty: symbol_type,
+            },
             relation,
             encoding,
             width,
@@ -372,6 +433,7 @@ mod tests {
             size_of::<wasmparser::RelocationEntry>()
         );
         assert!(size_of::<super::RelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());
+
         assert!(align_of::<super::RelocationEntry>() <= align_of::<wasmparser::RelocationEntry>());
     }
 }

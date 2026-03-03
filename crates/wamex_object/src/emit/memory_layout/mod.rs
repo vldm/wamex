@@ -192,7 +192,7 @@ impl<'src> SegmentLayout<'src> {
                 let refs = input_symbol
                     .iter()
                     .map(|reloc| {
-                        let id = reloc.symbol_id.combine(reloc.symbol_type);
+                        let id = reloc.symbol.ty;
                         let name = module.get_name(id);
                         hexdump::Ref {
                             range: reloc

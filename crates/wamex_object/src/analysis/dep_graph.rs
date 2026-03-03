@@ -7,7 +7,7 @@ use crate::{
     index::{GappedMap, ReservedValue},
     typed::{
         LoadedFile, Module,
-        common_index::{EntitiesSnapshot, EntityKind, ErasedEntityRef, FlatEntityRef},
+        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
     },
 };
 
@@ -163,7 +163,7 @@ pub fn get_dependencies_with_filter(
         let childs = DepMiniSet::from_iter(
             relocs
                 .iter()
-                .map(|r| ErasedEntityRef::combine(r.symbol_id, r.symbol_type))
+                .map(|r| r.symbol.ty)
                 .filter(|er| filter(er))
                 .map(|er| deps.snapshot.pack_ref(er)),
         );

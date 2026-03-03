@@ -14,11 +14,14 @@ use crate::{
     },
     helpers::{RangeExt, ShiftMap, ShiftPoint, encoding_size},
     index::Building,
-    linkage::reloc::RelocationEntry,
+    linkage::{
+        file_db::EntityRelocationEntry,
+        reloc::{EntitySymbol, RelocationEntry},
+    },
     raw::{DataSegmentId, FuncTypeId},
     typed::{
         DefinedFunction, EntityBody, FileId, FileLoader, FunctionRef, ImportedEntity, Module,
-        common_index::{EntitiesSnapshot, EntityKind, ErasedEntityRef, TempEntityKind},
+        common_index::{EntitiesSnapshot, EntityKind, TempEntityKind},
         data::SpecificLocation,
     },
 };
@@ -359,7 +362,7 @@ impl<'src> Module<'src> {
         func: &DefinedFunction<'_>,
 
         section: &mut wasm_encoder::CodeSection,
-    ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+    ) -> Result<Vec<EntityRelocationEntry>> {
         let mut writer = Vec::new();
         let function_name = self.get_name(func_id.into());
         log::debug!("Emitting function {function_name}");
@@ -383,7 +386,7 @@ impl<'src> Module<'src> {
         file_info: &OutputFileInfo,
         input_files: &FileLoader,
         output_module: &mut wasm_encoder::Module,
-    ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+    ) -> Result<Vec<EntityRelocationEntry>> {
         let defined_functions_count = self.functions.defined_iter().len() as u32
             + if !self.start_functions.is_empty() {
                 1 // start function
@@ -429,7 +432,7 @@ impl<'src> Module<'src> {
         input_files: &FileLoader,
         segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
         output_module: &mut wasm_encoder::Module,
-    ) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+    ) -> Result<Vec<EntityRelocationEntry>> {
         // TODO: Add shifter relocs
         let relocs = Vec::new();
         let mut section = wasm_encoder::DataSection::new();
@@ -484,7 +487,7 @@ fn emit_body(
     input_files: &FileLoader,
     // output
     writer: &mut impl Write,
-) -> Result<Vec<RelocationEntry<ErasedEntityRef>>> {
+) -> Result<Vec<EntityRelocationEntry>> {
     let src_ref = module_info
         .get_entity_src(entity_kind)
         .expect("module_info must have a corresponding src entity");
@@ -518,29 +521,30 @@ fn emit_body(
                     let shifted_offset = shift_map
                         .get_shifted_offset(reloc.offset)
                         .expect("new relocation cannot be in removed area");
-                    let symbol_id = match reloc.symbol_id {
+                    let symbol = match reloc.symbol {
                         OutputEntityRef::Resolved(v) => v,
-                        OutputEntityRef::FromInput(v) => {
+                        OutputEntityRef::FromInput(mut v) => {
                             // id from input file, map to id in output file.
-                            let symbol_id = v.combine(reloc.symbol_type);
-                            if matches!(symbol_id, EntityKind::Type(_) | EntityKind::Table(_)) {
+                            let kind = v.ty;
+                            if matches!(kind, EntityKind::Type(_) | EntityKind::Table(_)) {
                                 log::error!(
-                                    " relocs are not supported yet, skipping reloc with symbol id {symbol_id}"
+                                    "this kind of relocs are not supported yet, skipping reloc with symbol id {kind}"
                                 );
                                 continue; // TODO: support type relocs
                             }
-                            let file_entity_ref = src_ref.other_entity(symbol_id);
+                            let file_entity_ref = src_ref.other_entity(kind);
                             let entity = module_info
                                 .get_output_entity(&file_entity_ref)
                                 .expect("reloc symbol not found in output file");
-                            entity.erase()
+
+                            v.ty = entity;
+                            v
                         }
                     };
                     relocs.push(RelocationEntry {
                         offset: shifted_offset,
-                        symbol_id,
+                        symbol,
                         addend: reloc.addend,
-                        symbol_type: reloc.symbol_type,
                         relation: reloc.relation,
                         encoding: reloc.encoding,
                         width: reloc.width,
@@ -569,14 +573,15 @@ fn emit_body(
                 }
 
                 // id from input file, map to id in output file.
-                let symbol_id = reloc.symbol_id.combine(reloc.symbol_type);
-                if matches!(symbol_id, EntityKind::Type(_) | EntityKind::Table(_)) {
+                let mut symbol: EntitySymbol = reloc.symbol;
+                if matches!(symbol.ty, EntityKind::Type(_) | EntityKind::Table(_)) {
                     log::error!(
-                        " relocs are not supported yet, skipping reloc with symbol id {symbol_id}"
+                        "this kind of relocs are not supported yet, skipping reloc with symbol id {symbol_id}",
+                        symbol_id = symbol.ty
                     );
                     continue; // TODO: support type relocs
                 }
-                let file_entity_ref = src_ref.other_entity(symbol_id);
+                let file_entity_ref = src_ref.other_entity(symbol.ty);
 
                 dbg!(&module_info);
                 dbg!(&file_entity_ref);
@@ -593,9 +598,10 @@ fn emit_body(
                     .expect("relocation cannot be in removed area")
                     + body_start_offset as u32; // and then shift to section-relative offset
 
+                symbol.ty = entity;
                 relocs.push(RelocationEntry {
                     offset: shifted_offset,
-                    symbol_id: entity.erase(),
+                    symbol,
                     ..*reloc
                 });
             }

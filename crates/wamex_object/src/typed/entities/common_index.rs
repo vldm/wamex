@@ -3,7 +3,6 @@ use derive_more::{Display, From};
 
 use crate::{
     index::Temp,
-    linkage::reloc::SymbolType,
     raw::FuncTypeId,
     typed::{FunctionRef, GlobalRef, MemoryRef, Module, TableRef, TagRef, data::DataSymbolRef},
 };
@@ -24,54 +23,7 @@ impl_entity_index! {
     /// - FuncTypeId => FlatEntityRef::from_u32(type_ref + num_function_refs + num_global_refs + num_table_refs + num_memory_refs + num_tag_refs + num_data_symbol_refs)
     pub struct FlatEntityRef;
 
-    #[display = "erased"]
-    /// A reference to entity which type is provided by external tag.
-    /// used for relocs where symbols type is described by relocation type.
-    ///
-    /// In might be intuitive to replace symbol_id + symbol_type in reloc entry with tagged `EntityKind`,
-    /// but symbol_type contain not only information about entity type, but also "mode" in which this symbol is used
-    /// (e.g. function index vs function offset vs table index, memaddr vs memlocrel).
-    ///
-    pub struct ErasedEntityRef;
-}
 
-impl ErasedEntityRef {
-    pub fn combine(self, tag: SymbolType) -> EntityKind {
-        match tag {
-            SymbolType::FunctionIndex | SymbolType::TableIndex => {
-                EntityKind::Function(FunctionRef::from_u32(self.as_u32()))
-            }
-            SymbolType::GlobalIndex => EntityKind::Global(GlobalRef::from_u32(self.as_u32())),
-            SymbolType::TableNumber => EntityKind::Table(TableRef::from_u32(self.as_u32())),
-            SymbolType::MemoryAddr => {
-                EntityKind::DataSymbol(DataSymbolRef::from_u32(self.as_u32()))
-            }
-            SymbolType::TypeIndex => EntityKind::Type(FuncTypeId::from_u32(self.as_u32())),
-            SymbolType::EventIndex => EntityKind::Tag(TagRef::from_u32(self.as_u32())),
-            _ => panic!("Unsupported symbol type for entity reference: {:?}", tag),
-        }
-    }
-}
-
-impl From<GlobalRef> for ErasedEntityRef {
-    fn from(global_ref: GlobalRef) -> Self {
-        ErasedEntityRef::from_u32(global_ref.as_u32())
-    }
-}
-impl From<FunctionRef> for ErasedEntityRef {
-    fn from(func_ref: FunctionRef) -> Self {
-        ErasedEntityRef::from_u32(func_ref.as_u32())
-    }
-}
-impl From<TableRef> for ErasedEntityRef {
-    fn from(table_ref: TableRef) -> Self {
-        ErasedEntityRef::from_u32(table_ref.as_u32())
-    }
-}
-impl From<DataSymbolRef> for ErasedEntityRef {
-    fn from(data_symbol_ref: DataSymbolRef) -> Self {
-        ErasedEntityRef::from_u32(data_symbol_ref.as_u32())
-    }
 }
 
 /// A tagged reference to an entity in a WebAssembly module.
@@ -107,17 +59,6 @@ impl EntityKind {
     }
     pub fn is_type(&self) -> bool {
         matches!(self, EntityKind::Type(_))
-    }
-    pub fn erase(&self) -> ErasedEntityRef {
-        match self {
-            EntityKind::Function(func_ref) => (*func_ref).into(),
-            EntityKind::Global(global_ref) => (*global_ref).into(),
-            EntityKind::Table(table_ref) => (*table_ref).into(),
-            EntityKind::DataSymbol(data_symbol_ref) => (*data_symbol_ref).into(),
-            EntityKind::Type(func_type_id) => ErasedEntityRef::from_u32(func_type_id.as_u32()),
-            EntityKind::Tag(tag_ref) => ErasedEntityRef::from_u32(tag_ref.as_u32()),
-            EntityKind::Memory(mem_ref) => ErasedEntityRef::from_u32(mem_ref.as_u32()),
-        }
     }
 }
 
