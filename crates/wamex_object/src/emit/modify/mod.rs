@@ -54,7 +54,7 @@ pub struct Rewrite {
     pub old_range: std::ops::Range<usize>,
     /// Relocations with offsets relative to new body start,
     /// and referencing either new symbol, or symbol existing in same file as one that we modify.
-    pub new_relocs: SVec<OutputRelocationEntry, 2>,
+    pub new_relocs: SVec<OutputRelocationEntry, 3>,
     pub new_bytes: SVec<u8, 16>,
 }
 

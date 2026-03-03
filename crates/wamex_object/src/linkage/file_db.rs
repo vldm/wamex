@@ -33,7 +33,7 @@ impl ReservedValue for RelocRange {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct FileRelocs {
     // Relocations ordered by offsets in file.
     //
@@ -52,9 +52,23 @@ pub(crate) type Regions = (
 );
 
 impl FileRelocs {
+    /// Build `FileRelocs` from parts.
+    pub fn build_from_parts(
+        array: Box<[EntityRelocationEntry]>,
+        code_owners: GappedMap<FunctionRef, RelocRange>,
+        data_owners: GappedMap<DataSymbolRef, RelocRange>,
+    ) -> Self {
+        Self {
+            array,
+            code_owners,
+            data_owners,
+        }
+    }
     /// Resolve relocations symbols (to corresponding entities).
     /// code_owners and data_owners should contain regions in original file that belongs to each symbol.
-    pub fn build_relocs(
+    ///
+    /// Build relocs map based on position in file of entities.
+    pub fn build_relocs_static(
         file_relocs: impl IntoIterator<Item = AnyRelocationEntry>,
         file_db: &FileSymbolDb,
         regions: Regions,
@@ -269,5 +283,51 @@ impl FileSymbolDb {
     pub fn resolve_type_id(&self, type_id: FnTypeRef) -> Option<EntityKind> {
         //TODO: currently not supported - so just copy as is.
         Some(EntityKind::Type(type_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{index::GappedMap, typed::common_index::EntityKind};
+
+    #[test]
+    fn test_rebuild_relocs() {
+        let bytes = crate::testfiles::EXAMPLE_WASM;
+        let loaded = crate::typed::LoadedFile::from_wasm_bytes(bytes).unwrap();
+
+        let mut relocs = Vec::new();
+        let mut code_owners = GappedMap::new();
+        let mut data_owners = GappedMap::new();
+        // iterate over entities one by one and collect their relocations.
+
+        // iterate over defined entities.
+        for (entity, _) in loaded.module.entities_bodies() {
+            let original_relocs = loaded.relocs.get_entity_relocs(entity).unwrap_or_default();
+
+            let start = relocs.len();
+            relocs.extend_from_slice(original_relocs);
+            let range = start..relocs.len();
+
+            if range.is_empty() {
+                continue;
+            }
+            match entity {
+                EntityKind::Function(func) => {
+                    code_owners.insert(func, crate::linkage::file_db::RelocRange { relocs: range })
+                }
+                EntityKind::DataSymbol(data) => {
+                    data_owners.insert(data, crate::linkage::file_db::RelocRange { relocs: range })
+                }
+                _ => None,
+            };
+        }
+
+        let rebuilt = crate::linkage::file_db::FileRelocs::build_from_parts(
+            relocs.into_boxed_slice(),
+            code_owners,
+            data_owners,
+        );
+
+        assert_eq!(loaded.relocs, rebuilt);
     }
 }

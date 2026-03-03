@@ -443,8 +443,8 @@ pub fn main_roots(
     info.start_functions.iter().for_each(|start_fn| {
         roots.insert(snapshot.pack_ref(*start_fn));
     });
-    for export in info.functions.exports.iter() {
-        let index = export.entity_index;
+
+    for index in info.entities_exports() {
         roots.insert(snapshot.pack_ref(index));
     }
 

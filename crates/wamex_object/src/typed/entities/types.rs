@@ -7,7 +7,7 @@ use wasmparser::TypeRef;
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
-    emit::modify::Rewrite,
+    emit::modify::{OutputEntityRef, Rewrite},
     linkage::reloc::{EntitySymbol, RelocationEntry},
     raw::{self, FunctionWithBody},
     typed::{self},
@@ -47,12 +47,12 @@ pub type ImportedGlobal<'src> = ImportedEntity<'src, wasmparser::GlobalType>;
 pub type ImportedTag<'src> = ImportedEntity<'src, wasmparser::TagType>;
 pub type ImportedDataChunk<'src> = ImportedEntity<'src, ()>; // it's untyped chunk of data - so no "type" can be assigned to it.
 
-pub type DefinedFunction<'src> = DefinedEntity<'src, wasmparser::FuncType>;
-pub type DefinedTable<'src> = DefinedEntity<'src, wasmparser::TableType>;
-pub type DefinedGlobal<'src> = DefinedEntity<'src, wasmparser::GlobalType>;
+pub type DefinedFunction<'src> = DefinedEntity<'src, wasmparser::FuncType>; // body - function locals + instructions
+pub type DefinedTable<'src> = DefinedEntity<'src, wasmparser::TableType>; // body - init expr (instructions)
+pub type DefinedGlobal<'src> = DefinedEntity<'src, wasmparser::GlobalType>; // body - init expr (instructions)
 pub type DefinedMemory = wasmparser::MemoryType;
 pub type DefinedTag = wasmparser::TagType;
-pub type DefinedDataChunk<'src> = DefinedEntity<'src, typed::data::DataChunkType>;
+pub type DefinedDataChunk<'src> = DefinedEntity<'src, typed::data::DataChunkType>; // body - bytes in memory
 
 impl<'src> From<typed::data::RawDataChunk<'src>> for DefinedDataChunk<'src> {
     fn from(v: typed::data::RawDataChunk<'src>) -> DefinedDataChunk<'src> {
@@ -181,6 +181,7 @@ impl EntityBody<'_> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
     /// Iterate over resulting body bytes, applying patches on the fly.
     pub fn iter_bytes(&self) -> impl Iterator<Item = u8> + '_ {
         match self {

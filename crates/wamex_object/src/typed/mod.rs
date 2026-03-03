@@ -94,7 +94,7 @@ impl<'src> LoadedFile<'src> {
         let (module, file_symbol_db) = Module::from_raw_module(&reader)?;
         let file_relocs = LinkageInfo::collect_ordered_relocs(&reader);
         let owners = LinkageInfo::build_regions(&module);
-        let relocs = FileRelocs::build_relocs(file_relocs, &file_symbol_db, owners)?;
+        let relocs = FileRelocs::build_relocs_static(file_relocs, &file_symbol_db, owners)?;
 
         Ok(Self {
             wasm_reader: reader,
@@ -415,32 +415,58 @@ impl<'src> Module<'src> {
             .unwrap_or_else(|| format!("{entity}").into())
     }
 
-    pub fn function_id_iter<'any>(
-        &'any self,
-    ) -> impl Iterator<Item = FunctionRef> + use<'any, 'src> {
-        self.functions.iter_all_ids()
+    pub fn entities_exports(&self) -> impl Iterator<Item = EntityKind> + '_ {
+        self.functions
+            .exports
+            .iter()
+            .map(|e| EntityKind::Function(e.entity_index))
+            .chain(
+                self.globals
+                    .exports
+                    .iter()
+                    .map(|e| EntityKind::Global(e.entity_index)),
+            )
+            .chain(
+                self.tables
+                    .exports
+                    .iter()
+                    .map(|e| EntityKind::Table(e.entity_index)),
+            )
+            .chain(
+                self.memories
+                    .exports
+                    .iter()
+                    .map(|e| EntityKind::Memory(e.entity_index)),
+            )
+            .chain(
+                self.tags
+                    .exports
+                    .iter()
+                    .map(|e| EntityKind::Tag(e.entity_index)),
+            )
+            .chain(
+                self.data
+                    .exports
+                    .iter()
+                    .map(|e| EntityKind::DataSymbol(e.entity_index)),
+            )
     }
 
-    pub fn is_imported_function(&self, func_id: FunctionRef) -> bool {
-        func_id.index() < self.functions.items.imports.len()
-    }
-
-    pub fn as_defined_function_id(&self, func_id: FunctionRef) -> Option<DefinedFuncId> {
-        if self.is_imported_function(func_id) {
-            None
-        } else {
-            Some(DefinedFuncId::from_u32(
-                func_id.index() as u32 - self.functions.items.imports.len() as u32,
-            ))
-        }
-    }
-
-    pub fn get_function_type(&self, func_id: FunctionRef) -> &FuncType {
-        let func = self.functions.items.get_entity(func_id);
-        match func {
-            ImportOrDefined::Defined(defined) => &defined.entity_type,
-            ImportOrDefined::Import(import) => &import.entity_type,
-        }
+    pub fn entities_bodies(&self) -> impl Iterator<Item = (EntityKind, &EntityBody<'src>)> + '_ {
+        self.functions
+            .defined_iter()
+            .map(|(id, v)| (id.into(), &v.body))
+            .chain(
+                self.globals
+                    .defined_iter()
+                    .map(|(id, v)| (id.into(), &v.body)),
+            )
+            .chain(
+                self.tables
+                    .defined_iter()
+                    .map(|(id, v)| (id.into(), &v.body)),
+            )
+            .chain(self.data.defined_iter().map(|(id, v)| (id.into(), &v.body)))
     }
 
     pub fn find_function_id_by_name(&self, name: &str) -> Option<FunctionRef> {

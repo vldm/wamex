@@ -16,7 +16,7 @@ use crate::{
     index::Building,
     linkage::{
         file_db::EntityRelocationEntry,
-        reloc::{EntitySymbol, RelocationEntry},
+        reloc::{EntityAddressMode, EntitySymbol},
     },
     raw::{DataSegmentId, FuncTypeId},
     typed::{
@@ -38,6 +38,7 @@ impl<'src> Module<'src> {
         segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
         output_module: &mut wasm_encoder::Module,
     ) -> Result<()> {
+        // TODO: Build indirect function table from relocs.
         // // TODO: Support extra segments.
         // let (mut segments, mapping) = SegmentLayout::build_for_module(self)?;
 
@@ -56,7 +57,7 @@ impl<'src> Module<'src> {
         self.generate_start_function_section(output_module);
 
         self.generate_element_section(output_module)?;
-        generate_data_count_section(segments, output_module);
+        self.generate_data_count_section(segments, output_module);
         let code_start = output_module.len() + 1; // +1 for code section id, we need to know offset of code section for code relocs.
 
         let code_relocs = self.generate_code_section(file_info, input_files, output_module)?;
@@ -320,8 +321,17 @@ impl<'src> Module<'src> {
             "Indirect function table must be defined as a table in the module"
         );
 
+        log::error!(
+            "TEST _generate_indirect_function_table {:?}",
+            self.indirect_function_table
+        );
+
         self.indirect_function_table
             .for_each_segment(|_segment_id, content| {
+                log::error!(
+                    "TEST _generate_indirect_function_table SEGMENT {:?}",
+                    _segment_id
+                );
                 let segment_offset = content
                     .peekable()
                     .peek()
@@ -350,6 +360,16 @@ impl<'src> Module<'src> {
 
         output_module.section(&section);
         Ok(())
+    }
+
+    fn generate_data_count_section(
+        &self,
+        segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
+        output_module: &mut wasm_encoder::Module,
+    ) {
+        output_module.section(&wasm_encoder::DataCountSection {
+            count: segments.len() as u32,
+        });
     }
 
     fn _generate_defined_function(
@@ -467,15 +487,6 @@ impl<'src> Module<'src> {
     }
 }
 
-fn generate_data_count_section(
-    segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
-    output_module: &mut wasm_encoder::Module,
-) {
-    output_module.section(&wasm_encoder::DataCountSection {
-        count: segments.len() as u32,
-    });
-}
-
 /// Write byte using the modifications to the given writer.
 /// Returns relocations with id's that can be found in and offsets relative to section start.
 fn emit_body(
@@ -541,7 +552,7 @@ fn emit_body(
                             v
                         }
                     };
-                    relocs.push(RelocationEntry {
+                    relocs.push(EntityRelocationEntry {
                         offset: shifted_offset,
                         symbol,
                         addend: reloc.addend,
@@ -599,7 +610,7 @@ fn emit_body(
                     + body_start_offset as u32; // and then shift to section-relative offset
 
                 symbol.ty = entity;
-                relocs.push(RelocationEntry {
+                relocs.push(EntityRelocationEntry {
                     offset: shifted_offset,
                     symbol,
                     ..*reloc
@@ -620,6 +631,22 @@ fn emit_body(
         }
     }
 }
+
+// fn collect_indirect_fns(module: &Module<'_>) -> Vec<FunctionRef> {
+//     let mut result = Vec::new();
+//     let visit_reloc = |reloc: &EntityRelocationEntry| {
+//         if let EntityKind::Function(func_ref) = reloc.symbol.ty
+//             && reloc.symbol.address == EntityAddressMode::RuntimeAddr
+//         {
+//             result.push(func_ref.into());
+//         }
+//     };
+
+//     module
+//         .entities_bodies()
+//         .filter_map(|(kind, b)| )
+//         .collect()
+// }
 
 pub fn create_split_module<'src>(
     input_file: FileId,
@@ -755,6 +782,7 @@ mod tests {
 
     #[test]
     fn emit_loaded() {
+        env_logger::try_init().ok();
         let module_name = "simple_graph";
         let src = crate::testfiles::SIMPLE_GRAPH;
 

@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use anyhow::{Context, bail, ensure};
 use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 use itertools::Itertools;
@@ -15,7 +17,7 @@ impl_entity_index! {
     #[display = "ei"]
     pub struct ElementItemId;
 }
-pub trait ElementType<'a> {
+pub trait ElementType<'a>: Debug {
     /// Provides a hint for the number of items in the element segment, allowing to pre-allocate the map capacity.
     fn hint_size(items: &ElementItems<'a>) -> Option<u32>;
     /// Provides a way to access each element as internal iterator of `Self` type.
