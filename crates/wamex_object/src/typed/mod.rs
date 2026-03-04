@@ -17,7 +17,7 @@ use wasmparser::{ElementItems, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
-    index::{Building, CompoundList, Finished, NonDefault},
+    index::{Building, CompoundList, Locked, NonDefault},
     linkage::{
         LinkageInfo,
         file_db::{self, EntityRelocationEntry, FileRelocs},
@@ -123,7 +123,7 @@ pub type ModuleBuilder<'src> = Module<'src, Building>;
 /// The temp indexes are used to automatically shift defined entities after new imports are added.
 ///
 #[derive(Debug)]
-pub struct Module<'src, BuilderState = Finished> {
+pub struct Module<'src, BuilderState = Locked> {
     // wasm entities
     pub functions: entities::Functions<'src, BuilderState>,
     pub tables: entities::Tables<'src, BuilderState>,
@@ -169,7 +169,7 @@ impl<'src> Module<'src> {
                 .functions
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (FunctionRef::from_u32(id.as_u32()), (*name).into()))
+                .map(|(id, name)| (id, (*name).into()))
                 .collect(),
             exports.0,
         );
@@ -181,7 +181,7 @@ impl<'src> Module<'src> {
                 .tables
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (TableRef::from_u32(id.as_u32()), (*name).into()))
+                .map(|(id, name)| (id, (*name).into()))
                 .collect(),
             exports.1,
         );
@@ -193,7 +193,7 @@ impl<'src> Module<'src> {
                 .memories
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (MemoryRef::from_u32(id.as_u32()), (*name).into()))
+                .map(|(id, name)| (id, (*name).into()))
                 .collect(),
             exports.2,
         );
@@ -205,7 +205,7 @@ impl<'src> Module<'src> {
                 .globals
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (GlobalRef::from_u32(id.as_u32()), (*name).into()))
+                .map(|(id, name)| (id, (*name).into()))
                 .collect(),
             exports.3,
         );
@@ -217,7 +217,7 @@ impl<'src> Module<'src> {
                 .tags
                 .iter()
                 // TODO: remove
-                .map(|(id, name)| (TagRef::from_u32(id.as_u32()), (*name).into()))
+                .map(|(id, name)| (id, (*name).into()))
                 .collect(),
             exports.4,
         );
@@ -418,40 +418,37 @@ impl<'src> Module<'src> {
     }
 
     pub fn entities_exports(&self) -> impl Iterator<Item = EntityKind> + '_ {
-        self.functions
+        let functions = self
+            .functions
             .exports
             .iter()
-            .map(|e| EntityKind::Function(e.entity_index))
-            .chain(
-                self.globals
-                    .exports
-                    .iter()
-                    .map(|e| EntityKind::Global(e.entity_index)),
-            )
-            .chain(
-                self.tables
-                    .exports
-                    .iter()
-                    .map(|e| EntityKind::Table(e.entity_index)),
-            )
-            .chain(
-                self.memories
-                    .exports
-                    .iter()
-                    .map(|e| EntityKind::Memory(e.entity_index)),
-            )
-            .chain(
-                self.tags
-                    .exports
-                    .iter()
-                    .map(|e| EntityKind::Tag(e.entity_index)),
-            )
-            .chain(
-                self.data
-                    .exports
-                    .iter()
-                    .map(|e| EntityKind::DataSymbol(e.entity_index)),
-            )
+            .map(|e| EntityKind::Function(e.entity_index));
+        let globals = self
+            .globals
+            .exports
+            .iter()
+            .map(|e| EntityKind::Global(e.entity_index));
+        let tables = self
+            .tables
+            .exports
+            .iter()
+            .map(|e| EntityKind::Table(e.entity_index));
+        let memories = self
+            .memories
+            .exports
+            .iter()
+            .map(|e| EntityKind::Memory(e.entity_index));
+        let tags = self
+            .tags
+            .exports
+            .iter()
+            .map(|e| EntityKind::Tag(e.entity_index));
+        let data = self
+            .data
+            .exports
+            .iter()
+            .map(|e| EntityKind::DataSymbol(e.entity_index));
+        chain!(functions, globals, tables, memories, tags, data)
     }
 
     pub fn entities_bodies(&self) -> impl Iterator<Item = (EntityKind, &EntityBody<'src>)> + '_ {
@@ -597,17 +594,17 @@ impl<'src> ModuleBuilder<'src> {
     ///
     /// Panics: if no default memory/indirect function can be found.
     ///
-    pub fn into_finished(self) -> Module<'src, Finished> {
+    pub fn into_locked(self) -> Module<'src, Locked> {
         let tables = self.tables.into_finished();
         let mut indirect_function_table = self.indirect_function_table;
         if indirect_function_table.table_id.is_reserved_value() {
-            let (_table_name, table_id) = Module::<'src, Finished>::init_indirect_fn_table(&tables);
+            let (_table_name, table_id) = Module::<'src, Locked>::init_indirect_fn_table(&tables);
             indirect_function_table.table_id = table_id;
         }
         let memories = self.memories.into_finished();
         let mut mem_spec = self.mem_spec;
         if mem_spec.mem_id.is_reserved_value() {
-            let (_memory_name, memory_id) = Module::<'src, Finished>::init_base_memory(&memories);
+            let (_memory_name, memory_id) = Module::<'src, Locked>::init_base_memory(&memories);
             mem_spec.mem_id = memory_id;
         }
 
@@ -681,7 +678,7 @@ mod tests {
             name: "bar".into(),
             entity_type: FuncType::new(None, None), // void type
         });
-        let module = module.into_finished();
+        let module = module.into_locked();
 
         assert_eq!(module.functions.len(), 1);
 

@@ -63,7 +63,6 @@ impl<'src> LinkageInfo<'src> {
                 SymbolInfo::Table { flags, index, name } => {
                     let table_index = TableRef::from_u32(*index);
                     let idx = EntityKind::Table(table_index);
-                    error!("Unsupported symbol: table symbol");
                     (idx, *name, flags)
                 }
                 SymbolInfo::Data {

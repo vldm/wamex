@@ -106,10 +106,10 @@ impl<T: ReservedValue + Clone> ElementTable<T> {
             .scan(
                 scan_state,
                 |(segment_id, prev, extra_segments), (id, item)| {
-                    let has_gap = *prev != id;
+                    let has_gap = prev.next() != id;
                     let id_eq_extra = extra_segments
                         .peek()
-                        .is_some_and(|&extra_id| id == extra_id);
+                        .is_some_and(|&extra_id| id >= extra_id);
 
                     if id_eq_extra {
                         extra_segments.next();
@@ -202,9 +202,60 @@ impl<'a, T: ElementType<'a> + ReservedValue + Clone> ElementTable<T> {
             T::for_item(element.items.clone(), item_id, |elem_id, elem| {
                 table.items[elem_id] = elem.into();
             })?;
+
+            table.extra_segments.push(item_id); // enforce segment for each element segment, even if no gaps are present, to preserve original layout as much as possible for better diff results.
         }
         Ok(table)
     }
 }
 
 pub type IndirectFunctionTable = ElementTable<FunctionRef>;
+
+#[cfg(test)]
+mod tests {
+    use cranelift_entity::packed_option::ReservedValue;
+
+    use crate::typed::{
+        FunctionRef, TableRef,
+        elements::{ElementItemId, IndirectFunctionTable},
+    };
+
+    #[test]
+    fn test_indirect_function_table() {
+        env_logger::try_init().ok();
+        let mut table = IndirectFunctionTable::new(TableRef::reserved_value());
+
+        table.extend([FunctionRef::from_u32(1), FunctionRef::from_u32(2)]);
+
+        let id = table.items.next_key().next(); // skip one value to force segment creation
+        table.items.insert(id, FunctionRef::from_u32(3));
+        table.extend([FunctionRef::from_u32(4), FunctionRef::from_u32(5)]);
+        table.extra_segments.push(id.next().next()); // after FunctionRef::from_u32(4)
+
+        let mut result = Vec::new();
+        table.for_each_segment(|_seg, group| {
+            result.push(group.map(|(id, f)| (id, *f)).collect::<Vec<_>>());
+        });
+
+        let expected = vec![
+            vec![
+                (ElementItemId::from_u32(1), FunctionRef::from_u32(1)),
+                (ElementItemId::from_u32(2), FunctionRef::from_u32(2)),
+            ], // gap between items enforce segment
+            vec![
+                (ElementItemId::from_u32(4), FunctionRef::from_u32(3)),
+                (ElementItemId::from_u32(5), FunctionRef::from_u32(4)),
+            ], // manual segment enforce
+            vec![(ElementItemId::from_u32(6), FunctionRef::from_u32(5))],
+        ];
+        assert_eq!(result, expected);
+
+        table.extra_segments.push(ElementItemId::from_u32(1)); // should not change layout
+
+        let mut result = Vec::new();
+        table.for_each_segment(|_seg, group| {
+            result.push(group.map(|(id, f)| (id, *f)).collect::<Vec<_>>());
+        });
+        assert_eq!(result, expected);
+    }
+}

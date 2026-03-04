@@ -29,7 +29,7 @@ use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef, types::ExportEntry};
 use crate::{
-    index::{Building, CompoundList, Finished, GappedMap, ImportOrDefined, NonDefault, TempIndex},
+    index::{Building, CompoundList, GappedMap, ImportOrDefined, Locked, NonDefault, TempIndex},
     raw::FuncTypeId,
     typed::{
         DefinedDataChunk, DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag,
@@ -38,22 +38,22 @@ use crate::{
     },
 };
 
-pub type Functions<'src, BS = Finished> =
+pub type Functions<'src, BS = Locked> =
     EntityCollection<'src, FunctionRef, ImportedFunction<'src>, DefinedFunction<'src>, BS>;
-pub type Tables<'src, BS = Finished> =
+pub type Tables<'src, BS = Locked> =
     EntityCollection<'src, TableRef, ImportedTable<'src>, DefinedTable<'src>, BS>;
-pub type Globals<'src, BS = Finished> =
+pub type Globals<'src, BS = Locked> =
     EntityCollection<'src, GlobalRef, ImportedGlobal<'src>, DefinedGlobal<'src>, BS>;
-pub type Memories<'src, BS = Finished> =
+pub type Memories<'src, BS = Locked> =
     EntityCollection<'src, MemoryRef, ImportedMemory<'src>, DefinedMemory, BS>;
-pub type Tags<'src, BS = Finished> =
+pub type Tags<'src, BS = Locked> =
     EntityCollection<'src, TagRef, ImportedTag<'src>, DefinedTag, BS>;
 
-pub type DataChunks<'src, BS = Finished> =
+pub type DataChunks<'src, BS = Locked> =
     EntityCollection<'src, DataSymbolRef, ImportedDataChunk<'src>, DefinedDataChunk<'src>, BS>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct EntityCollection<'src, Ref, Import, Defined, BuilderState = Finished>
+pub struct EntityCollection<'src, Ref, Import, Defined, BuilderState = Locked>
 where
     Ref: TempIndex,
 {
@@ -88,7 +88,7 @@ impl<'src, Ref, Import, Defined> EntityCollection<'src, Ref, Import, Defined, Bu
 where
     Ref: TempIndex,
 {
-    pub fn into_finished(self) -> EntityCollection<'src, Ref, Import, Defined, Finished> {
+    pub fn into_finished(self) -> EntityCollection<'src, Ref, Import, Defined, Locked> {
         EntityCollection {
             items: self.items.into_finished(),
             names: self.names,
@@ -161,6 +161,12 @@ where
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    pub fn mark_exported(&mut self, entity: Ref, export_name: Cow<'src, str>) {
+        self.exports.push(ExportEntry {
+            name: export_name,
+            entity_index: entity,
+        });
     }
 }
 

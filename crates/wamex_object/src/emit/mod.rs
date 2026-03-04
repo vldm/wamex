@@ -6,17 +6,17 @@ use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::FuncType;
 
 use crate::{
-    analysis::{OutputModuleInfo, debug},
+    analysis::OutputModuleInfo,
     emit::{
-        memory_layout::SegmentLayout,
+        memory_layout::{DataSymbolsOffsets, SegmentLayout},
         modify::OutputEntityRef,
         relocation::{EntityLocation, file_mapping::OutputFileInfo},
     },
-    helpers::{RangeExt, ShiftMap, ShiftPoint, encoding_size},
+    helpers::{ShiftMap, ShiftPoint, encoding_size},
     index::{Building, GappedMap},
     linkage::{
         file_db::{EntityRelocationEntry, FileRelocs},
-        reloc::{EntityAddressMode, EntitySymbol},
+        reloc::EntitySymbol,
     },
     raw::{DataSegmentId, FuncTypeId},
     typed::{
@@ -30,17 +30,19 @@ pub mod memory_layout;
 pub mod modify;
 pub mod relocation;
 
+/// Module layout suitable for applying relocates.
+pub struct ModuleLayout {
+    pub code_start: usize,
+    pub data_start: usize,
+    pub functions_mapping: SecondaryMap<FunctionRef, usize>,
+    /// Mapping of module data symbols, to their offsets.
+    pub data_mapping: DataSymbolsOffsets,
+}
+
 impl<'src> Module<'src> {
-    pub fn generate(
-        &self,
-        file_info: &OutputFileInfo,
-        input_files: &FileLoader,
-        segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
-        output_module: &mut wasm_encoder::Module,
-    ) -> Result<()> {
-        // TODO: Build indirect function table from relocs.
-        // // TODO: Support extra segments.
-        // let (mut segments, mapping) = SegmentLayout::build_for_module(self)?;
+    pub fn generate(&self, output_module: &mut wasm_encoder::Module) -> Result<ModuleLayout> {
+        // TODO: Support extra segments.
+        let (segments, data_mapping) = SegmentLayout::build_for_module(self)?;
 
         // self.generate_dylink0_section(output_module)?;
 
@@ -52,17 +54,17 @@ impl<'src> Module<'src> {
         self.generate_memory_section(output_module);
 
         self.generate_tag_section(output_module);
-        self.generate_global_section(file_info, input_files, output_module)?;
+        self.generate_global_section(output_module)?;
         self.generate_export_section(output_module);
         self.generate_start_function_section(output_module);
 
         self.generate_element_section(output_module)?;
-        self.generate_data_count_section(segments, output_module);
+        self.generate_data_count_section(&segments, output_module);
         let code_start = output_module.len() + 1; // +1 for code section id, we need to know offset of code section for code relocs.
-        self.generate_code_section(output_module)?;
+        let functions_mapping = self.generate_code_section(output_module)?;
         let data_start = output_module.len() + 1; // +1 for data section id, we need to know offset of data section for data relocs.
 
-        self.generate_data_section(segments, output_module)?;
+        self.generate_data_section(&segments, output_module)?;
 
         // // self.generate_wasm_bindgen_sections(output_module);
         // // Names + Linking + Relocations
@@ -70,7 +72,12 @@ impl<'src> Module<'src> {
         // self.generate_target_features_section(output_module)?;
         // self.generate_custom_sections(output_module)?;
         // todo!()
-        Ok(())
+        Ok(ModuleLayout {
+            code_start,
+            data_start,
+            functions_mapping,
+            data_mapping,
+        })
     }
 
     fn start_fn_type(&self) -> Option<(FunctionRef, FuncType)> {
@@ -228,14 +235,9 @@ impl<'src> Module<'src> {
         output_module.section(&section);
     }
 
-    fn generate_global_section(
-        &self,
-        file_info: &OutputFileInfo,
-        input_files: &FileLoader,
-        output_module: &mut wasm_encoder::Module,
-    ) -> Result<()> {
+    fn generate_global_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         let mut section = wasm_encoder::GlobalSection::new();
-        for (global_ref, global) in self.globals.defined_iter() {
+        for (_global_ref, global) in self.globals.defined_iter() {
             let mut bytes = Vec::new();
             let entity_type: wasm_encoder::GlobalType = global.entity_type.try_into().unwrap();
             entity_type.encode(&mut bytes);
@@ -318,12 +320,8 @@ impl<'src> Module<'src> {
 
         self.indirect_function_table
             .for_each_segment(|_segment_id, content| {
-                log::error!(
-                    "TEST _generate_indirect_function_table SEGMENT {:?}",
-                    _segment_id
-                );
+                let mut content = content.peekable();
                 let segment_offset = content
-                    .peekable()
                     .peek()
                     .map(|(elem_id, _)| elem_id.as_u32())
                     .expect("BUG: iterator without items");
@@ -380,7 +378,10 @@ impl<'src> Module<'src> {
 
         Ok(())
     }
-    fn generate_code_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
+    fn generate_code_section(
+        &self,
+        output_module: &mut wasm_encoder::Module,
+    ) -> Result<SecondaryMap<FunctionRef, usize>> {
         let defined_functions_count = self.functions.defined_iter().len() as u32
             + if !self.start_functions.is_empty() {
                 1 // start function
@@ -388,14 +389,22 @@ impl<'src> Module<'src> {
                 0
             };
 
+        // function definitions start after small "header"
+        let start_of_functions_def = encoding_size(defined_functions_count);
+
+        let mut functions_mapping = SecondaryMap::new();
         let mut section = wasm_encoder::CodeSection::new();
         for (id, output_func) in self.functions.defined_iter() {
             // TODO: shift relocs
-            let function_start_offset = encoding_size(defined_functions_count) + section.byte_len();
-            let relocs = self._generate_defined_function(id, output_func, &mut section)?;
+            let function_start_offset = start_of_functions_def + section.byte_len();
+            self._generate_defined_function(id, output_func, &mut section)?;
+            functions_mapping[id] = function_start_offset;
         }
 
+        // TODO: push it as last defined during into_finalized() call?
+        // TODO: check fn type to be void.
         if !self.start_functions.is_empty() {
+            let start_fn_ref = FunctionRef::new(self.functions.len());
             // generate start function as last function in code section, and add call to all start functions in its body
             let mut func = wasm_encoder::Function::new([]);
             let mut sink = func.instructions();
@@ -403,12 +412,15 @@ impl<'src> Module<'src> {
                 sink.call(func_ref.as_u32()); // TODO: Relocs?
             }
             sink.end();
+
+            let function_start_offset = start_of_functions_def + section.byte_len();
             section.function(&func);
+            functions_mapping[start_fn_ref] = function_start_offset;
         }
 
         output_module.section(&section);
 
-        Ok(())
+        Ok(functions_mapping)
     }
 
     fn generate_data_section(
@@ -722,14 +734,61 @@ pub fn create_split_module<'src>(
         }
     }
 
-    let mut module = module.into_finished();
+    // after index finalization, we can make some additional transformation
+    let mut module = module.into_locked();
+
     // Fill mapping for all used entities.
     for (src, entity) in used_queue {
         file_info.add_entity_mapping(src, entity.to_stable(&module));
     }
 
+    // Copy names from source file.
+    // TODO: having it as separate field might be not best idea.
+    for (src_entity, entity) in file_info.iter_mapped() {
+        let name = src.get_name(src_entity.entity);
+        match entity {
+            EntityKind::Function(f) => module.functions.names.insert(*f, name.into()),
+            EntityKind::Global(g) => module.globals.names.insert(*g, name.into()),
+            EntityKind::Memory(m) => module.memories.names.insert(*m, name.into()),
+            EntityKind::Table(t) => module.tables.names.insert(*t, name.into()),
+            EntityKind::Tag(t) => module.tags.names.insert(*t, name.into()),
+            EntityKind::DataSymbol(d) => module.data.names.insert(*d, name.into()),
+            EntityKind::Type(_) => {
+                // type is pseudo-entity - and doesn't exist in module.
+                continue;
+            }
+        };
+    }
+
+    // Mark needed entities as exported
+    // TODO: for main module, copy original exports. (there might be duplicate of same entities)
+    for entity in output_info.exports {
+        let src_entity = snapshot.unpack_ref(entity);
+
+        let entity = file_info
+            .get_output_entity(&EntityLocation::from_parts(input_file, src_entity))
+            .expect("exported entity must be in output file");
+
+        let name = module.get_name(entity);
+        log::debug!("Mapping entity {src_entity:?} to {entity}, name: {name}");
+        match entity {
+            EntityKind::Function(f) => module.functions.mark_exported(f, name),
+            EntityKind::Global(g) => module.globals.mark_exported(g, name),
+            EntityKind::Memory(m) => module.memories.mark_exported(m, name),
+            EntityKind::Table(t) => module.tables.mark_exported(t, name),
+            EntityKind::Tag(t) => module.tags.mark_exported(t, name),
+            EntityKind::DataSymbol(d) => module.data.mark_exported(d, name),
+            EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
+        }
+    }
+
+    // Now copy and resolve relocs.
     let relocs = module.copy_and_resolve_relocs(&file_info, input_files)?;
+    // collect indirect table (used by relocs)
     module.extend_indirect_table_from_relocs(&relocs);
+    // Fill segment spec (by clonning from source)
+    // TODO: what to do if more than one source?
+    module.mem_spec = src.mem_spec.clone();
 
     Ok((module, file_info))
 }
@@ -737,15 +796,8 @@ pub fn create_split_module<'src>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        emit::{
-            create_split_module,
-            memory_layout::SegmentLayout,
-            relocation::{EntityLocation, file_mapping::OutputFileInfo},
-        },
-        typed::{
-            DefinedEntity, FileLoader, Module,
-            common_index::{EntitiesSnapshot, TempEntityKind},
-        },
+        emit::create_split_module,
+        typed::{FileLoader, common_index::EntitiesSnapshot},
     };
 
     #[test]
@@ -788,9 +840,7 @@ mod tests {
         .unwrap();
 
         let mut buf = wasm_encoder::Module::new();
-        output
-            .generate(&file_info, &file_loader, &Default::default(), &mut buf)
-            .unwrap();
+        output.generate(&mut buf).unwrap();
         let res: Vec<u8> = buf.finish();
 
         let raw = crate::raw::ObjectReader::parse(&res).unwrap();

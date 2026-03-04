@@ -432,7 +432,7 @@ impl<Idx: TempIndex> Temp<Idx> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Finished {}
+pub enum Locked {}
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 
 pub enum Building {}
@@ -443,7 +443,7 @@ pub enum Building {}
 /// - `Building` - allows adding new entities, and returns temporary `Temp<Ref>` index.
 /// - `Finished` - works with fixed structure, and returns/receives stable `Ref` index.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CompoundList<Ref, I, D, Builder = Finished> {
+pub struct CompoundList<Ref, I, D, Builder = Locked> {
     pub imports: Vec<I>,
     pub defined: Vec<D>,
     _pd: std::marker::PhantomData<Ref>,
@@ -475,7 +475,7 @@ impl<Ref, I, D> CompoundList<Ref, I, D, Building> {
     pub fn defined_slice(&self) -> &[D] {
         self.defined.as_slice()
     }
-    pub fn into_finished(self) -> CompoundList<Ref, I, D, Finished> {
+    pub fn into_finished(self) -> CompoundList<Ref, I, D, Locked> {
         CompoundList {
             imports: self.imports,
             defined: self.defined,
@@ -566,7 +566,7 @@ where
         }
     }
 }
-impl<Ref, I, D> CompoundList<Ref, I, D, Finished>
+impl<Ref, I, D> CompoundList<Ref, I, D, Locked>
 where
     Ref: TempIndex,
 {

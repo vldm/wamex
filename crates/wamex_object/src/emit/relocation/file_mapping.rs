@@ -31,7 +31,7 @@ use crate::{
         memory_layout::{DataSymbolOffset, DataSymbolsOffsets},
         relocation::EntityLocation,
     },
-    index::{Building, Finished, GappedMap},
+    index::{Building, GappedMap, Locked},
     linkage::file_db::FileRelocs,
     typed::{
         EntitiesMultiMap, FileId, FileLoader, GlobalRef, Module, ModuleBuilder,
@@ -46,7 +46,7 @@ use crate::{
 ///
 /// As a temporary solution this type exists.
 // TODO: merge data_offsets awith module itself.
-pub struct ModuleAndDataInfo<'src, S = Finished> {
+pub struct ModuleAndDataInfo<'src, S = Locked> {
     pub module: Module<'src, S>,
     pub data_offsets: DataSymbolsOffsets,
 }
@@ -104,5 +104,10 @@ impl OutputFileInfo {
     ///  - we need to know where to search this entity
     pub fn get_output_entity(&self, src: &EntityLocation) -> Option<EntityKind> {
         self.remapped_entity.get(src).copied()
+    }
+
+    /// Iterate over all mapped entities.
+    pub fn iter_mapped(&self) -> impl Iterator<Item = (&EntityLocation, &EntityKind)> {
+        self.remapped_entity.iter()
     }
 }
