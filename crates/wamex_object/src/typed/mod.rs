@@ -11,6 +11,7 @@ use std::{borrow::Cow, fmt::Debug};
 use anyhow::{Result, bail};
 use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 pub use entities::*;
+use itertools::chain;
 use log::warn;
 use wasmparser::{ElementItems, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
@@ -454,43 +455,33 @@ impl<'src> Module<'src> {
     }
 
     pub fn entities_bodies(&self) -> impl Iterator<Item = (EntityKind, &EntityBody<'src>)> + '_ {
-        self.functions
-            .defined_iter()
-            .map(|(id, v)| (id.into(), &v.body))
-            .chain(
-                self.globals
-                    .defined_iter()
-                    .map(|(id, v)| (id.into(), &v.body)),
-            )
-            .chain(
-                self.tables
-                    .defined_iter()
-                    .map(|(id, v)| (id.into(), &v.body)),
-            )
-            .chain(self.data.defined_iter().map(|(id, v)| (id.into(), &v.body)))
+        fn map_body<'any, 'src, T>(
+            (v, def): (impl Into<EntityKind>, &'any DefinedEntity<'src, T>),
+        ) -> (EntityKind, &'any EntityBody<'src>) {
+            (v.into(), &def.body)
+        }
+        let functions = self.functions.defined_iter().map(map_body);
+        let globals = self.globals.defined_iter().map(map_body);
+        let tables = self.tables.defined_iter().map(map_body);
+        let data = self.data.defined_iter().map(map_body);
+
+        chain!(functions, globals, tables, data)
     }
 
     pub fn entities_bodies_mut(
         &mut self,
     ) -> impl Iterator<Item = (EntityKind, &mut EntityBody<'src>)> + '_ {
-        self.functions
-            .defined_iter_mut()
-            .map(|(id, v)| (id.into(), &mut v.body))
-            .chain(
-                self.globals
-                    .defined_iter_mut()
-                    .map(|(id, v)| (id.into(), &mut v.body)),
-            )
-            .chain(
-                self.tables
-                    .defined_iter_mut()
-                    .map(|(id, v)| (id.into(), &mut v.body)),
-            )
-            .chain(
-                self.data
-                    .defined_iter_mut()
-                    .map(|(id, v)| (id.into(), &mut v.body)),
-            )
+        fn map_body_mut<'any, 'src, T>(
+            (v, def): (impl Into<EntityKind>, &'any mut DefinedEntity<'src, T>),
+        ) -> (EntityKind, &'any mut EntityBody<'src>) {
+            (v.into(), &mut def.body)
+        }
+        let functions = self.functions.defined_iter_mut().map(map_body_mut);
+        let globals = self.globals.defined_iter_mut().map(map_body_mut);
+        let tables = self.tables.defined_iter_mut().map(map_body_mut);
+        let data = self.data.defined_iter_mut().map(map_body_mut);
+
+        chain!(functions, globals, tables, data)
     }
 
     pub fn find_function_id_by_name(&self, name: &str) -> Option<FunctionRef> {

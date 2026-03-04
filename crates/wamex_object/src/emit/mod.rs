@@ -59,12 +59,10 @@ impl<'src> Module<'src> {
         self.generate_element_section(output_module)?;
         self.generate_data_count_section(segments, output_module);
         let code_start = output_module.len() + 1; // +1 for code section id, we need to know offset of code section for code relocs.
-
-        let code_relocs = self.generate_code_section(file_info, input_files, output_module)?;
+        self.generate_code_section(output_module)?;
         let data_start = output_module.len() + 1; // +1 for data section id, we need to know offset of data section for data relocs.
 
-        let data_relocs =
-            self.generate_data_section(file_info, input_files, segments, output_module)?;
+        self.generate_data_section(segments, output_module)?;
 
         // // self.generate_wasm_bindgen_sections(output_module);
         // // Names + Linking + Relocations
@@ -241,15 +239,7 @@ impl<'src> Module<'src> {
             let mut bytes = Vec::new();
             let entity_type: wasm_encoder::GlobalType = global.entity_type.try_into().unwrap();
             entity_type.encode(&mut bytes);
-            let relocs = emit_body(
-                0,
-                &global.body,
-                global_ref.into(),
-                file_info,
-                input_files,
-                &mut bytes,
-            )?;
-            assert_eq!(relocs.len(), 0); // global cannot have relocs, so this should be always 0.
+            Self::emit_body(&global.body, &mut bytes)?;
 
             section.raw(&bytes);
         }
@@ -374,39 +364,23 @@ impl<'src> Module<'src> {
 
     fn _generate_defined_function(
         &self,
-        file_info: &OutputFileInfo,
-        input_files: &FileLoader,
-
-        function_start_offset: usize,
         func_id: FunctionRef,
         func: &DefinedFunction<'_>,
 
         section: &mut wasm_encoder::CodeSection,
-    ) -> Result<Vec<EntityRelocationEntry>> {
+    ) -> Result<()> {
         let mut writer = Vec::new();
         let function_name = self.get_name(func_id.into());
         log::debug!("Emitting function {function_name}");
 
         // TODO: We can write bytes directly.
-        let modified_relocs = emit_body(
-            function_start_offset,
-            &func.body,
-            func_id.into(),
-            file_info,
-            input_files,
-            &mut writer,
-        )?;
+        Self::emit_body(&func.body, &mut writer)?;
 
         section.raw(&writer);
 
-        Ok(modified_relocs)
+        Ok(())
     }
-    fn generate_code_section(
-        &self,
-        file_info: &OutputFileInfo,
-        input_files: &FileLoader,
-        output_module: &mut wasm_encoder::Module,
-    ) -> Result<Vec<EntityRelocationEntry>> {
+    fn generate_code_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         let defined_functions_count = self.functions.defined_iter().len() as u32
             + if !self.start_functions.is_empty() {
                 1 // start function
@@ -415,19 +389,10 @@ impl<'src> Module<'src> {
             };
 
         let mut section = wasm_encoder::CodeSection::new();
-        let mut code_relocs = Vec::new();
         for (id, output_func) in self.functions.defined_iter() {
+            // TODO: shift relocs
             let function_start_offset = encoding_size(defined_functions_count) + section.byte_len();
-            let relocs = self._generate_defined_function(
-                file_info,
-                input_files,
-                function_start_offset,
-                id,
-                output_func,
-                &mut section,
-            )?;
-
-            code_relocs.extend(relocs);
+            let relocs = self._generate_defined_function(id, output_func, &mut section)?;
         }
 
         if !self.start_functions.is_empty() {
@@ -443,18 +408,14 @@ impl<'src> Module<'src> {
 
         output_module.section(&section);
 
-        Ok(code_relocs)
+        Ok(())
     }
 
     fn generate_data_section(
         &self,
-        file_info: &OutputFileInfo,
-        input_files: &FileLoader,
         segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
         output_module: &mut wasm_encoder::Module,
-    ) -> Result<Vec<EntityRelocationEntry>> {
-        // TODO: Add shifter relocs
-        let relocs = Vec::new();
+    ) -> Result<()> {
         let mut section = wasm_encoder::DataSection::new();
 
         for (_id, layout) in segments.iter() {
@@ -483,7 +444,7 @@ impl<'src> Module<'src> {
 
         output_module.section(&section);
 
-        Ok(relocs)
+        Ok(())
     }
 
     /// Copy relocs to new FileRelocs.
@@ -637,150 +598,17 @@ impl<'src> Module<'src> {
             data_owners,
         ))
     }
-}
-
-/// Write byte using the modifications to the given writer.
-/// Returns relocations with id's that can be found in and offsets relative to section start.
-fn emit_body(
-    body_start_offset: usize,
-    body: &EntityBody,
-    // ref to entity kind
-    entity_kind: EntityKind,
-    module_info: &OutputFileInfo,
-    input_files: &FileLoader,
-    // output
-    writer: &mut impl Write,
-) -> Result<Vec<EntityRelocationEntry>> {
-    let src_ref = module_info
-        .get_entity_src(entity_kind)
-        .expect("module_info must have a corresponding src entity");
-    let src_file = input_files.get_file(src_ref.file_id);
-    let original_relocs = src_file
-        .relocs
-        .get_entity_relocs(src_ref.entity)
-        .unwrap_or_default();
-
-    match body {
-        EntityBody::Copied {
-            bytes,
-            patches,
-            filtered_relocs,
-            original_range,
-        } => {
-            let mut relocs = Vec::with_capacity(
-                original_relocs.len() - filtered_relocs.len() + patches.len() * 3,
-            ); // rough estimate
-
-            let mut shift_map = ShiftMap::default();
-            let mut src_offset = 0usize;
-            for patch in patches {
-                // write unchanged bytes before patch
-                if patch.old_range.start > src_offset {
-                    writer.write_all(&bytes[src_offset..patch.old_range.start])?;
-                }
-
-                // Apply shifts to patch relocations (this is done before adding patch shift point)
-                for reloc in &patch.new_relocs {
-                    let shifted_offset = shift_map
-                        .get_shifted_offset(reloc.offset)
-                        .expect("new relocation cannot be in removed area");
-                    let symbol = match reloc.symbol {
-                        OutputEntityRef::Resolved(v) => v,
-                        OutputEntityRef::FromInput(mut v) => {
-                            // id from input file, map to id in output file.
-                            let kind = v.ty;
-                            if matches!(kind, EntityKind::Type(_) | EntityKind::Table(_)) {
-                                log::error!(
-                                    "this kind of relocs are not supported yet, skipping reloc with symbol id {kind}"
-                                );
-                                continue; // TODO: support type relocs
-                            }
-                            let file_entity_ref = src_ref.other_entity(kind);
-                            let entity = module_info
-                                .get_output_entity(&file_entity_ref)
-                                .expect("reloc symbol not found in output file");
-
-                            v.ty = entity;
-                            v
-                        }
-                    };
-                    relocs.push(EntityRelocationEntry {
-                        offset: shifted_offset,
-                        symbol,
-                        addend: reloc.addend,
-                        relation: reloc.relation,
-                        encoding: reloc.encoding,
-                        width: reloc.width,
-                    });
-                }
-                // then add new shift point
-                shift_map.add_shift_point(ShiftPoint {
-                    at: patch.old_range.end as u32,
-                    shift: patch.size() as i32,
-                });
-
-                // write new bytes
-                writer.write_all(&patch.new_bytes)?;
-                src_offset = patch.old_range.end;
-            }
-            // write remaining bytes
-            if src_offset < bytes.len() {
-                writer.write_all(&bytes[src_offset..])?;
-            }
-
-            // Now we can add pre-existing relocs with shifts applied
-            for (i, reloc) in original_relocs.iter().enumerate() {
-                if filtered_relocs.contains(i) {
-                    // reloc was removed.
-                    continue;
-                }
-
-                // id from input file, map to id in output file.
-                let mut symbol: EntitySymbol = reloc.symbol;
-                if matches!(symbol.ty, EntityKind::Type(_) | EntityKind::Table(_)) {
-                    log::error!(
-                        "this kind of relocs are not supported yet, skipping reloc with symbol id {symbol_id}",
-                        symbol_id = symbol.ty
-                    );
-                    continue; // TODO: support type relocs
-                }
-                let file_entity_ref = src_ref.other_entity(symbol.ty);
-
-                dbg!(&module_info);
-                dbg!(&file_entity_ref);
-                dbg!(&reloc);
-                let entity = module_info
-                    .get_output_entity(&file_entity_ref)
-                    .expect("reloc symbol not found in output file");
-
-                // offset relative to body.
-                let reloc_offset = reloc.offset - original_range.start as u32;
-
-                let shifted_offset = shift_map
-                    .get_shifted_offset(reloc_offset)
-                    .expect("relocation cannot be in removed area")
-                    + body_start_offset as u32; // and then shift to section-relative offset
-
-                symbol.ty = entity;
-                relocs.push(EntityRelocationEntry {
-                    offset: shifted_offset,
-                    symbol,
-                    ..*reloc
-                });
-            }
-            Ok(relocs)
+    /// Write byte using the modifications to the given writer.
+    /// Returns relocations with id's that can be found in and offsets relative to section start.
+    fn emit_body(
+        body: &EntityBody,
+        // output
+        writer: &mut impl Write,
+    ) -> Result<()> {
+        for buf in body.iter_chunks() {
+            writer.write_all(buf)?;
         }
-        EntityBody::New {
-            new_bytes,
-            new_relocs,
-        } => {
-            writer.write_all(new_bytes)?;
-            let mapped_relocs = new_relocs
-                .iter()
-                .map(|reloc| reloc.shift_right(body_start_offset))
-                .collect();
-            Ok(mapped_relocs)
-        }
+        Ok(())
     }
 }
 

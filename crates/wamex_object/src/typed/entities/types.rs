@@ -181,6 +181,12 @@ impl EntityBody<'_> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    pub fn iter_chunks(&self) -> impl Iterator<Item = &[u8]> {
+        match self {
+            EntityBody::Copied { bytes, patches, .. } => IterBytes::new(bytes, patches),
+            EntityBody::New { new_bytes, .. } => IterBytes::new(new_bytes, &[]),
+        }
+    }
 
     /// Iterate over resulting body bytes, applying patches on the fly.
     pub fn iter_bytes(&self) -> impl Iterator<Item = u8> + '_ {
