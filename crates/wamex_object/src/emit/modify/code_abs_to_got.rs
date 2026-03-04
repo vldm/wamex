@@ -23,7 +23,7 @@ use crate::{
         Encoding, EntityAddressMode, EntitySymbol, Relative, RelocationWidth, SymbolType,
     },
     typed::{
-        DefinedGlobal, EntityBody, FileId, GlobalRef, common_index::EntityKind,
+        DefinedGlobal, EntityBody, ExportNames, FileId, GlobalRef, common_index::EntityKind,
         data::SpecificLocation,
     },
 };
@@ -143,6 +143,8 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
                     new_relocs: SVec::new(),
                     new_bytes: global_init_tmp(content_type),
                 },
+                export_as: ExportNames::default(),
+                name: None,
             });
         }
 

@@ -2,6 +2,7 @@ use std::{borrow::Cow, ops::Range};
 
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::EntityRef;
+use smallvec::SmallVec;
 use wasmparser::TypeRef;
 
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
@@ -19,17 +20,36 @@ pub struct ExportEntry<'a, IDX: EntityRef> {
     pub entity_index: IDX,
 }
 
+#[derive(Default, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct ExportNames<'src> {
+    /// Multiple possible reexports names for same entity.
+    pub names: Vec<Cow<'src, str>>,
+    // NOTE: SVec<T> is invariant over T so we cannot use it here.
+}
+impl<'src> ExportNames<'src> {
+    pub fn add_export(&mut self, name: Cow<'src, str>) {
+        if !self.names.contains(&name) {
+            self.names.push(name);
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct ImportedEntity<'a, Type> {
-    pub module: Cow<'a, str>,
-    pub name: Cow<'a, str>,
+pub struct ImportedEntity<'src, Type> {
+    pub module: Cow<'src, str>,
+    pub name: Cow<'src, str>,
     pub entity_type: Type,
+
+    pub renamed_as: Option<Cow<'src, str>>,
+    pub export_as: ExportNames<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefinedEntity<'src, Type> {
     pub entity_type: Type,
     pub body: EntityBody<'src>,
+    pub name: Option<Cow<'src, str>>,
+    pub export_as: ExportNames<'src>,
 }
 impl<Type> DefinedEntity<'_, Type> {
     pub fn original_range(&self) -> Range<usize> {
@@ -38,6 +58,20 @@ impl<Type> DefinedEntity<'_, Type> {
             EntityBody::New { .. } => 0..0,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WithoutBody<'src, Type> {
+    pub entity_type: Type,
+    pub name: Option<Cow<'src, str>>,
+    pub export_as: ExportNames<'src>,
+}
+
+pub trait WithExtraInfo<'src> {
+    fn export_as(&self) -> &ExportNames<'src>;
+    fn export_as_mut(&mut self) -> &mut ExportNames<'src>;
+    fn name(&self) -> Option<&Cow<'src, str>>;
+    fn set_name(&mut self, name: Cow<'src, str>);
 }
 
 pub type ImportedFunction<'src> = ImportedEntity<'src, wasmparser::FuncType>;
@@ -50,9 +84,54 @@ pub type ImportedDataChunk<'src> = ImportedEntity<'src, ()>; // it's untyped chu
 pub type DefinedFunction<'src> = DefinedEntity<'src, wasmparser::FuncType>; // body - function locals + instructions
 pub type DefinedTable<'src> = DefinedEntity<'src, wasmparser::TableType>; // body - init expr (instructions)
 pub type DefinedGlobal<'src> = DefinedEntity<'src, wasmparser::GlobalType>; // body - init expr (instructions)
-pub type DefinedMemory = wasmparser::MemoryType;
-pub type DefinedTag = wasmparser::TagType;
+pub type DefinedMemory<'src> = WithoutBody<'src, wasmparser::MemoryType>;
+pub type DefinedTag<'src> = WithoutBody<'src, wasmparser::TagType>;
 pub type DefinedDataChunk<'src> = DefinedEntity<'src, typed::data::DataChunkType>; // body - bytes in memory
+
+impl<'src, Any> WithExtraInfo<'src> for ImportedEntity<'src, Any> {
+    fn export_as(&self) -> &ExportNames<'src> {
+        &self.export_as
+    }
+    fn export_as_mut(&mut self) -> &mut ExportNames<'src> {
+        &mut self.export_as
+    }
+    fn name(&self) -> Option<&Cow<'src, str>> {
+        Some(&self.name)
+    }
+    fn set_name(&mut self, name: Cow<'src, str>) {
+        self.name = name;
+    }
+}
+
+impl<'src, Any> WithExtraInfo<'src> for DefinedEntity<'src, Any> {
+    fn export_as(&self) -> &ExportNames<'src> {
+        &self.export_as
+    }
+    fn export_as_mut(&mut self) -> &mut ExportNames<'src> {
+        &mut self.export_as
+    }
+    fn name(&self) -> Option<&Cow<'src, str>> {
+        self.name.as_ref()
+    }
+    fn set_name(&mut self, name: Cow<'src, str>) {
+        self.name = Some(name);
+    }
+}
+
+impl<'src, Any> WithExtraInfo<'src> for WithoutBody<'src, Any> {
+    fn export_as(&self) -> &ExportNames<'src> {
+        &self.export_as
+    }
+    fn export_as_mut(&mut self) -> &mut ExportNames<'src> {
+        &mut self.export_as
+    }
+    fn name(&self) -> Option<&Cow<'src, str>> {
+        self.name.as_ref()
+    }
+    fn set_name(&mut self, name: Cow<'src, str>) {
+        self.name = Some(name);
+    }
+}
 
 impl<'src> From<typed::data::RawDataChunk<'src>> for DefinedDataChunk<'src> {
     fn from(v: typed::data::RawDataChunk<'src>) -> DefinedDataChunk<'src> {
@@ -67,6 +146,8 @@ impl<'src> From<typed::data::RawDataChunk<'src>> for DefinedDataChunk<'src> {
                 patches: vec![],
                 filtered_relocs: CompoundBitSet::new(),
             },
+            name: Some(v.name),
+            export_as: ExportNames::default(),
         }
     }
 }
@@ -81,6 +162,8 @@ impl<'src> From<&FunctionWithBody<'src>> for DefinedFunction<'src> {
                 patches: vec![],
                 filtered_relocs: CompoundBitSet::new(),
             },
+            name: None,
+            export_as: ExportNames::default(),
         }
     }
 }
@@ -107,6 +190,8 @@ impl<'src> From<&raw::Table<'src>> for DefinedTable<'src> {
                 patches: vec![],
                 filtered_relocs: CompoundBitSet::new(),
             },
+            name: None,
+            export_as: ExportNames::default(),
         }
     }
 }
@@ -130,6 +215,17 @@ impl<'src> From<&raw::Global<'src>> for DefinedGlobal<'src> {
                 patches: vec![],
                 filtered_relocs: CompoundBitSet::new(),
             },
+            name: None,
+            export_as: ExportNames::default(),
+        }
+    }
+}
+impl<'src, V: Clone> From<&V> for WithoutBody<'src, V> {
+    fn from(v: &V) -> WithoutBody<'src, V> {
+        WithoutBody {
+            entity_type: v.clone(),
+            export_as: ExportNames::default(),
+            name: None,
         }
     }
 }
@@ -270,6 +366,8 @@ pub fn read_imports<'a>(reader: &crate::raw::ObjectReader<'a>) -> crate::Result<
                     module: import.module.into(),
                     name: import.name.into(),
                     entity_type: reader.types[id].clone(),
+                    renamed_as: None,
+                    export_as: ExportNames::default(),
                 });
             }
             TypeRef::Table(ref table_type) => {
@@ -277,6 +375,8 @@ pub fn read_imports<'a>(reader: &crate::raw::ObjectReader<'a>) -> crate::Result<
                     module: import.module.into(),
                     name: import.name.into(),
                     entity_type: *table_type,
+                    renamed_as: None,
+                    export_as: ExportNames::default(),
                 });
             }
             TypeRef::Memory(ref memory_type) => {
@@ -284,6 +384,8 @@ pub fn read_imports<'a>(reader: &crate::raw::ObjectReader<'a>) -> crate::Result<
                     module: import.module.into(),
                     name: import.name.into(),
                     entity_type: *memory_type,
+                    renamed_as: None,
+                    export_as: ExportNames::default(),
                 });
             }
             TypeRef::Global(ref global_type) => {
@@ -291,6 +393,8 @@ pub fn read_imports<'a>(reader: &crate::raw::ObjectReader<'a>) -> crate::Result<
                     module: import.module.into(),
                     name: import.name.into(),
                     entity_type: *global_type,
+                    renamed_as: None,
+                    export_as: ExportNames::default(),
                 });
             }
             TypeRef::Tag(ref tag_type) => {
@@ -298,6 +402,8 @@ pub fn read_imports<'a>(reader: &crate::raw::ObjectReader<'a>) -> crate::Result<
                     module: import.module.into(),
                     name: import.name.into(),
                     entity_type: *tag_type,
+                    renamed_as: None,
+                    export_as: ExportNames::default(),
                 });
             }
         }

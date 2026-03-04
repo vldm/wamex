@@ -20,7 +20,8 @@ use crate::{
     },
     raw::{DataSegmentId, FuncTypeId},
     typed::{
-        DefinedFunction, EntityBody, FileId, FileLoader, FunctionRef, ImportedEntity, Module,
+        DefinedFunction, EntityBody, ExportNames, FileId, FileLoader, FunctionRef, ImportedEntity,
+        Module,
         common_index::{EntitiesSnapshot, EntityKind, TempEntityKind},
         data::SpecificLocation,
     },
@@ -178,11 +179,11 @@ impl<'src> Module<'src> {
             // $construct:ident - constructor in wasmparser::TypeRef
             // $kind:ident - kind of entity in BuilderState (functions, globals, etc)
             ($construct:ident ($kind:ident )) => {
-                for export in &self.$kind.exports {
+                for (entity_ref, export_name) in self.$kind.exports_iter() {
                     section.export(
-                        &export.name,
+                        &export_name,
                         wasm_encoder::ExportKind::$construct,
-                        export.entity_index.as_u32(),
+                        entity_ref.as_u32(),
                     );
                 }
             };
@@ -222,7 +223,7 @@ impl<'src> Module<'src> {
     fn generate_memory_section(&self, output_module: &mut wasm_encoder::Module) {
         let mut section = wasm_encoder::MemorySection::new();
         for (_memory_ref, memory) in self.memories.defined_iter() {
-            section.memory((*memory).into());
+            section.memory(memory.entity_type.into());
         }
         output_module.section(&section);
     }
@@ -230,7 +231,7 @@ impl<'src> Module<'src> {
     fn generate_tag_section(&self, output_module: &mut wasm_encoder::Module) {
         let mut section = wasm_encoder::TagSection::new();
         for (_tag_ref, tag) in self.tags.defined_iter() {
-            section.tag((*tag).try_into().unwrap());
+            section.tag(tag.entity_type.try_into().unwrap());
         }
         output_module.section(&section);
     }
@@ -638,6 +639,7 @@ pub fn create_split_module<'src>(
     let mut used_queue: Vec<(_, TempEntityKind)> = Vec::new();
 
     // Copy defined symbols to the output module.
+    // TODO: Clear exports if not set?
     for entity in output_info.defined_symbols {
         match snapshot.unpack_ref(entity) {
             EntityKind::Function(f) => {
@@ -682,6 +684,8 @@ pub fn create_split_module<'src>(
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(f.into()),          // use original name
                     entity_type: src.functions.get_entity(f).get_type().clone(),
+                    export_as: ExportNames::default(),
+                    renamed_as: None,
                 });
                 used_queue.push((EntityLocation::from_parts(input_file, f.into()), id.into()));
             }
@@ -691,6 +695,8 @@ pub fn create_split_module<'src>(
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(g.into()),          // use original name
                     entity_type: *src.globals.get_entity(g).get_type(),
+                    export_as: ExportNames::default(),
+                    renamed_as: None,
                 });
                 used_queue.push((EntityLocation::from_parts(input_file, g.into()), id.into()));
             }
@@ -700,6 +706,8 @@ pub fn create_split_module<'src>(
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(t.into()),          // use original name
                     entity_type: *src.tables.get_entity(t).get_type(),
+                    export_as: ExportNames::default(),
+                    renamed_as: None,
                 });
                 used_queue.push((EntityLocation::from_parts(input_file, t.into()), id.into()));
             }
@@ -708,7 +716,9 @@ pub fn create_split_module<'src>(
                 let id = module.memories.push_import(ImportedEntity {
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(m.into()),          // use original name
-                    entity_type: *src.memories.get_entity(m).inner(),
+                    entity_type: *src.memories.get_entity(m).get_type(),
+                    export_as: ExportNames::default(),
+                    renamed_as: None,
                 });
                 used_queue.push((EntityLocation::from_parts(input_file, m.into()), id.into()));
             }
@@ -718,7 +728,9 @@ pub fn create_split_module<'src>(
                 let id = module.tags.push_import(ImportedEntity {
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(m.into()),          // use original name
-                    entity_type: *src.tags.get_entity(m).inner(),
+                    entity_type: *src.tags.get_entity(m).get_type(),
+                    export_as: ExportNames::default(),
+                    renamed_as: None,
                 });
                 used_queue.push((EntityLocation::from_parts(input_file, m.into()), id.into()));
             }
@@ -727,6 +739,8 @@ pub fn create_split_module<'src>(
                     module: input_file.to_string().into(), // use file_id
                     name: src.get_name(d.into()),          // use original name
                     entity_type: (), // TODO: add type for data symbols if needed
+                    export_as: ExportNames::default(),
+                    renamed_as: None,
                 });
                 used_queue.push((EntityLocation::from_parts(input_file, d.into()), id.into()));
             }
@@ -740,46 +754,6 @@ pub fn create_split_module<'src>(
     // Fill mapping for all used entities.
     for (src, entity) in used_queue {
         file_info.add_entity_mapping(src, entity.to_stable(&module));
-    }
-
-    // Copy names from source file.
-    // TODO: having it as separate field might be not best idea.
-    for (src_entity, entity) in file_info.iter_mapped() {
-        let name = src.get_name(src_entity.entity);
-        match entity {
-            EntityKind::Function(f) => module.functions.names.insert(*f, name.into()),
-            EntityKind::Global(g) => module.globals.names.insert(*g, name.into()),
-            EntityKind::Memory(m) => module.memories.names.insert(*m, name.into()),
-            EntityKind::Table(t) => module.tables.names.insert(*t, name.into()),
-            EntityKind::Tag(t) => module.tags.names.insert(*t, name.into()),
-            EntityKind::DataSymbol(d) => module.data.names.insert(*d, name.into()),
-            EntityKind::Type(_) => {
-                // type is pseudo-entity - and doesn't exist in module.
-                continue;
-            }
-        };
-    }
-
-    // Mark needed entities as exported
-    // TODO: for main module, copy original exports. (there might be duplicate of same entities)
-    for entity in output_info.exports {
-        let src_entity = snapshot.unpack_ref(entity);
-
-        let entity = file_info
-            .get_output_entity(&EntityLocation::from_parts(input_file, src_entity))
-            .expect("exported entity must be in output file");
-
-        let name = module.get_name(entity);
-        log::debug!("Mapping entity {src_entity:?} to {entity}, name: {name}");
-        match entity {
-            EntityKind::Function(f) => module.functions.mark_exported(f, name),
-            EntityKind::Global(g) => module.globals.mark_exported(g, name),
-            EntityKind::Memory(m) => module.memories.mark_exported(m, name),
-            EntityKind::Table(t) => module.tables.mark_exported(t, name),
-            EntityKind::Tag(t) => module.tags.mark_exported(t, name),
-            EntityKind::DataSymbol(d) => module.data.mark_exported(d, name),
-            EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
-        }
     }
 
     // Now copy and resolve relocs.

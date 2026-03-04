@@ -17,6 +17,7 @@ use wasmparser::{ElementItems, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
+    SVec,
     index::{Building, CompoundList, Locked, NonDefault},
     linkage::{
         LinkageInfo,
@@ -186,8 +187,11 @@ impl<'src> Module<'src> {
             exports.1,
         );
         let memories = entities::Memories::from_parts(
-            CompoundList::new(imports.2, reader.memories.as_values_slice().to_vec())
-                .into_finished(),
+            CompoundList::new(
+                imports.2,
+                reader.memories.values().map(Into::into).collect(),
+            )
+            .into_finished(),
             reader
                 .names
                 .memories
@@ -211,7 +215,8 @@ impl<'src> Module<'src> {
         );
 
         let tags = entities::Tags::from_parts(
-            CompoundList::new(imports.4, reader.tags.as_values_slice().to_vec()).into_finished(),
+            CompoundList::new(imports.4, reader.tags.values().map(Into::into).collect())
+                .into_finished(),
             reader
                 .names
                 .tags
@@ -313,7 +318,6 @@ impl<'src> Module<'src> {
                     let filtered =
                         data::DataChunk::canonicalize_data_symbols(sliced, &mut file_symbol_db);
                     for (_, chunk) in filtered {
-                        sliced_chunks.names.push(chunk.name.clone().into());
                         sliced_chunks
                             .items
                             .push_defined(DefinedDataChunk::from(chunk));
@@ -321,7 +325,7 @@ impl<'src> Module<'src> {
 
                     continue 'iter;
                 };
-                sliced_chunks.names.push(segment_chunk.name.clone().into());
+
                 sliced_chunks
                     .items
                     .push_defined(DefinedDataChunk::from(segment_chunk));
@@ -350,7 +354,7 @@ impl<'src> Module<'src> {
     fn init_indirect_fn_table(tables: &entities::Tables<'src>) -> (Cow<'src, str>, TableRef) {
         tables
             .iter()
-            .filter_map(|(id, _)| tables.names.get(id).map(|name| (name.clone().into_inner(), id)))
+            .filter_map(|(id, def)| def.name().cloned().map(|name| (name, id)))
             .find(|(name, _)| *name == "__indirect_function_table")
             .unwrap_or_else(|| {
                 assert!(
@@ -367,12 +371,7 @@ impl<'src> Module<'src> {
     fn init_base_memory(memories: &entities::Memories<'src>) -> (Cow<'src, str>, MemoryRef) {
         memories
             .iter()
-            .filter_map(|(id, _)| {
-                memories
-                    .names
-                    .get(id)
-                    .map(|name| (name.clone().into_inner(), id))
-            })
+            .filter_map(|(id, def)| def.name().cloned().map(|name| (name, id)))
             .find(|(name, _)| *name == "__base_memory")
             .unwrap_or_else(|| {
                 assert!(
@@ -402,52 +401,49 @@ impl<'src> Module<'src> {
     // Get entity name
     pub fn get_name(&self, entity: EntityKind) -> Cow<'src, str> {
         let debug_name = match entity {
-            EntityKind::Function(func_id) => self.functions.names.get(func_id),
-            EntityKind::Global(global_id) => self.globals.names.get(global_id),
-            EntityKind::Table(table_id) => self.tables.names.get(table_id),
-            EntityKind::Memory(mem_id) => self.memories.names.get(mem_id),
-            EntityKind::Tag(tag_id) => self.tags.names.get(tag_id),
-            EntityKind::DataSymbol(d) => self.data.names.get(d),
+            EntityKind::Function(func_id) => self.functions.get_entity(func_id).name().cloned(),
+            EntityKind::Global(global_id) => self.globals.get_entity(global_id).name().cloned(),
+            EntityKind::Table(table_id) => self.tables.get_entity(table_id).name().cloned(),
+            EntityKind::Memory(mem_id) => self.memories.get_entity(mem_id).name().cloned(),
+            EntityKind::Tag(tag_id) => self.tags.get_entity(tag_id).name().cloned(),
+            EntityKind::DataSymbol(d) => self.data.get_entity(d).name().cloned(),
             EntityKind::Type(_) => None, // types don't have names in name section
         };
 
-        debug_name
-            .cloned()
-            .map(NonDefault::into_inner)
-            .unwrap_or_else(|| format!("{entity}").into())
+        debug_name.unwrap_or_else(|| format!("{entity}").into())
     }
 
     pub fn entities_exports(&self) -> impl Iterator<Item = EntityKind> + '_ {
         let functions = self
             .functions
-            .exports
             .iter()
-            .map(|e| EntityKind::Function(e.entity_index));
+            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .map(|(r, _)| r.into());
         let globals = self
             .globals
-            .exports
             .iter()
-            .map(|e| EntityKind::Global(e.entity_index));
+            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .map(|(r, _)| r.into());
         let tables = self
             .tables
-            .exports
             .iter()
-            .map(|e| EntityKind::Table(e.entity_index));
+            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .map(|(r, _)| r.into());
         let memories = self
             .memories
-            .exports
             .iter()
-            .map(|e| EntityKind::Memory(e.entity_index));
+            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .map(|(r, _)| r.into());
         let tags = self
             .tags
-            .exports
             .iter()
-            .map(|e| EntityKind::Tag(e.entity_index));
+            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .map(|(r, _)| r.into());
         let data = self
             .data
-            .exports
             .iter()
-            .map(|e| EntityKind::DataSymbol(e.entity_index));
+            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .map(|(r, _)| r.into());
         chain!(functions, globals, tables, memories, tags, data)
     }
 
@@ -482,12 +478,18 @@ impl<'src> Module<'src> {
     }
 
     pub fn find_function_id_by_name(&self, name: &str) -> Option<FunctionRef> {
-        let func = self.functions.names.iter().find(|f| **f.1 == name)?;
+        let func = self
+            .functions
+            .iter()
+            .find(|(_, e)| e.name().map_or(false, |n| n == name))?;
         Some(func.0)
     }
 
     pub fn find_global_id_by_name(&self, name: &str) -> Option<GlobalRef> {
-        let global = self.globals.names.iter().find(|f| **f.1 == name)?;
+        let global = self
+            .globals
+            .iter()
+            .find(|(_, e)| e.name().map_or(false, |n| n == name))?;
         Some(global.0)
     }
 
@@ -576,12 +578,16 @@ impl<'src> ModuleBuilder<'src> {
                 self.mem_spec.mem_id
             );
         }
-        self.memories.items.push_defined(raw::MemoryType {
-            memory64: false,
-            shared: false,
-            initial: 0,
-            maximum: None,
-            page_size_log2: None,
+        self.memories.items.push_defined(WithoutBody {
+            entity_type: raw::MemoryType {
+                memory64: false,
+                shared: false,
+                initial: 1,
+                maximum: None,
+                page_size_log2: None,
+            },
+            export_as: ExportNames::default(),
+            name: None,
         })
     }
 
@@ -627,7 +633,11 @@ mod tests {
     use wasmparser::FuncType;
 
     use super::{LoadedFile, Module};
-    use crate::{index::GappedMap, typed::ImportedFunction};
+    use crate::{
+        SVec,
+        index::GappedMap,
+        typed::{ExportNames, ImportedFunction},
+    };
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
     #[test]
@@ -667,6 +677,11 @@ mod tests {
         recovered_fns.sort();
 
         assert_eq!(indirect_fns, recovered_fns);
+
+        // dbg!(&input_object.functions);
+        // check exports imports of module
+        let exports = input_object.functions.exports_iter().collect::<Vec<_>>();
+        assert_eq!(exports.len(), 740);
     }
 
     // 2. Create simple wasm module from scratch
@@ -676,6 +691,8 @@ mod tests {
         module.functions.push_import(ImportedFunction {
             module: "env".into(),
             name: "bar".into(),
+            renamed_as: None,
+            export_as: ExportNames::default(),
             entity_type: FuncType::new(None, None), // void type
         });
         let module = module.into_locked();

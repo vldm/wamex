@@ -20,7 +20,7 @@
 //! - exports listing
 //! - name resolution (from name section)
 //!
-//! unlike in `walrus` this information represented as structure of arrays
+//! unlike in `walrus` this information imported and defined entities are stored in different index spaces, so they don't need to be "relocated" during build.
 //!
 
 use std::borrow::Cow;
@@ -34,65 +34,51 @@ use crate::{
     typed::{
         DefinedDataChunk, DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag,
         ImportedDataChunk, ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable,
-        ImportedTag, common_index::EntityKind, data::DataSymbolRef,
+        ImportedTag, WithExtraInfo, common_index::EntityKind, data::DataSymbolRef,
     },
 };
 
 pub type Functions<'src, BS = Locked> =
-    EntityCollection<'src, FunctionRef, ImportedFunction<'src>, DefinedFunction<'src>, BS>;
+    EntityCollection<FunctionRef, ImportedFunction<'src>, DefinedFunction<'src>, BS>;
 pub type Tables<'src, BS = Locked> =
-    EntityCollection<'src, TableRef, ImportedTable<'src>, DefinedTable<'src>, BS>;
+    EntityCollection<TableRef, ImportedTable<'src>, DefinedTable<'src>, BS>;
 pub type Globals<'src, BS = Locked> =
-    EntityCollection<'src, GlobalRef, ImportedGlobal<'src>, DefinedGlobal<'src>, BS>;
+    EntityCollection<GlobalRef, ImportedGlobal<'src>, DefinedGlobal<'src>, BS>;
 pub type Memories<'src, BS = Locked> =
-    EntityCollection<'src, MemoryRef, ImportedMemory<'src>, DefinedMemory, BS>;
+    EntityCollection<MemoryRef, ImportedMemory<'src>, DefinedMemory<'src>, BS>;
 pub type Tags<'src, BS = Locked> =
-    EntityCollection<'src, TagRef, ImportedTag<'src>, DefinedTag, BS>;
+    EntityCollection<TagRef, ImportedTag<'src>, DefinedTag<'src>, BS>;
 
 pub type DataChunks<'src, BS = Locked> =
-    EntityCollection<'src, DataSymbolRef, ImportedDataChunk<'src>, DefinedDataChunk<'src>, BS>;
+    EntityCollection<DataSymbolRef, ImportedDataChunk<'src>, DefinedDataChunk<'src>, BS>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct EntityCollection<'src, Ref, Import, Defined, BuilderState = Locked>
+pub struct EntityCollection<Ref, Import, Defined, BuilderState = Locked>
 where
     Ref: TempIndex,
 {
     /// Both defined and imports entities.
     pub items: CompoundList<Ref, Import, Defined, BuilderState>,
-
-    /// Names for entities, if present.
-    /// Name information is gathered from name section,
-    /// if no name is present in name section, name is retrieved from export entry.
-    /// Note: name can be different from one in linkage Symbols.
-    pub names: GappedMap<Ref, NonDefault<Cow<'src, str>>>,
-
-    /// List of exported entries.
-    /// Because exports array are usually small, no need to store them as `IdMap`
-    pub exports: Vec<ExportEntry<'src, Ref>>,
 }
 
-impl<'src, Ref, Import, Defined> Default for EntityCollection<'src, Ref, Import, Defined, Building>
+impl<Ref, Import, Defined> Default for EntityCollection<Ref, Import, Defined, Building>
 where
     Ref: TempIndex,
 {
     fn default() -> Self {
         Self {
             items: CompoundList::empty(),
-            names: GappedMap::new(),
-            exports: Vec::new(),
         }
     }
 }
 
-impl<'src, Ref, Import, Defined> EntityCollection<'src, Ref, Import, Defined, Building>
+impl<Ref, Import, Defined> EntityCollection<Ref, Import, Defined, Building>
 where
     Ref: TempIndex,
 {
-    pub fn into_finished(self) -> EntityCollection<'src, Ref, Import, Defined, Locked> {
+    pub fn into_finished(self) -> EntityCollection<Ref, Import, Defined, Locked> {
         EntityCollection {
             items: self.items.into_finished(),
-            names: self.names,
-            exports: self.exports,
         }
     }
     /// Pushes a defined entity and returns its temporary reference.
@@ -115,28 +101,43 @@ where
     }
 }
 
-impl<'src, Ref, Import, Defined> EntityCollection<'src, Ref, Import, Defined>
+impl<'src, Ref, Import, Defined> EntityCollection<Ref, Import, Defined>
 where
     Ref: TempIndex,
 {
     pub fn from_parts(
-        declared: CompoundList<Ref, Import, Defined>,
+        mut declared: CompoundList<Ref, Import, Defined>,
         mut names: GappedMap<Ref, NonDefault<Cow<'src, str>>>,
         exports: Vec<ExportEntry<'src, Ref>>,
-    ) -> Self {
+    ) -> Self
+    where
+        Import: WithExtraInfo<'src>,
+        Defined: WithExtraInfo<'src>,
+    {
         for exports in &exports {
+            let no_name = names.get(exports.entity_index).is_none();
+            let is_defined = declared
+                .get_entity(exports.entity_index)
+                .to_defined()
+                .is_some();
             // if name is not present in names map
-            if names.get(exports.entity_index).is_none() {
+            if no_name && is_defined {
                 // insert it into names map
                 names.insert(exports.entity_index, NonDefault::from(exports.name.clone()));
             }
+            declared
+                .get_entity_mut(exports.entity_index)
+                .export_as_mut()
+                .add_export(exports.name.clone());
         }
 
-        Self {
-            items: declared,
-            names,
-            exports,
+        for (r, name) in names.iter() {
+            declared
+                .get_entity_mut(r)
+                .set_name(name.clone().into_inner());
         }
+
+        Self { items: declared }
     }
     pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Defined)> {
         self.items.defined_iter()
@@ -162,11 +163,26 @@ where
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    pub fn mark_exported(&mut self, entity: Ref, export_name: Cow<'src, str>) {
-        self.exports.push(ExportEntry {
-            name: export_name,
-            entity_index: entity,
-        });
+    pub fn add_exports(&mut self, entity: Ref, export_name: Cow<'src, str>)
+    where
+        Import: WithExtraInfo<'src>,
+        Defined: WithExtraInfo<'src>,
+    {
+        self.items
+            .get_entity_mut(entity)
+            .export_as_mut()
+            .add_export(export_name);
+    }
+    pub fn exports_iter(&self) -> impl Iterator<Item = (Ref, Cow<'src, str>)>
+    where
+        Import: WithExtraInfo<'src>,
+        Defined: WithExtraInfo<'src>,
+    {
+        self.items.iter().flat_map(|(r, entity)| {
+            let iter = entity.export_as().names.clone().into_iter();
+
+            iter.map(move |export_name| (r, export_name))
+        })
     }
 }
 

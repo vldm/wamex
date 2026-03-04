@@ -22,7 +22,7 @@ use cranelift_entity::packed_option::PackedOption;
 pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 use derive_more::Display;
 
-use crate::typed::{DefinedEntity, ImportedEntity};
+use crate::typed::{DefinedEntity, ExportNames, ImportedEntity, WithExtraInfo, WithoutBody};
 
 macro_rules! impl_entity_index {
     ( $(
@@ -629,6 +629,28 @@ where
         self.try_get_entity(stable_index)
             .expect("Index out of bounds")
     }
+    pub fn get_entity_mut(&mut self, stable_index: Ref) -> ImportOrDefined<&mut I, &mut D> {
+        self.try_get_entity_mut(stable_index)
+            .expect("Index out of bounds")
+    }
+    pub fn try_get_entity_mut(
+        &mut self,
+        stable_index: Ref,
+    ) -> Option<ImportOrDefined<&mut I, &mut D>> {
+        let num_imports = self.imports.len();
+        if stable_index.index() < num_imports {
+            Some(ImportOrDefined::Import(
+                &mut self.imports[stable_index.index()],
+            ))
+        } else {
+            let defined_index = stable_index.index() - num_imports;
+            if defined_index < self.defined.len() {
+                Some(ImportOrDefined::Defined(&mut self.defined[defined_index]))
+            } else {
+                None
+            }
+        }
+    }
     /// Returns entity by index, or `None` if index is out of bounds.
     pub fn try_get_entity(&self, stable_index: Ref) -> Option<ImportOrDefined<&I, &D>> {
         let num_imports = self.imports.len();
@@ -679,22 +701,72 @@ impl<Import, Defined> ImportOrDefined<&Import, &Defined> {
     }
 }
 
-impl<Same> ImportOrDefined<&ImportedEntity<'_, Same>, &Same> {
-    pub fn inner(&self) -> &Same {
-        match self {
-            ImportOrDefined::Defined(d) => d,
-            ImportOrDefined::Import(i) => &i.entity_type,
-        }
+trait WithType {
+    type Type;
+    fn get_type(&self) -> &Self::Type;
+}
+impl<T> WithType for DefinedEntity<'_, T> {
+    type Type = T;
+
+    fn get_type(&self) -> &Self::Type {
+        &self.entity_type
     }
 }
 
-impl<'any, ImportInner>
-    ImportOrDefined<&'any ImportedEntity<'_, ImportInner>, &'any DefinedEntity<'_, ImportInner>>
+impl<T> WithType for WithoutBody<'_, T> {
+    type Type = T;
+
+    fn get_type(&self) -> &Self::Type {
+        &self.entity_type
+    }
+}
+
+impl<'any, ImportInner, D> ImportOrDefined<&'any ImportedEntity<'_, ImportInner>, &'any D>
+where
+    D: WithType<Type = ImportInner>,
 {
     pub fn get_type(&self) -> &'any ImportInner {
         match self {
             ImportOrDefined::Import(import) => &import.entity_type,
-            ImportOrDefined::Defined(defined) => &defined.entity_type,
+            ImportOrDefined::Defined(defined) => defined.get_type(),
+        }
+    }
+}
+
+impl<'src, Import, Defined> ImportOrDefined<&Import, &Defined>
+where
+    Import: WithExtraInfo<'src>,
+    Defined: WithExtraInfo<'src>,
+{
+    pub fn export_as(&self) -> &ExportNames<'src> {
+        match self {
+            ImportOrDefined::Import(import) => import.export_as(),
+            ImportOrDefined::Defined(defined) => defined.export_as(),
+        }
+    }
+    pub fn name(&self) -> Option<&Cow<'src, str>> {
+        match self {
+            ImportOrDefined::Import(import) => import.name(),
+            ImportOrDefined::Defined(defined) => defined.name(),
+        }
+    }
+}
+
+impl<'src, Import, Defined> ImportOrDefined<&mut Import, &mut Defined>
+where
+    Import: WithExtraInfo<'src>,
+    Defined: WithExtraInfo<'src>,
+{
+    pub fn export_as_mut(&mut self) -> &mut ExportNames<'src> {
+        match self {
+            ImportOrDefined::Import(import) => import.export_as_mut(),
+            ImportOrDefined::Defined(defined) => defined.export_as_mut(),
+        }
+    }
+    pub fn set_name(&mut self, name: Cow<'src, str>) {
+        match self {
+            ImportOrDefined::Import(import) => import.set_name(name),
+            ImportOrDefined::Defined(defined) => defined.set_name(name),
         }
     }
 }

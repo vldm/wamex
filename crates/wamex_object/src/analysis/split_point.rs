@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Debug, Display},
+    ops::Deref,
 };
 
 use anyhow::Context;
@@ -299,17 +300,18 @@ pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(
     Some((module_name, fn_name))
 }
 
-fn parse_entries<'i, I, Id>(
+fn parse_entries<'i, I, Id, V>(
     prefix: &str,
     postfix: &str,
     collection: I,
 ) -> BTreeMap<(String, String), Id>
 where
-    I: Iterator<Item = (Id, &'i str)> + 'i,
+    I: Iterator<Item = (Id, V)> + 'i,
+    V: AsRef<str>,
 {
     collection
         .filter_map(|(id, name)| {
-            if let Some((module_name, unique_id)) = parser(name, prefix, postfix) {
+            if let Some((module_name, unique_id)) = parser(name.as_ref(), prefix, postfix) {
                 Some(((module_name.into(), unique_id.into()), id))
             } else {
                 None
@@ -329,14 +331,7 @@ fn find_split_points_with_prefix(info: &Module, prefix: &str) -> anyhow::Result<
             .imports_iter()
             .map(|(i, import)| (i, &*import.name)),
     );
-    let mut export_map = parse_entries(
-        prefix,
-        SPLIT_EXPORT_POSTFIX,
-        info.functions
-            .exports
-            .iter()
-            .map(|e| (e.entity_index, &*e.name)),
-    );
+    let mut export_map = parse_entries(prefix, SPLIT_EXPORT_POSTFIX, info.functions.exports_iter());
 
     let split_points = import_map
         .into_iter()
