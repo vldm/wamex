@@ -6,11 +6,13 @@ use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::FuncType;
 
 use crate::{
-    analysis::OutputModuleInfo,
+    analysis::{OutputModuleInfo, SplitPoint},
     emit::{
         memory_layout::{DataSymbolsOffsets, SegmentLayout},
         modify::OutputEntityRef,
-        relocation::{EntityLocation, file_mapping::OutputFileInfo},
+        relocation::{
+            EntityLocation, FunctionInfo, ModuleLayout, resolver::OutputEntitiesResolver,
+        },
     },
     helpers::{ShiftMap, ShiftPoint, encoding_size},
     index::{Building, GappedMap},
@@ -22,7 +24,7 @@ use crate::{
     typed::{
         DefinedFunction, EntityBody, ExportNames, FileId, FileLoader, FunctionRef, ImportedEntity,
         Module,
-        common_index::{EntitiesSnapshot, EntityKind, TempEntityKind},
+        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef, TempEntityKind},
         data::SpecificLocation,
     },
 };
@@ -30,15 +32,6 @@ use crate::{
 pub mod memory_layout;
 pub mod modify;
 pub mod relocation;
-
-/// Module layout suitable for applying relocates.
-pub struct ModuleLayout {
-    pub code_start: usize,
-    pub data_start: usize,
-    pub functions_mapping: SecondaryMap<FunctionRef, usize>,
-    /// Mapping of module data symbols, to their offsets.
-    pub data_mapping: DataSymbolsOffsets,
-}
 
 impl<'src> Module<'src> {
     pub fn generate(&self, output_module: &mut wasm_encoder::Module) -> Result<ModuleLayout> {
@@ -382,7 +375,7 @@ impl<'src> Module<'src> {
     fn generate_code_section(
         &self,
         output_module: &mut wasm_encoder::Module,
-    ) -> Result<SecondaryMap<FunctionRef, usize>> {
+    ) -> Result<SecondaryMap<FunctionRef, FunctionInfo>> {
         let defined_functions_count = self.functions.defined_iter().len() as u32
             + if !self.start_functions.is_empty() {
                 1 // start function
@@ -399,7 +392,10 @@ impl<'src> Module<'src> {
             // TODO: shift relocs
             let function_start_offset = start_of_functions_def + section.byte_len();
             self._generate_defined_function(id, output_func, &mut section)?;
-            functions_mapping[id] = function_start_offset;
+            functions_mapping[id] = FunctionInfo {
+                code_offset: function_start_offset,
+                indirect_table_id: None,
+            }
         }
 
         // TODO: push it as last defined during into_finalized() call?
@@ -416,7 +412,10 @@ impl<'src> Module<'src> {
 
             let function_start_offset = start_of_functions_def + section.byte_len();
             section.function(&func);
-            functions_mapping[start_fn_ref] = function_start_offset;
+            functions_mapping[start_fn_ref] = FunctionInfo {
+                code_offset: function_start_offset,
+                indirect_table_id: None,
+            }
         }
 
         output_module.section(&section);
@@ -470,7 +469,7 @@ impl<'src> Module<'src> {
     /// Returns `FileRelocs` with relocs related to symbol start.
     pub fn copy_and_resolve_relocs(
         &mut self,
-        module_info: &OutputFileInfo,
+        module_info: &OutputEntitiesResolver,
         input_files: &FileLoader,
     ) -> anyhow::Result<FileRelocs> {
         let mut relocs = Vec::new();
@@ -631,10 +630,10 @@ pub fn create_split_module<'src>(
     src: &Module<'src>,          // tmp field, should be FileLoader instead.
     snapshot: &EntitiesSnapshot, // this is
     output_info: OutputModuleInfo,
-) -> Result<(Module<'src>, OutputFileInfo)> {
+) -> Result<(Module<'src>, OutputEntitiesResolver)> {
     let mut module: Module<'src, Building> = Module::new();
     // map of entities from input file to entities in output module.
-    let mut file_info = OutputFileInfo::new();
+    let mut file_info = OutputEntitiesResolver::new();
 
     let mut used_queue: Vec<(_, TempEntityKind)> = Vec::new();
 
@@ -816,6 +815,10 @@ mod tests {
         let mut buf = wasm_encoder::Module::new();
         output.generate(&mut buf).unwrap();
         let res: Vec<u8> = buf.finish();
+        let out_file =
+            env!("CARGO_MANIFEST_DIR").to_string() + "/test-output/simple_graph_emit.wasm";
+
+        std::fs::write(out_file, &res).unwrap();
 
         let raw = crate::raw::ObjectReader::parse(&res).unwrap();
         dbg!(&input.wasm_reader);

@@ -13,7 +13,7 @@ use crate::{
     raw::DataSegmentId,
     typed::{
         DefinedDataChunk, Module,
-        data::{DataSymbolRef, RawDataChunk, SegmentPlacement, SpecificLocation},
+        data::{BASE_ALIGNMENT, DataSymbolRef, RawDataChunk, SegmentPlacement, SpecificLocation},
     },
 };
 
@@ -42,10 +42,8 @@ impl<'src> SegmentLayout<'src> {
     /// Symbols from passive segments will not be present in the mapping.
     ///
     pub fn build_for_module(module: &Module<'src>) -> Result<(Segments<'src>, DataSymbolsOffsets)> {
-        // Align base of memory to 16 bytes, if it wasn't already aligned.
-        const BASE_ALIGNMENT: u32 = 2 << 4;
         let mem_start = module.mem_spec.mem_start;
-        let padding = Self::calculate_padding(mem_start.offset(), BASE_ALIGNMENT);
+        let padding = Self::calculate_padding(mem_start.offset(), 2 << BASE_ALIGNMENT);
         let mem_start = mem_start.add_offset(padding);
 
         let (mut results, mut mapping) = (PrimaryMap::new(), DataSymbolsOffsets::new());
@@ -289,7 +287,7 @@ impl<'src> SegmentLayout<'src> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Copy, Debug, Clone, Eq, PartialEq)]
 pub struct DataSymbolOffset {
     /// Offset of symbol in memory.
     pub addr_of_symbol: usize,

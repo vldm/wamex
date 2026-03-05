@@ -60,6 +60,17 @@ impl EntityKind {
     pub fn is_type(&self) -> bool {
         matches!(self, EntityKind::Type(_))
     }
+    pub fn to_inner_u32(&self) -> u32 {
+        match self {
+            EntityKind::Function(f) => f.as_u32(),
+            EntityKind::Global(g) => g.as_u32(),
+            EntityKind::Table(t) => t.as_u32(),
+            EntityKind::Memory(m) => m.as_u32(),
+            EntityKind::Tag(t) => t.as_u32(),
+            EntityKind::DataSymbol(d) => d.as_u32(),
+            EntityKind::Type(ty) => ty.as_u32(),
+        }
+    }
 }
 
 /// A snapshot of the number of entities in a WebAssembly module.

@@ -74,10 +74,15 @@ pub struct ElementTable<T: ReservedValue + Clone> {
 }
 
 impl<T: ReservedValue + Clone> ElementTable<T> {
+    /// Create empty ElementTable for given table_id.
+    ///
+    /// Note: ElementItemId(0) is reserved for null pointers/invalid calls.
     pub fn new(table_id: TableRef) -> Self {
+        let mut items = GappedMap::new();
+        items.remove(ElementItemId::from_u32(0));
         Self {
             table_id,
-            items: GappedMap::new(),
+            items,
             extra_segments: SVec::new(),
             location: SpecificLocation::ConstantOffset(0),
         }
@@ -139,6 +144,14 @@ impl<T: ReservedValue + Clone> ElementTable<T> {
             self.items.insert(id, item);
             id = id.next();
         }
+    }
+    /// Clear all items and segments, but keep table_id and location.
+    ///
+    /// Note: during regular construction ElementItemId(0) is reserved for null pointers/invalid calls, but clear will remove this item as well.
+    /// To recover it remove ElementItemId(0) from items after calling clear.
+    pub fn clear(&mut self) {
+        self.items = Default::default();
+        self.extra_segments.clear();
     }
 }
 

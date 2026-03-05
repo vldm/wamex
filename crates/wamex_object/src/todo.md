@@ -10,6 +10,7 @@ one created during Module::new() and other is referenced by reloc
 - [X] one of two globals is missing - probably not referenced in relocs. (should be included into main)
 
 # Features/low-priority:
+- [ ] process relocs
 - [ ] names sections
 - [ ] linker sections
 - [X] exports sections

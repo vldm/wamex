@@ -16,6 +16,9 @@ use crate::{
     typed::{GlobalRef, MemoryRef, Module, SymbolId},
 };
 
+// Align base of memory to 16 bytes, if it wasn't already aligned.
+pub const BASE_ALIGNMENT: u8 = u8::trailing_zeros(16) as u8;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MemSpec<'src> {
     pub mem_id: MemoryRef,
@@ -33,6 +36,10 @@ impl Default for MemSpec<'_> {
         }
     }
 }
+pub fn default_segment_info<'src>() -> (Cow<'src, str>, u8) {
+    ("data".into(), BASE_ALIGNMENT)
+}
+
 impl<'src> MemSpec<'src> {
     const DEFAULT_HEAP_SIZE: SpecificLocation = SpecificLocation::ConstantOffset(0x100000);
 
@@ -41,9 +48,13 @@ impl<'src> MemSpec<'src> {
         let mut data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>> = PrimaryMap::new();
 
         for (id, segment) in reader.data.data_segments.iter() {
-            let info = reader.linking.segments_info[id.index()];
-            let name = info.name.into();
-            let pow2align = info.alignment as u8;
+            let (name, pow2align) = if let Some(info) = reader.linking.segments_info.get(id.index())
+            {
+                (info.name.into(), info.alignment as u8)
+            } else {
+                default_segment_info()
+            };
+
             let mut segment_info = DataSegmentInfo::from_parts(&segment.kind, name, pow2align)?;
             match segment_info.location {
                 SegmentPlacement::Passive | SegmentPlacement::ContinuesMemory => {}

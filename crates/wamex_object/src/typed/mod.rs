@@ -17,8 +17,7 @@ use wasmparser::{ElementItems, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
-    SVec,
-    index::{Building, CompoundList, Locked, NonDefault},
+    index::{Building, CompoundList, Locked},
     linkage::{
         LinkageInfo,
         file_db::{self, EntityRelocationEntry, FileRelocs},
@@ -262,12 +261,26 @@ impl<'src> Module<'src> {
             // todo: make it configurable
             let slice_chunks = true;
 
-            // let mut sliced_chunks = PrimaryMap::new();
             let mut sliced_chunks = entities::DataChunks::default();
 
             'iter: for (segment_id, d) in reader.data.data_segments.iter() {
                 let segment_chunk = 'chunk_segment: {
-                    let segment_info = reader.linking.segments_info[segment_id.index()];
+                    let Some(segment_info) = reader.linking.segments_info.get(segment_id.index())
+                    else {
+                        warn!(
+                            "No segment info for segment {:?}, skipping slicing for this segment.",
+                            segment_id
+                        );
+                        let (name, pow2align) = data::default_segment_info();
+
+                        break 'chunk_segment data::RawDataChunk::from_segment(
+                            segment_id,
+                            d.data,
+                            name,
+                            pow2align,
+                            d.range.end - d.data.len(),
+                        );
+                    };
                     let pow2align = segment_info.alignment.try_into().unwrap();
                     let segment_name = segment_info.name;
                     // Range.start is point to <length> field of data segment.
@@ -417,32 +430,32 @@ impl<'src> Module<'src> {
         let functions = self
             .functions
             .iter()
-            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .filter(|(_, e)| !e.export_as().names.is_empty())
             .map(|(r, _)| r.into());
         let globals = self
             .globals
             .iter()
-            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .filter(|(_, e)| !e.export_as().names.is_empty())
             .map(|(r, _)| r.into());
         let tables = self
             .tables
             .iter()
-            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .filter(|(_, e)| !e.export_as().names.is_empty())
             .map(|(r, _)| r.into());
         let memories = self
             .memories
             .iter()
-            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .filter(|(_, e)| !e.export_as().names.is_empty())
             .map(|(r, _)| r.into());
         let tags = self
             .tags
             .iter()
-            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .filter(|(_, e)| !e.export_as().names.is_empty())
             .map(|(r, _)| r.into());
         let data = self
             .data
             .iter()
-            .filter(|(r, e)| !e.export_as().names.is_empty())
+            .filter(|(_, e)| !e.export_as().names.is_empty())
             .map(|(r, _)| r.into());
         chain!(functions, globals, tables, memories, tags, data)
     }
@@ -481,7 +494,7 @@ impl<'src> Module<'src> {
         let func = self
             .functions
             .iter()
-            .find(|(_, e)| e.name().map_or(false, |n| n == name))?;
+            .find(|(_, e)| e.name().is_some_and(|n| n == name))?;
         Some(func.0)
     }
 
@@ -489,7 +502,7 @@ impl<'src> Module<'src> {
         let global = self
             .globals
             .iter()
-            .find(|(_, e)| e.name().map_or(false, |n| n == name))?;
+            .find(|(_, e)| e.name().is_some_and(|n| n == name))?;
         Some(global.0)
     }
 
@@ -634,7 +647,6 @@ mod tests {
 
     use super::{LoadedFile, Module};
     use crate::{
-        SVec,
         index::GappedMap,
         typed::{ExportNames, ImportedFunction},
     };

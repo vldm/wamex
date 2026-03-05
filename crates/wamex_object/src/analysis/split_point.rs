@@ -1,7 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Debug, Display},
-    ops::Deref,
 };
 
 use anyhow::Context;
@@ -757,6 +756,43 @@ fn calculate_deps(
             (dep_id, dep_symbols)
         })
         .collect()
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct IndirectFnLayout {
+    pub start_dyn: usize,
+    pub dyn_fns: Vec<FlatEntityRef>,
+    snapshot: EntitiesSnapshot,
+}
+
+impl IndirectFnLayout {
+    pub fn new(
+        main_indirect_table_len: usize,
+        split_points: &[SplitPoint],
+        snapshot: EntitiesSnapshot,
+    ) -> Self {
+        let start_dyn = main_indirect_table_len;
+        let dyn_fns = split_points
+            .iter()
+            .map(|sp| sp.export_func())
+            .map(|func| snapshot.pack_ref(func))
+            .collect();
+        Self {
+            start_dyn,
+            dyn_fns,
+            snapshot,
+        }
+    }
+    /// Return place reserved for given split point in the flat indirect functions list.
+    pub fn get_split_point_index(&self, split_point: &SplitPoint) -> usize {
+        let id = self.snapshot.pack_ref(split_point.export_func());
+        self.start_dyn
+            + self
+                .dyn_fns
+                .iter()
+                .position(|f| *f == id)
+                .expect("Split point export function not found in indirect functions layout")
+    }
 }
 
 #[cfg(test)]

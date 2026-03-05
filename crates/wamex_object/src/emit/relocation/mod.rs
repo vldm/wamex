@@ -9,17 +9,59 @@
 //!    1.2. map from (file, entity) -> output entity - find coresponding entity in output module, which will be used for relocation.
 //! 2. Offset calculation/encoding - calculate final offset for each relocation and encode it in output module.
 //!
+//! ## Design notes for wamex-split:
+//!
+//! Code can be only in current module, all external fns symbols are either:
+//! - direct import
+//! - trampoline to some indirect import, which in general needs GOT base, but we use fixed offsets in indirect calls
+//!   (part of layout externally calculated).
+//!
+//! Data cannot be imported directly, but we have "imported" markers for consistency.
+//! To process imported relocs we need to know memory layout of ALL external modules deps,
+//! and we need to import GOT base for each dep module.
+//! All access in should be patched from absolute offsets to GOT+offset - this is done in `modify::code_abs_to_got` module.
+//! Access in data is converted to dyn relocate by `modify::data_abs_to_dyn` module (with start fn that init data offsets).
+//!
+//! The main rule for accessing data entities is:
+//! - main module, or current module should be referenced by offset
+//! - other modules should be converted to GOT + offset.
+//!   for this purposes, we need to have `entity -> (got?,offset)` mapping per each module.
+//!
+//!
+
+// For relocs, we need to know:
+// - is it symbol rel based/or absolute.
+// - what GOT entry we need.
+//   so before processing relocs we need to provide:
+//
+// Common:
+// - Vec<MemLayout> for each module
+// - parents module: IndirectFnLayout
+//
+// Local info:
+// - Map<ImportDataSymbolRef, GotRef> // builded with module itself
+//
 
 pub mod encode;
-pub mod file_mapping;
+pub mod resolver;
 
-use cranelift_entity::packed_option::ReservedValue;
+use cranelift_entity::{PrimaryMap, SecondaryMap, packed_option::ReservedValue};
+use wasmparser::Data;
 
 use crate::{
+    analysis::SplitPoint,
+    emit::memory_layout::DataSymbolsOffsets,
     index::GappedMap,
+    linkage::{
+        file_db::EntityRelocationEntry,
+        reloc::{Encoding, EntityAddressMode, RelocationWidth},
+    },
+    raw::ElementId,
     typed::{
-        FileId,
+        FileId, FunctionRef, GlobalRef, Module,
         common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+        data::DataSymbolRef,
+        elements::ElementItemId,
     },
 };
 
@@ -41,23 +83,101 @@ impl<Entity> EntityLocation<Entity> {
         }
     }
 }
-
-impl ReservedValue for EntityLocation {
-    fn is_reserved_value(&self) -> bool {
-        self.file_id.is_reserved_value() && self.entity.is_reserved_value()
-    }
-
-    fn reserved_value() -> Self {
-        EntityLocation {
-            file_id: ReservedValue::reserved_value(),
-            entity: EntityKind::reserved_value(),
-        }
-    }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FunctionInfo {
+    pub code_offset: usize,
+    pub indirect_table_id: Option<ElementItemId>,
 }
 
-impl Default for EntityLocation {
-    fn default() -> Self {
-        Self::reserved_value()
+/// Module layout suitable for applying relocates.
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModuleLayout {
+    pub code_start: usize,
+    pub data_start: usize,
+    /// Mapping from function reference to its offset in code section.
+    pub functions_mapping: SecondaryMap<FunctionRef, FunctionInfo>,
+    /// Mapping of module data symbols, to their offsets.
+    pub data_mapping: DataSymbolsOffsets,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ImportedDataChunk {
+    /// Module where data chunk is defined
+    pub ouput_location: EntityLocation<DataSymbolRef>,
+    /// GOT base of module where data chunk is defined
+    pub got_entry: GlobalRef,
+}
+
+pub struct RelocationState<'any, 'src> {
+    current_module: &'any Module<'src>,
+    current_module_layout: &'any ModuleLayout,
+    imported_data: GappedMap<DataSymbolRef, ImportedDataChunk>,
+    all_modules_layout: &'any PrimaryMap<FileId, ModuleLayout>,
+}
+
+impl<'any, 'src> RelocationState<'any, 'src> {
+    fn apply_relocation(&self, data: &mut [u8], reloc: &EntityRelocationEntry) {
+        let target_range = reloc.relocation_range();
+
+        // TODO: Check whitelisted relocation combinations.
+
+        let value = match reloc.symbol.address {
+            EntityAddressMode::StaticIndex => reloc.symbol.ty.to_inner_u32(),
+            EntityAddressMode::RuntimeAddr => match reloc.symbol.ty {
+                EntityKind::Function(f) => self.current_module_layout.functions_mapping[f]
+                    .indirect_table_id
+                    .expect("Relocation refers to function without indirect table entry")
+                    .as_u32(),
+                EntityKind::DataSymbol(d) => {
+                    self.current_module_layout.data_mapping[d]
+                        .expect("Relocation refers to data symbol outside of module layout")
+                        .addr_of_symbol as u32
+                }
+                ty => panic!("Relocation for symbol type {ty:?} doesn't have runtime addr"),
+            },
+            EntityAddressMode::BaseStaticIndex => match reloc.symbol.ty {
+                EntityKind::DataSymbol(d) => {
+                    let imported_data = self
+                        .imported_data
+                        .get(d)
+                        .expect("Cannot find imported data symbol for relocation: {reloc:?}");
+                    imported_data.got_entry.as_u32()
+                }
+                ty => panic!(
+                    "Relocation for symbol type {ty:?} cannot have base static index or not implemented."
+                ),
+            },
+            EntityAddressMode::FileOffset => {
+                todo!()
+            }
+        };
+
+        Self::encode(&mut data[target_range], value, reloc.encoding, reloc.width);
+    }
+
+    fn encode(target: &mut [u8], value: u32, encoding: Encoding, width: RelocationWidth) {
+        use encode::*;
+        match (encoding, width) {
+            (Encoding::Fixed, RelocationWidth::Bits32) => {
+                encode_u32(value, target.try_into().unwrap())
+            }
+            (Encoding::Leb, RelocationWidth::Bits32) => {
+                encode_leb128_u32_5byte(value, target.try_into().unwrap())
+            }
+            (Encoding::Sleb, RelocationWidth::Bits32) => {
+                encode_leb128_i32_5byte(value as i32, target.try_into().unwrap())
+            }
+            (Encoding::Fixed, RelocationWidth::Bits64) => {
+                encode_u64(value as u64, target.try_into().unwrap())
+            }
+            (Encoding::Leb, RelocationWidth::Bits64) => {
+                encode_leb128_u64_10byte(value as u64, target.try_into().unwrap())
+            }
+            (Encoding::Sleb, RelocationWidth::Bits64) => {
+                encode_leb128_i64_10byte(value as i64, target.try_into().unwrap())
+            }
+        }
     }
 }
 
@@ -611,3 +731,40 @@ impl Default for EntityLocation {
 //         &self.computed_modules.main_module
 //     }
 // }
+
+impl<E: ReservedValue> ReservedValue for EntityLocation<E> {
+    fn is_reserved_value(&self) -> bool {
+        self.file_id.is_reserved_value() && self.entity.is_reserved_value()
+    }
+
+    fn reserved_value() -> Self {
+        EntityLocation {
+            file_id: ReservedValue::reserved_value(),
+            entity: E::reserved_value(),
+        }
+    }
+}
+
+impl Default for EntityLocation {
+    fn default() -> Self {
+        Self::reserved_value()
+    }
+}
+
+impl ReservedValue for ImportedDataChunk {
+    fn is_reserved_value(&self) -> bool {
+        self.got_entry.is_reserved_value() && self.ouput_location.is_reserved_value()
+    }
+    fn reserved_value() -> Self {
+        ImportedDataChunk {
+            got_entry: ReservedValue::reserved_value(),
+            ouput_location: ReservedValue::reserved_value(),
+        }
+    }
+}
+
+impl Default for ImportedDataChunk {
+    fn default() -> Self {
+        Self::reserved_value()
+    }
+}
