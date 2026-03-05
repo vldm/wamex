@@ -20,8 +20,8 @@ use crate::{
     index::{Building, CompoundList, Locked},
     linkage::{
         LinkageInfo,
-        file_db::{self, EntityRelocationEntry, FileRelocs},
-        reloc::EntityAddressMode,
+        file_db::{self, FileRelocs},
+        reloc::{EntityAddressMode, EntityRelocationEntry},
     },
     raw::{self, ImportId},
     typed::entities::common_index::EntityKind,
@@ -510,8 +510,8 @@ impl<'src> Module<'src> {
         let mut result: SecondaryMap<FunctionRef, bool> = SecondaryMap::new();
 
         let mut visit_reloc = |reloc: &EntityRelocationEntry| {
-            if let EntityKind::Function(func_ref) = reloc.symbol.ty
-                && reloc.symbol.address == EntityAddressMode::RuntimeAddr
+            if let EntityKind::Function(func_ref) = reloc.symbol_id
+                && reloc.symbol_op == EntityAddressMode::RuntimeAddr
             {
                 result[func_ref] = true;
             }

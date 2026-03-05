@@ -52,10 +52,7 @@ use crate::{
     analysis::SplitPoint,
     emit::memory_layout::DataSymbolsOffsets,
     index::GappedMap,
-    linkage::{
-        file_db::EntityRelocationEntry,
-        reloc::{Encoding, EntityAddressMode, RelocationWidth},
-    },
+    linkage::reloc::{Encoding, EntityAddressMode, EntityRelocationEntry, RelocationWidth},
     raw::ElementId,
     typed::{
         FileId, FunctionRef, GlobalRef, Module,
@@ -122,9 +119,9 @@ impl<'any, 'src> RelocationState<'any, 'src> {
 
         // TODO: Check whitelisted relocation combinations.
 
-        let value = match reloc.symbol.address {
-            EntityAddressMode::StaticIndex => reloc.symbol.ty.to_inner_u32(),
-            EntityAddressMode::RuntimeAddr => match reloc.symbol.ty {
+        let value = match reloc.symbol_op {
+            EntityAddressMode::StaticIndex => reloc.symbol_id.to_inner_u32(),
+            EntityAddressMode::RuntimeAddr => match reloc.symbol_id {
                 EntityKind::Function(f) => self.current_module_layout.functions_mapping[f]
                     .indirect_table_id
                     .expect("Relocation refers to function without indirect table entry")
@@ -136,7 +133,7 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                 }
                 ty => panic!("Relocation for symbol type {ty:?} doesn't have runtime addr"),
             },
-            EntityAddressMode::BaseStaticIndex => match reloc.symbol.ty {
+            EntityAddressMode::BaseStaticIndex => match reloc.symbol_id {
                 EntityKind::DataSymbol(d) => {
                     let imported_data = self
                         .imported_data

@@ -163,7 +163,7 @@ pub fn get_dependencies_with_filter(
         let childs = DepMiniSet::from_iter(
             relocs
                 .iter()
-                .map(|r| r.symbol.ty)
+                .map(|r| r.symbol_id)
                 .filter(|er| filter(er))
                 .map(|er| deps.snapshot.pack_ref(er)),
         );

@@ -36,10 +36,18 @@ use crate::{
     typed::{FnTypeRef, FunctionRef, SymbolId, common_index::EntityKind},
 };
 
+/// Index of symbol in `Symbols` table that store information about relocated symbol.
+/// This is generic due to fact that type relocations has no `SymbolId`
+///
+/// Type of symbol stored in `Symbols` table.
+pub type LinkageRelocationEntry = RelocationEntry<SymbolId, SymbolType>;
+
+pub type EntityRelocationEntry = RelocationEntry<EntityKind, EntityAddressMode>;
+
 /// Lossless representation of `wasmparser::RelocationEntry` with type-safe disamiguation of symbol types.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum AnyRelocationEntry {
-    Linkage(RelocationEntry),
+    Linkage(LinkageRelocationEntry),
     Type(TypeRelocationEntry),
 }
 
@@ -47,7 +55,7 @@ impl AnyRelocationEntry {
     /// Get symbol index if this is linkage relocation entry.
     pub fn symbol_id(&self) -> Option<SymbolId> {
         match self {
-            AnyRelocationEntry::Linkage(reloc) => Some(reloc.symbol.id),
+            AnyRelocationEntry::Linkage(reloc) => Some(reloc.symbol_id),
             AnyRelocationEntry::Type(_) => None,
         }
     }
@@ -66,7 +74,7 @@ impl AnyRelocationEntry {
         }
     }
     /// Get linkage relocation entry if applicable.
-    pub fn linkage(&self) -> Option<&RelocationEntry> {
+    pub fn linkage(&self) -> Option<&LinkageRelocationEntry> {
         match self {
             AnyRelocationEntry::Linkage(reloc) => Some(reloc),
             AnyRelocationEntry::Type(_) => None,
@@ -119,13 +127,7 @@ pub enum EntityAddressMode {
     // TODO: Should be combined with entry Relative?.
     BaseStaticIndex,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct EntitySymbol {
-    pub ty: EntityKind,
-    pub address: EntityAddressMode,
-}
-impl EntitySymbol {
+impl EntityAddressMode {
     pub fn from_llvm_relocs(entity_kind: EntityKind, reloc_ty: SymbolType) -> Self {
         let op = match (&entity_kind, reloc_ty) {
             (EntityKind::Function(_), SymbolType::FunctionIndex)
@@ -139,20 +141,7 @@ impl EntitySymbol {
             }
             _ => panic!("Mismatched entity ref and symbol type"),
         };
-        Self {
-            address: op,
-            ty: entity_kind,
-        }
-    }
-    pub fn static_index(entity_kind: EntityKind) -> Self {
-        assert!(
-            !matches!(entity_kind, EntityKind::DataSymbol(_)),
-            "Unsupported entity ref for simple index symbol"
-        );
-        Self {
-            address: EntityAddressMode::StaticIndex,
-            ty: entity_kind,
-        }
+        op
     }
 }
 
@@ -164,14 +153,16 @@ impl EntitySymbol {
 /// - application of symbol offset.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct RelocationEntry<Symbol = LinkageSymbol> {
+pub struct RelocationEntry<SymbolIndex, SymbolOp> {
     /// Optional addend to be added to the resulting value.
     pub addend: i64,
     /// Offset in bytes from the start of the symbol definition
     /// targeted by this relocation.
     pub offset: u32,
     /// Symbol implementation representing reference relocated entity.
-    pub symbol: Symbol,
+    pub symbol_id: SymbolIndex,
+    /// Extra information about symbol, e.g. type of symbol in symbol table, or addressing mode of symbol.
+    pub symbol_op: SymbolOp,
     /// Information about global variable base, if this is position independent relocation.
     pub relation: Relative,
     /// Representation of resulting value in the output binary.
@@ -181,7 +172,7 @@ pub struct RelocationEntry<Symbol = LinkageSymbol> {
     pub width: RelocationWidth,
 }
 
-impl<Index> RelocationEntry<Index> {
+impl<Index, Op> RelocationEntry<Index, Op> {
     pub fn relocation_range(&self) -> std::ops::Range<usize> {
         let start = self.offset as usize;
         let len = self.extent();
@@ -370,10 +361,8 @@ impl AnyRelocationEntry {
         Self::Linkage(RelocationEntry {
             offset: (entry.offset as isize + entry_offset) as u32,
             addend: entry.addend,
-            symbol: LinkageSymbol {
-                id: SymbolId::from_u32(entry.index),
-                ty: symbol_type,
-            },
+            symbol_id: SymbolId::from_u32(entry.index),
+            symbol_op: symbol_type,
             relation,
             encoding,
             width,
@@ -397,7 +386,7 @@ impl RangeExt for AnyRelocationEntry {
     }
 }
 
-impl<Any: Clone> RangeExt for RelocationEntry<Any> {
+impl<Any: Clone, Other: Clone> RangeExt for RelocationEntry<Any, Other> {
     fn shift_left(&self, offset: usize) -> Self {
         let mut modified = self.clone();
         modified.offset = modified.offset.checked_sub(offset as u32).unwrap();
@@ -413,8 +402,11 @@ impl<Any: Clone> RangeExt for RelocationEntry<Any> {
 // Check size compatibility with wasmparser::RelocationEntry
 const _ASSERT_SIZE: () = const {
     // Because type entry doesn't have addend - enum tag can be packed and resulting size remains equal to non decomposed version.
-    assert!(size_of::<RelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());
-    assert!(align_of::<RelocationEntry>() <= align_of::<wasmparser::RelocationEntry>());
+    assert!(size_of::<LinkageRelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());
+    assert!(align_of::<LinkageRelocationEntry>() <= align_of::<wasmparser::RelocationEntry>());
+
+    assert!(size_of::<EntityRelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());
+    assert!(align_of::<EntityRelocationEntry>() <= align_of::<wasmparser::RelocationEntry>());
 };
 
 #[cfg(test)]
@@ -425,15 +417,20 @@ mod tests {
         use std::mem::{align_of, size_of};
         println!(
             "Size of LinkageRelocation: {}",
-            size_of::<super::RelocationEntry>()
+            size_of::<super::LinkageRelocationEntry>()
         );
 
         println!(
             "Size of wasmparser::RelocationEntry: {}",
             size_of::<wasmparser::RelocationEntry>()
         );
-        assert!(size_of::<super::RelocationEntry>() <= size_of::<wasmparser::RelocationEntry>());
+        assert!(
+            size_of::<super::LinkageRelocationEntry>() <= size_of::<wasmparser::RelocationEntry>()
+        );
 
-        assert!(align_of::<super::RelocationEntry>() <= align_of::<wasmparser::RelocationEntry>());
+        assert!(
+            align_of::<super::LinkageRelocationEntry>()
+                <= align_of::<wasmparser::RelocationEntry>()
+        );
     }
 }

@@ -11,7 +11,7 @@ use anyhow::{Result, bail, ensure};
 use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 use wasmparser::{GlobalType, Operator};
 
-use super::{Cursor, HandleReloc, ModificationEntry, ModifyOrReloc, RelocationEntry};
+use super::{Cursor, HandleReloc, ModificationEntry, ModifyOrReloc};
 use crate::{
     SVec,
     emit::{
@@ -20,7 +20,7 @@ use crate::{
     },
     index::GappedMap,
     linkage::reloc::{
-        Encoding, EntityAddressMode, EntitySymbol, Relative, RelocationWidth, SymbolType,
+        Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth, SymbolType,
     },
     typed::{
         DefinedGlobal, EntityBody, ExportNames, FileId, GlobalRef, common_index::EntityKind,
@@ -100,7 +100,7 @@ impl CodeRelocationHandler {
         //     always_static_symbols: always_static_symbols.clone(),
         // }
     }
-    pub fn is_dyn_symbol(&self, entry: &RelocationEntry) -> bool {
+    pub fn is_dyn_symbol(&self, entry: &EntityRelocationEntry) -> bool {
         todo!()
         // self.memory_base.is_some()
         //     && !self
@@ -156,7 +156,7 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
     fn create_entry(
         &self,
         buffer: Cursor<'src>,
-        entry: RelocationEntry,
+        entry: EntityRelocationEntry,
     ) -> Result<ModifyOrReloc<Self::ExtraData>> {
         // Only apply if dynamic base is enabled
         // let Some(memory_base) = self.memory_base else {
@@ -185,18 +185,15 @@ impl<'src> CodeRelocationHandler {
         &self,
         memory_base: GlobalRef,
         mut buffer: Cursor<'src>,
-        entry: RelocationEntry,
+        entry: EntityRelocationEntry,
     ) -> Result<ModificationEntry<()>> {
         assert!(matches!(
-            (entry.symbol.ty, entry.encoding),
+            (entry.symbol_id, entry.encoding),
             (EntityKind::Function(_), Encoding::Sleb)
                 | (EntityKind::DataSymbol(_), Encoding::Sleb)
                 | (EntityKind::DataSymbol(_), Encoding::Leb)
         ));
-        assert!(matches!(
-            entry.symbol.address,
-            EntityAddressMode::StaticIndex
-        ));
+        assert!(matches!(entry.symbol_op, EntityAddressMode::StaticIndex));
 
         let ix_size = match entry.encoding {
             Encoding::Leb => 2,  // memoryaddr_leb
@@ -227,10 +224,10 @@ impl<'src> CodeRelocationHandler {
     fn generate_patch(
         &self,
         memory_base: GlobalRef,
-        entry: RelocationEntry,
+        entry: EntityRelocationEntry,
         instruction: wasmparser::Operator<'src>,
     ) -> Result<Rewrite> {
-        let rewrite = match (entry.symbol.ty, entry.encoding) {
+        let rewrite = match (entry.symbol_id, entry.encoding) {
             (EntityKind::DataSymbol(_), Encoding::Leb) => {
                 self.replace_memory_offset_with_global_get(memory_base, entry, instruction)?
             }
@@ -238,7 +235,7 @@ impl<'src> CodeRelocationHandler {
                 self.replace_const_get_with_global_get(memory_base, entry, instruction)?
             }
             (EntityKind::Function(_), Encoding::Sleb)
-                if entry.symbol.address == EntityAddressMode::RuntimeAddr =>
+                if entry.symbol_op == EntityAddressMode::RuntimeAddr =>
             {
                 self.replace_const_get_with_global_get(memory_base, entry, instruction)?
             }
@@ -255,7 +252,7 @@ impl<'src> CodeRelocationHandler {
     fn replace_const_get_with_global_get(
         &self,
         memory_base: GlobalRef,
-        old_entry: RelocationEntry,
+        old_entry: EntityRelocationEntry,
         instruction: Operator<'src>,
     ) -> Result<Rewrite> {
         ensure!(
@@ -283,10 +280,8 @@ impl<'src> CodeRelocationHandler {
 
         new_relocs.push(OutputRelocationEntry {
             // entity should have information about GOT they used, since there maybe more than one.
-            symbol: OutputEntityRef::from_input(EntitySymbol {
-                address: EntityAddressMode::BaseStaticIndex,
-                ty: old_entry.symbol.ty.clone(),
-            }),
+            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
+            symbol_op: old_entry.symbol_op,
             offset: got_rel_offset,
             encoding: Encoding::Leb,
             width: RelocationWidth::Bits32,
@@ -296,7 +291,8 @@ impl<'src> CodeRelocationHandler {
 
         new_relocs.push(OutputRelocationEntry {
             // TODO: Handle old memory index
-            symbol: OutputEntityRef::from_input(old_entry.symbol),
+            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
+            symbol_op: old_entry.symbol_op,
             offset: const_rel_offset,
             relation: Relative::Got,
             encoding: old_entry.encoding,
@@ -329,7 +325,7 @@ impl<'src> CodeRelocationHandler {
     fn replace_memory_offset_with_global_get(
         &self,
         memory_base: GlobalRef,
-        entry: RelocationEntry,
+        entry: EntityRelocationEntry,
         instruction: wasmparser::Operator<'_>,
     ) -> Result<Rewrite> {
         let got_offset = 0;
@@ -352,7 +348,8 @@ impl<'src> CodeRelocationHandler {
             let global_id = *self.global_tmps.get(store_type).unwrap();
             let reloc_offset = writer.global_get(global_id.as_u32())?;
             new_relocs.push(OutputRelocationEntry {
-                symbol: OutputEntityRef::resolved(EntitySymbol::static_index(global_id.into())),
+                symbol_id: OutputEntityRef::resolved(global_id.into()),
+                symbol_op: EntityAddressMode::StaticIndex,
                 offset: reloc_offset,
                 encoding: Encoding::Leb,
                 width: RelocationWidth::Bits32,
@@ -369,7 +366,8 @@ impl<'src> CodeRelocationHandler {
             let global_id = *self.global_tmps.get(store_type).unwrap();
             let reloc_offset = writer.global_get(global_id.as_u32())?;
             new_relocs.push(OutputRelocationEntry {
-                symbol: OutputEntityRef::resolved(EntitySymbol::static_index(global_id.into())),
+                symbol_id: OutputEntityRef::resolved(global_id.into()),
+                symbol_op: EntityAddressMode::StaticIndex,
                 offset: reloc_offset,
                 encoding: Encoding::Leb,
                 width: RelocationWidth::Bits32,
@@ -381,7 +379,8 @@ impl<'src> CodeRelocationHandler {
 
         new_relocs.push(OutputRelocationEntry {
             //TODO: Convert to OutputSymbolId
-            symbol: OutputEntityRef::from_input(entry.symbol),
+            symbol_id: OutputEntityRef::from_input(entry.symbol_id),
+            symbol_op: entry.symbol_op,
             offset: mem_offsets.offset,
             relation: Relative::Got,
 
@@ -467,17 +466,17 @@ impl<'src> CodeRelocationHandler {
         Ok(res)
     }
 
-    pub(crate) fn check_whitelisted_code_relocation(entry: &RelocationEntry) -> Result<()> {
+    pub(crate) fn check_whitelisted_code_relocation(entry: &EntityRelocationEntry) -> Result<()> {
         if matches!(entry.width, RelocationWidth::Bits64) {
             bail!("U64 memory pointers is currently not supported")
         }
         if !matches!(entry.relation, Relative::None) {
             bail!("Relocation memory pointers is currently not supported")
         }
-        if !matches!(entry.symbol.address, EntityAddressMode::RuntimeAddr) {
+        if !matches!(entry.symbol_op, EntityAddressMode::RuntimeAddr) {
             bail!(
                 "Non supported symbol type for code relocation {:?}",
-                entry.symbol.address
+                entry.symbol_op
             )
         }
         Ok(())

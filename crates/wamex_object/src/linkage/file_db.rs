@@ -7,12 +7,11 @@ use crate::{
     helpers::{RangeComp, cmp_range},
     index::GappedMap,
     linkage::reloc::{
-        AnyRelocationEntry, Encoding, EntitySymbol, Relative, RelocationEntry, RelocationWidth,
-        SymbolType,
+        AnyRelocationEntry, Encoding, EntityAddressMode, EntityRelocationEntry, Relative,
+        RelocationEntry, RelocationWidth, SymbolType,
     },
     typed::{FnTypeRef, FunctionRef, SymbolId, common_index::EntityKind, data::DataSymbolRef},
 };
-pub type EntityRelocationEntry = RelocationEntry<EntitySymbol>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelocRange {
@@ -86,11 +85,15 @@ impl FileRelocs {
             .map(|r| match r {
                 AnyRelocationEntry::Linkage(l) => {
                     let offset_info = file_db
-                        .symbol_entity(l.symbol.id)
+                        .symbol_entity(l.symbol_id)
                         .expect("Malformed wasm: relocation references unknown symbol");
-                    let symbol = EntitySymbol::from_llvm_relocs(offset_info.entity, l.symbol.ty);
+
                     RelocationEntry {
-                        symbol,
+                        symbol_id: offset_info.entity,
+                        symbol_op: EntityAddressMode::from_llvm_relocs(
+                            offset_info.entity,
+                            l.symbol_op,
+                        ),
                         offset: l.offset,
                         encoding: l.encoding,
                         width: l.width,
@@ -98,13 +101,14 @@ impl FileRelocs {
                         addend: Self::checked_addend_increase(
                             l.addend,
                             offset_info.offset_in_entity,
-                            l.symbol.ty,
+                            l.symbol_op,
                         ),
                     }
                 }
                 AnyRelocationEntry::Type(t) => RelocationEntry {
                     offset: t.offset,
-                    symbol: EntitySymbol::static_index(EntityKind::Type(t.index)),
+                    symbol_id: t.index.into(),
+                    symbol_op: EntityAddressMode::StaticIndex,
                     encoding: Encoding::Leb,
                     width: RelocationWidth::Bits32,
                     relation: Relative::None,

@@ -6,9 +6,9 @@ use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::FuncType;
 
 use crate::{
-    analysis::{OutputModuleInfo, SplitPoint},
+    analysis::OutputModuleInfo,
     emit::{
-        memory_layout::{DataSymbolsOffsets, SegmentLayout},
+        memory_layout::SegmentLayout,
         modify::OutputEntityRef,
         relocation::{
             EntityLocation, FunctionInfo, ModuleLayout, resolver::OutputEntitiesResolver,
@@ -16,15 +16,12 @@ use crate::{
     },
     helpers::{ShiftMap, ShiftPoint, encoding_size},
     index::{Building, GappedMap},
-    linkage::{
-        file_db::{EntityRelocationEntry, FileRelocs},
-        reloc::EntitySymbol,
-    },
+    linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
     raw::{DataSegmentId, FuncTypeId},
     typed::{
         DefinedFunction, EntityBody, ExportNames, FileId, FileLoader, FunctionRef, ImportedEntity,
         Module,
-        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef, TempEntityKind},
+        common_index::{EntitiesSnapshot, EntityKind, TempEntityKind},
         data::SpecificLocation,
     },
 };
@@ -521,19 +518,19 @@ impl<'src> Module<'src> {
                                 .expect("new relocation cannot be in removed area")
                                 - original_range.start as u32;
 
-                            let symbol = match reloc.symbol {
+                            let symbol = match reloc.symbol_id {
                                 OutputEntityRef::Resolved(v) => v,
-                                OutputEntityRef::FromInput(mut v) => {
-                                    let Some(entity) = resolve_entity(v.ty) else {
+                                OutputEntityRef::FromInput(v) => {
+                                    let Some(entity) = resolve_entity(v) else {
                                         continue;
                                     };
-                                    v.ty = entity;
-                                    v
+                                    entity
                                 }
                             };
                             relocs.push(EntityRelocationEntry {
                                 offset: shifted_offset,
-                                symbol,
+                                symbol_id: symbol,
+                                symbol_op: reloc.symbol_op,
                                 addend: reloc.addend,
                                 relation: reloc.relation,
                                 encoding: reloc.encoding,
@@ -555,8 +552,7 @@ impl<'src> Module<'src> {
                         }
 
                         // id from input file, map to id in output file.
-                        let mut symbol: EntitySymbol = reloc.symbol;
-                        let Some(entity) = resolve_entity(symbol.ty) else {
+                        let Some(entity) = resolve_entity(reloc.symbol_id) else {
                             continue;
                         };
 
@@ -566,10 +562,10 @@ impl<'src> Module<'src> {
                             .expect("relocation cannot be in removed area")
                             - original_range.start as u32; // and then shift to section-relative offset
 
-                        symbol.ty = entity;
                         relocs.push(EntityRelocationEntry {
                             offset: shifted_offset,
-                            symbol,
+                            symbol_id: entity,
+                            symbol_op: reloc.symbol_op,
                             ..*reloc
                         });
                     }

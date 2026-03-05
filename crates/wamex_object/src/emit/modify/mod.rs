@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::{
     SVec,
     emit::modify::cursor::Cursor,
-    linkage::{file_db::EntityRelocationEntry, reloc::EntitySymbol},
+    linkage::reloc::{EntityAddressMode, EntityRelocationEntry},
     typed::common_index::EntityKind,
 };
 
@@ -14,26 +14,28 @@ pub mod wasm_emitter;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum OutputEntityRef {
     /// Entity that already exist in output module.
-    Resolved(EntitySymbol),
+    Resolved(EntityKind),
     /// Entity that will be created in output module, but which id need to be resolved.
     /// The resolution bound with `FileId` and can be only done in context of processing some predefined entity from input module.
-    FromInput(EntitySymbol),
+    FromInput(EntityKind),
 }
 impl OutputEntityRef {
-    pub fn from_input(input: EntitySymbol) -> Self {
+    pub fn from_input(input: EntityKind) -> Self {
         Self::FromInput(input)
     }
 
-    pub fn resolved(resolved: EntitySymbol) -> Self {
+    pub fn resolved(resolved: EntityKind) -> Self {
         Self::Resolved(resolved)
     }
 }
 
-pub type OutputRelocationEntry = crate::linkage::reloc::RelocationEntry<OutputEntityRef>;
-type RelocationEntry = EntityRelocationEntry;
-
+pub type OutputRelocationEntry =
+    crate::linkage::reloc::RelocationEntry<OutputEntityRef, EntityAddressMode>;
 const _ASSERT_SIZE: () = {
-    assert!(std::mem::size_of::<OutputRelocationEntry>() == std::mem::size_of::<RelocationEntry>());
+    assert!(
+        std::mem::size_of::<OutputRelocationEntry>()
+            >= std::mem::size_of::<EntityRelocationEntry>()
+    );
 };
 
 /// Body + relocations related to body.
@@ -42,7 +44,7 @@ pub struct RelocTarget<'any, 'src> {
     pub body: &'src [u8],
     /// Offset of body related to start of segment, needed for shift of relocations.
     pub start_offset: usize,
-    pub entries: &'any [RelocationEntry],
+    pub entries: &'any [EntityRelocationEntry],
 }
 ///
 /// Represents a rewrite operation that modifies a specific range of bytes.
@@ -73,7 +75,7 @@ pub struct ModificationEntry<D = ()> {
     /// It could be replacing of
     pub rewrite: Option<Rewrite>,
     // Debug?/Trace info about original relocation
-    pub original_reloc: RelocationEntry,
+    pub original_reloc: EntityRelocationEntry,
     // if this reloc needs to be handled with extra data
     pub extra_info: D,
 }
@@ -82,7 +84,7 @@ pub struct ModificationEntry<D = ()> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModifyOrReloc<D> {
     Modify(ModificationEntry<D>),
-    OriginalReloc(RelocationEntry),
+    OriginalReloc(EntityRelocationEntry),
 }
 
 /// Implementation of modification routine.
@@ -106,7 +108,7 @@ pub trait HandleReloc<'src> {
     fn create_entry(
         &self,
         buffer: Cursor<'src>,
-        entry: RelocationEntry,
+        entry: EntityRelocationEntry,
     ) -> Result<ModifyOrReloc<Self::ExtraData>>;
 
     fn create_entries(

@@ -9,7 +9,7 @@ use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
     emit::modify::{OutputEntityRef, Rewrite},
-    linkage::reloc::{EntitySymbol, RelocationEntry},
+    linkage::reloc::EntityRelocationEntry,
     raw::{self, FunctionWithBody},
     typed::{self},
 };
@@ -257,7 +257,7 @@ pub enum EntityBody<'src> {
         ///
         /// This kind of body, cannot use entities from input module (like in EntityBody::Copied),
         /// because we doesn't store FileId for them.
-        new_relocs: SVec<RelocationEntry<EntitySymbol>, 2>,
+        new_relocs: SVec<EntityRelocationEntry, 2>,
         new_bytes: SVec<u8, 32>,
     },
 }
@@ -475,6 +475,6 @@ pub fn read_exports<'a>(reader: &crate::raw::ObjectReader<'a>) -> crate::Result<
 }
 
 const _ASSERT_SIZE: () = {
-    assert!(std::mem::size_of::<RelocationEntry<EntitySymbol>>() == 32);
-    assert!(std::mem::size_of::<EntityBody>() == 128);
+    assert!(std::mem::size_of::<EntityRelocationEntry>() == 24);
+    assert!(std::mem::size_of::<EntityBody>() == 112);
 };
