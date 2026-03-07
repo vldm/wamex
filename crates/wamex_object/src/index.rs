@@ -151,11 +151,17 @@ where
             .iter()
             .filter_map(|(k, v)| v.expand_ref().map(|v| (k, v)))
     }
-    pub fn next_key(&self) -> K {
+    pub fn last_key(&self) -> Option<K> {
         self.map
             .iter()
-            .next_back()
-            .map(|(k, _)| K::new(k.index() + 1))
+            .rev()
+            .filter(|(_, v)| !v.is_none())
+            .next()
+            .map(|(k, _)| k)
+    }
+    pub fn next_key(&self) -> K {
+        self.last_key()
+            .map(|k| K::new(k.index() + 1))
             .unwrap_or(K::new(0))
     }
     pub fn len(&self) -> usize {

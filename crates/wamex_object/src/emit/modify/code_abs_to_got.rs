@@ -20,7 +20,7 @@ use crate::{
     },
     index::GappedMap,
     linkage::reloc::{
-        Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth, SymbolType,
+        Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
     },
     typed::{
         DefinedGlobal, EntityBody, ExportNames, FileId, GlobalRef, common_index::EntityKind,

@@ -68,6 +68,10 @@ impl FileLoader {
         Ok(id)
     }
 
+    pub(crate) fn first_file_id(&self) -> Option<FileId> {
+        self.files_readers.iter().next().map(|(id, _)| id)
+    }
+
     pub fn get_file(&self, file_id: FileId) -> &LoadedFile<'_> {
         self.files_readers.get(file_id).unwrap().get()
     }
@@ -371,12 +375,12 @@ impl<'src> Module<'src> {
             .find(|(name, _)| *name == "__indirect_function_table")
             .unwrap_or_else(|| {
                 assert!(
-                    tables.items.defined.len() == 1,
+                    tables.len() == 1,
                     "No named __indirect_function_table was found, and there is not one table in the module."
                 );
                 (
                     "__indirect_function_table".into(),
-                    tables.defined_iter().next().unwrap().0,
+                    tables.iter().next().unwrap().0,
                 )
             })
     }
@@ -388,13 +392,10 @@ impl<'src> Module<'src> {
             .find(|(name, _)| *name == "__base_memory")
             .unwrap_or_else(|| {
                 assert!(
-                    memories.items.defined.len() == 1,
+                    memories.len() == 1,
                     "No named __base_memory was found, and there is not one memory in the module."
                 );
-                (
-                    "__base_memory".into(),
-                    memories.defined_iter().next().unwrap().0,
-                )
+                ("__base_memory".into(), memories.iter().next().unwrap().0)
             })
     }
 

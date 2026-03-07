@@ -69,7 +69,8 @@ pub struct ElementTable<T: ReservedValue + Clone> {
     pub items: GappedMap<ElementItemId, T>,
     /// Enforce item strarting from ElementId to be placed in new segment.
     pub extra_segments: SVec<ElementItemId>,
-    /// Location of element segment
+    /// Location of element segments
+    // TODO: support different locations for different segments, to combine GOT and absolute addressing for one table.
     pub location: SpecificLocation,
 }
 

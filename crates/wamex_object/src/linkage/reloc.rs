@@ -129,7 +129,7 @@ pub enum EntityAddressMode {
 }
 impl EntityAddressMode {
     pub fn from_llvm_relocs(entity_kind: EntityKind, reloc_ty: SymbolType) -> Self {
-        let op = match (&entity_kind, reloc_ty) {
+        match (&entity_kind, reloc_ty) {
             (EntityKind::Function(_), SymbolType::FunctionIndex)
             | (EntityKind::Global(_), SymbolType::GlobalIndex)
             | (EntityKind::Table(_), SymbolType::TableNumber) => EntityAddressMode::StaticIndex,
@@ -140,8 +140,7 @@ impl EntityAddressMode {
                 panic!("Unsupported entity ref for relocation")
             }
             _ => panic!("Mismatched entity ref and symbol type"),
-        };
-        op
+        }
     }
 }
 
@@ -276,7 +275,7 @@ pub enum Relative {
     Got,
     /// Data Symbol relative to `__tls_base` global
     Tls,
-    /// Data Symbol relative to it's location in memory
+    /// Data Symbol relative to it's location in memory (addr = addend - offset)
     LocRel,
 }
 

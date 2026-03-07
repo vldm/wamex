@@ -85,9 +85,11 @@ impl DepGraph {
     pub fn get_children(&self, key: FlatEntityRef) -> Option<&DepMiniSet> {
         self.nodes.get(key).map(|s| &s.childs)
     }
+
     pub fn get_parents(&self, key: FlatEntityRef) -> Option<&DepMiniSet> {
         self.nodes.get(key).map(|s| &s.parents)
     }
+
     pub fn iter_childs(&self) -> impl Iterator<Item = (FlatEntityRef, &DepMiniSet)> {
         self.nodes.iter().map(|(k, v)| (k, &v.childs))
     }

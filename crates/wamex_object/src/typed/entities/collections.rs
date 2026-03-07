@@ -29,7 +29,9 @@ use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef, types::ExportEntry};
 use crate::{
-    index::{Building, CompoundList, GappedMap, ImportOrDefined, Locked, NonDefault, TempIndex},
+    index::{
+        Building, CompoundList, GappedMap, ImportOrDefined, Locked, NonDefault, Temp, TempIndex,
+    },
     raw::FuncTypeId,
     typed::{
         DefinedDataChunk, DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag,
@@ -162,6 +164,9 @@ where
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    pub fn stable_id(&self, entity: Temp<Ref>) -> Ref {
+        self.items.stable_id(entity)
     }
     pub fn add_exports(&mut self, entity: Ref, export_name: Cow<'src, str>)
     where

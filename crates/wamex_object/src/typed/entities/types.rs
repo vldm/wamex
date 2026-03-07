@@ -2,13 +2,12 @@ use std::{borrow::Cow, ops::Range};
 
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::EntityRef;
-use smallvec::SmallVec;
 use wasmparser::TypeRef;
 
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
-    emit::modify::{OutputEntityRef, Rewrite},
+    emit::modify::Rewrite,
     linkage::reloc::EntityRelocationEntry,
     raw::{self, FunctionWithBody},
     typed::{self},
@@ -34,7 +33,7 @@ impl<'src> ExportNames<'src> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ImportedEntity<'src, Type> {
     pub module: Cow<'src, str>,
     pub name: Cow<'src, str>,
