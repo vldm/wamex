@@ -11,19 +11,15 @@ use anyhow::{Result, bail, ensure};
 use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 use wasmparser::{GlobalType, Operator};
 
-use super::{Cursor, HandleReloc, ModificationEntry, ModifyOrReloc};
+use super::{Cursor, HandleFixups};
 use crate::{
     SVec,
-    emit::{
-        modify::{OutputEntityRef, OutputRelocationEntry, Rewrite, wasm_emitter::MemArgOffsets},
-        relocation::EntityLocation,
-    },
-    index::GappedMap,
+    emit::modify::{OutputEntityRef, OutputRelocationEntry, Rewrite, wasm_emitter::MemArgOffsets},
     linkage::reloc::{
         Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
     },
     typed::{
-        DefinedGlobal, EntityBody, ExportNames, FileId, GlobalRef,
+        DefinedGlobal, EntityBody, ExportNames, GlobalRef,
         common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
         data::SpecificLocation,
     },
@@ -86,31 +82,32 @@ pub struct CodeAbsToGot<'a> {
     pub global_tmps: BTreeMap<StoreType, GlobalRef>,
     // Symbols (in input space) that need to be always treated as static (not converted to GOT-relative)
     pub always_static_symbols: &'a BTreeSet<FlatEntityRef>,
-    pub snapshot: &'a EntitiesSnapshot,
+    pub input_snapshot: &'a EntitiesSnapshot,
 }
 
 impl<'a> CodeAbsToGot<'a> {
     pub fn new(
         always_static_symbols: &'a BTreeSet<FlatEntityRef>,
-        snapshot: &'a EntitiesSnapshot,
+        input_snapshot: &'a EntitiesSnapshot,
+        builder: &mut crate::typed::ModuleBuilder<'_>,
     ) -> Self {
-        Self {
+        let mut instance = Self {
             global_tmps: BTreeMap::new(),
             always_static_symbols,
-            snapshot,
-        }
+            input_snapshot,
+        };
+        instance.setup(builder).unwrap();
+        instance
     }
     pub fn is_dyn_symbol(&self, sym: &EntityKind) -> bool {
-        let sym = self.snapshot.pack_ref(*sym);
+        let sym = self.input_snapshot.pack_ref(*sym);
         // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
         // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
         !self.always_static_symbols.contains(&sym)
     }
-}
 
-impl<'src> HandleReloc<'src> for CodeAbsToGot<'_> {
-    type ExtraData = ();
-    fn setup(&mut self, builder: &mut crate::typed::ModuleBuilder<'src>) -> Result<()> {
+    /// Module related configuration.
+    fn setup(&mut self, builder: &mut crate::typed::ModuleBuilder<'_>) -> Result<()> {
         let memory_base = match builder.mem_spec.mem_start {
             SpecificLocation::GotBased { global, .. } => Some(global),
             _ => None,
@@ -146,31 +143,34 @@ impl<'src> HandleReloc<'src> for CodeAbsToGot<'_> {
         // self.memory_base = memory_base;
         Ok(())
     }
+}
 
+impl<'src> HandleFixups<'src> for CodeAbsToGot<'_> {
+    type ExtraData = ();
     fn create_entry(
         &self,
         buffer: Cursor<'src>,
         entry: EntityRelocationEntry,
-    ) -> Result<ModifyOrReloc<Self::ExtraData>> {
+    ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
         // TODO: move outside of this creation
         if let Err(e) = Self::check_whitelisted_code_relocation(&entry) {
             log::trace!(
                 "Relocation entry {:#?} is not suitable for code modification: {e}",
                 entry,
             );
-            return Ok(ModifyOrReloc::OriginalReloc(entry));
+            return Ok(None);
         }
 
         match entry.symbol_id {
             EntityKind::DataSymbol(_) | EntityKind::Function(_)
                 if self.is_dyn_symbol(&entry.symbol_id) =>
             {
-                return self.new_entry(buffer, entry).map(ModifyOrReloc::Modify);
+                return self.new_entry(buffer, entry);
             }
             _ => {}
         }
 
-        Ok(ModifyOrReloc::OriginalReloc(entry))
+        Ok(None)
     }
 }
 
@@ -179,7 +179,7 @@ impl<'src> CodeAbsToGot<'_> {
         &self,
         mut buffer: Cursor<'src>,
         entry: EntityRelocationEntry,
-    ) -> Result<ModificationEntry<()>> {
+    ) -> Result<Option<(Rewrite, ())>> {
         log::debug!("Creating modification entry for {:#?}", entry);
         assert!(matches!(
             (entry.symbol_id, entry.encoding),
@@ -208,11 +208,7 @@ impl<'src> CodeAbsToGot<'_> {
             instr
         };
 
-        Ok(ModificationEntry {
-            rewrite: Some(self.generate_patch(entry, instruction)?),
-            original_reloc: entry,
-            extra_info: (),
-        })
+        Ok(Some((self.generate_patch(entry, instruction)?, ())))
     }
 
     fn generate_patch(

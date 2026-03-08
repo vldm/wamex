@@ -1,11 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use anyhow::Result;
-use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::{FuncType, GlobalType};
@@ -15,7 +14,7 @@ use crate::{
     emit::{
         memory_layout::SegmentLayout,
         modify::{
-            HandleReloc, ModifyOrReloc, OutputEntityRef, RelocTarget,
+            OutputEntityRef,
             code_abs_to_got::{CodeAbsToGot, GotInfo},
         },
         relocation::{
@@ -28,8 +27,8 @@ use crate::{
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
     raw::{DataSegmentId, FuncTypeId},
     typed::{
-        Building, DefinedFunction, EntityBody, ExportNames, FileId, FileLoader, FunctionRef,
-        GlobalRef, ImportOrDefined, ImportedEntity, Module, TableRef,
+        Building, DefinedEntity, DefinedFunction, EntityBody, EntityBodyCopy, ExportNames, FileId,
+        FileLoader, FunctionRef, GlobalRef, ImportOrDefined, ImportedEntity, Module, TableRef,
         common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef, TempEntityKind},
         data::SpecificLocation,
         elements::ElementItemId,
@@ -517,12 +516,12 @@ impl<'src> Module<'src> {
             let start = relocs.len();
 
             match body {
-                EntityBody::Copied {
-                    patches,
+                EntityBody::Copied(EntityBodyCopy {
+                    fixups: patches,
                     filtered_relocs,
                     original_range,
                     ..
-                } => {
+                }) => {
                     let mut shift_map = ShiftMap::default();
                     for patch in patches {
                         // Apply shifts to patch relocations (this is done before adding patch shift point)
@@ -650,15 +649,17 @@ struct SplitModule<'src> {
 fn create_split_module<'src>(
     input_files: &FileLoader,
     input_file: FileId,
-    src: &Module<'src>,          // tmp field, should be FileLoader instead.
-    snapshot: &EntitiesSnapshot, // this is
+    src: &Module<'src>,             // tmp field, should be FileLoader instead.
+    snapshot: &'_ EntitiesSnapshot, // this is
     output_info: &OutputModuleInfo,
     static_symbols: &BTreeSet<FlatEntityRef>,
     is_main: bool,
 ) -> Result<SplitModule<'src>> {
     let src_file = input_files.get_file(input_file);
-    let mut code_modifier = (!is_main).then(|| CodeAbsToGot::new(static_symbols, snapshot));
     let mut module: Module<'src, Building> = Module::new();
+
+    let code_modifier =
+        (!is_main).then(|| CodeAbsToGot::new(static_symbols, snapshot, &mut module));
     // map of entities from input file to entities in output module.
     let mut file_info = OutputEntitiesResolver::new();
 
@@ -672,55 +673,31 @@ fn create_split_module<'src>(
                 let new = match src.functions.get_entity(f) {
                     ImportOrDefined::Import(i) => module.functions.push_import(i.clone()),
                     ImportOrDefined::Defined(d) => {
-                        if let Some(modifier) = &mut code_modifier {
+                        let new_body = if let Some(modifier) = &code_modifier {
                             // todo: RemoveReloc target use EntityBody directly
-                            let EntityBody::Copied {
-                                original_range,
-                                bytes,
-                                patches,
-                                ..
-                            } = &d.body
-                            else {
+                            let EntityBody::Copied(b) = &d.body else {
                                 panic!(
                                     "Trying to modify already modified function {f} has body {:#?}",
                                     d.body
                                 );
                             };
-                            assert!(patches.is_empty());
-                            let mut new_filtered = CompoundBitSet::new();
-                            let mut new_patches = Vec::new();
+                            assert!(b.fixups.is_empty());
+                            let relocs = src_file
+                                .relocs
+                                .get_entity_relocs(f.into())
+                                .unwrap_or_default();
+                            let mut modified_body = b.clone();
+                            modify::create_fixup_for_entity(&mut modified_body, relocs, modifier)?;
 
-                            let target = RelocTarget {
-                                body: bytes,
-                                entries: src_file
-                                    .relocs
-                                    .get_entity_relocs(f.into())
-                                    .unwrap_or_default(),
-                                start_offset: original_range.start,
-                            };
-                            let modified_body = modifier.create_entries(target)?;
-                            for (idx, i) in modified_body.into_iter().enumerate() {
-                                log::debug!("{idx}:new reloc for function {f}: {:#?}", i);
-
-                                if let ModifyOrReloc::Modify(v) = i {
-                                    new_filtered.insert(idx);
-                                    new_patches.extend(v.rewrite);
-                                }
+                            DefinedEntity {
+                                body: modified_body.into(),
+                                // type/names/exports remain the same.
+                                ..d.clone()
                             }
-                            module.functions.push_defined(DefinedFunction {
-                                entity_type: d.entity_type.clone(),
-                                body: EntityBody::Copied {
-                                    bytes,
-                                    original_range: original_range.clone(),
-                                    patches: new_patches,
-                                    filtered_relocs: new_filtered,
-                                },
-                                name: d.name.clone(),
-                                export_as: d.export_as.clone(),
-                            })
                         } else {
-                            module.functions.push_defined(d.clone())
-                        }
+                            d.clone()
+                        };
+                        module.functions.push_defined(new_body)
                     }
                 };
                 used_queue.push((EntityLocation::from_parts(input_file, f.into()), new.into()));

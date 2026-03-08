@@ -5,7 +5,7 @@ use crate::{
     emit::modify::cursor::Cursor,
     helpers::RangeExt,
     linkage::reloc::{EntityAddressMode, EntityRelocationEntry},
-    typed::common_index::EntityKind,
+    typed::{EntityBodyCopy, common_index::EntityKind},
 };
 
 pub mod code_abs_to_got;
@@ -32,21 +32,7 @@ impl OutputEntityRef {
 
 pub type OutputRelocationEntry =
     crate::linkage::reloc::RelocationEntry<OutputEntityRef, EntityAddressMode>;
-const _ASSERT_SIZE: () = {
-    assert!(
-        std::mem::size_of::<OutputRelocationEntry>()
-            >= std::mem::size_of::<EntityRelocationEntry>()
-    );
-};
 
-/// Body + relocations related to body.
-#[derive(Debug, Clone, Copy)]
-pub struct RelocTarget<'any, 'src> {
-    pub body: &'src [u8],
-    /// Offset of body related to start of segment, needed for shift of relocations.
-    pub start_offset: usize,
-    pub entries: &'any [EntityRelocationEntry],
-}
 ///
 /// Represents a rewrite operation that modifies a specific range of bytes.
 /// It can be new instructions or data placement, inside `Symbol`.
@@ -83,67 +69,64 @@ pub struct ModificationEntry<D = ()> {
     pub extra_info: D,
 }
 
-/// Represents either a modification entry or a relocation entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModifyOrReloc<D> {
-    Modify(ModificationEntry<D>),
-    OriginalReloc(EntityRelocationEntry),
-}
-
 /// Implementation of modification routine.
 /// Allows adding patches to the original code based on the original relocation entries.
 ///
 /// The main purpose of this patches is to replace some symbol references with other types.
 /// e.g. converting absoulte address to got-relative, or replacing a function call with an indirect call.
-pub trait HandleReloc<'src> {
+pub trait HandleFixups<'src> {
     type ExtraData;
-
-    /// Make setup specific for module
-    ///
-    /// e.g. init some funcs/globals/types in builder
-    /// that will be used during modification entries creation or application.
-    fn setup(&mut self, _builder: &mut crate::typed::ModuleBuilder<'src>) -> Result<()> {
-        Ok(())
-    }
 
     // TODO: Suport modification that need two or more relocs
     // e.g., for got-relative addressing
+    /// Create a modification entry based on the original relocation entry and the current state of the code.
+    /// Return None if no modification is needed for this entry.
     fn create_entry(
         &self,
         buffer: Cursor<'src>,
         entry: EntityRelocationEntry,
-    ) -> Result<ModifyOrReloc<Self::ExtraData>>;
-
-    fn create_entries(
-        &self,
-        target: RelocTarget<'_, 'src>,
-    ) -> Result<Vec<ModifyOrReloc<Self::ExtraData>>> {
-        let mut result = vec![];
-        let mut entries = target.entries.iter().peekable();
-        let mut prev_range = ..0usize;
-
-        while let Some(entry) = entries.next() {
-            let red_after = entries
-                .peek()
-                .map(|e| (e.offset as usize - target.start_offset)..)
-                .unwrap_or(target.body.len()..);
-
-            let entry = entry.shift_left(target.start_offset);
-            let cursor = Cursor::new(target.body, entry.relocation_range(), prev_range, red_after);
-
-            result.push(self.create_entry(cursor, entry)?);
-
-            prev_range = ..entry.offset as usize;
-        }
-        Ok(result)
-    }
-
-    // Handle extra data after all modifications are applied
-    fn finalize(
-        &self,
-        _extra_data: Self::ExtraData,
-        _builder: &mut crate::typed::ModuleBuilder<'src>,
-    ) -> Result<()> {
-        Ok(())
-    }
+    ) -> Result<Option<(Rewrite, Self::ExtraData)>>;
 }
+
+pub fn create_fixup_for_entity<'src, H: HandleFixups<'src>>(
+    entity: &mut EntityBodyCopy<'src>,
+    entity_relocs: &[EntityRelocationEntry],
+    handler: &H,
+) -> Result<Vec<H::ExtraData>> {
+    let mut result = vec![];
+    let mut entries = entity_relocs.iter().peekable();
+    let mut prev_range = ..0usize;
+
+    // TODO: instead of marking buffer - enforce this guarantee in relocation collection.
+
+    while let Some(entry) = entries.next() {
+        let red_after = entries
+            .peek()
+            .map(|e| (e.offset as usize - entity.original_range.start)..)
+            .unwrap_or(entity.bytes.len()..);
+
+        let reloc = entry.shift_left(entity.original_range.start);
+
+        let cursor = Cursor::new(
+            entity.bytes,
+            reloc.relocation_range(),
+            prev_range,
+            red_after,
+        );
+
+        if let Some((rewrite, extra_data)) = handler.create_entry(cursor, reloc)? {
+            entity.fixups.push(rewrite);
+            result.push(extra_data);
+        }
+
+        prev_range = ..reloc.relocation_range().end;
+    }
+    Ok(result)
+}
+
+const _ASSERT_SIZE: () = {
+    assert!(
+        std::mem::size_of::<OutputRelocationEntry>()
+            >= std::mem::size_of::<EntityRelocationEntry>()
+    );
+};

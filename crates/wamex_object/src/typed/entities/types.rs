@@ -53,7 +53,7 @@ pub struct DefinedEntity<'src, Type> {
 impl<Type> DefinedEntity<'_, Type> {
     pub fn original_range(&self) -> Range<usize> {
         match &self.body {
-            EntityBody::Copied { original_range, .. } => original_range.clone(),
+            EntityBody::Copied(EntityBodyCopy { original_range, .. }) => original_range.clone(),
             EntityBody::New { .. } => 0..0,
         }
     }
@@ -212,6 +212,21 @@ impl<'src, V: Clone> From<&V> for WithoutBody<'src, V> {
     }
 }
 
+/// Represents a EntityBody that created from body within input file, and optionally applied patches to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityBodyCopy<'src> {
+    /// Range in the original module's binary where the body of this entity is located.
+    pub original_range: Range<usize>,
+    /// Original body of the entity, copied from the original module.
+    /// This is used as a base for later patching and relocs application.
+    /// Relocations are stored separately, to reduce size of the EntityDefinition.
+    pub bytes: &'src [u8],
+    /// Patches to apply to the original body.
+    pub fixups: Vec<Rewrite>,
+    /// Marker that some reloc was removed during patching.
+    pub filtered_relocs: CompoundBitSet,
+}
+
 /// Body of a defined entity
 /// For functions it's locals + instructions;
 /// For globals/tables it's the initializers;
@@ -219,18 +234,7 @@ impl<'src, V: Clone> From<&V> for WithoutBody<'src, V> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntityBody<'src> {
     /// Copy of original entity with optional patches.
-    Copied {
-        /// Range in the original module's binary where the body of this entity is located.
-        original_range: Range<usize>,
-        /// Original body of the entity, copied from the original module.
-        /// This is used as a base for later patching and relocs application.
-        /// Relocations are stored separately, to reduce size of the EntityDefinition.
-        bytes: &'src [u8],
-        /// Patches to apply to the original body.
-        patches: Vec<Rewrite>,
-        /// Marker that some reloc was removed during patching.
-        filtered_relocs: CompoundBitSet,
-    },
+    Copied(EntityBodyCopy<'src>),
     /// New body for entities without body in src file.
     // for wamex-split purposes it's IndirectTrampoline.
     New {
@@ -246,16 +250,20 @@ pub enum EntityBody<'src> {
 
 impl EntityBody<'_> {
     pub fn from_bytes<'src>(bytes: &'src [u8], original_range: Range<usize>) -> EntityBody<'src> {
-        EntityBody::Copied {
+        EntityBody::Copied(EntityBodyCopy {
             original_range,
             bytes,
-            patches: vec![],
+            fixups: vec![],
             filtered_relocs: CompoundBitSet::new(),
-        }
+        })
     }
     pub fn len(&self) -> usize {
         match self {
-            EntityBody::Copied { bytes, patches, .. } => {
+            EntityBody::Copied(EntityBodyCopy {
+                bytes,
+                fixups: patches,
+                ..
+            }) => {
                 let start_len = bytes.len() as isize;
                 patches
                     .iter()
@@ -269,7 +277,11 @@ impl EntityBody<'_> {
     }
     pub fn iter_chunks(&self) -> impl Iterator<Item = &[u8]> {
         match self {
-            EntityBody::Copied { bytes, patches, .. } => IterBytes::new(bytes, patches),
+            EntityBody::Copied(EntityBodyCopy {
+                bytes,
+                fixups: patches,
+                ..
+            }) => IterBytes::new(bytes, patches),
             EntityBody::New { new_bytes, .. } => IterBytes::new(new_bytes, &[]),
         }
     }
@@ -277,16 +289,26 @@ impl EntityBody<'_> {
     /// Iterate over resulting body bytes, applying patches on the fly.
     pub fn iter_bytes(&self) -> impl Iterator<Item = u8> + '_ {
         match self {
-            EntityBody::Copied { bytes, patches, .. } => IterBytes::new(bytes, patches),
+            EntityBody::Copied(EntityBodyCopy {
+                bytes,
+                fixups: patches,
+                ..
+            }) => IterBytes::new(bytes, patches),
             EntityBody::New { new_bytes, .. } => IterBytes::new(new_bytes, &[]),
         }
         .flat_map(|chunk| chunk.iter().copied())
     }
     pub fn original_range(&self) -> Range<usize> {
         match self {
-            EntityBody::Copied { original_range, .. } => original_range.clone(),
+            EntityBody::Copied(EntityBodyCopy { original_range, .. }) => original_range.clone(),
             EntityBody::New { .. } => 0..0,
         }
+    }
+}
+
+impl<'src> From<EntityBodyCopy<'src>> for EntityBody<'src> {
+    fn from(v: EntityBodyCopy<'src>) -> EntityBody<'src> {
+        EntityBody::Copied(v)
     }
 }
 
@@ -476,7 +498,7 @@ mod tests {
 
     use cranelift_bitset::CompoundBitSet;
 
-    use super::EntityBody;
+    use super::{EntityBody, EntityBodyCopy};
     #[test]
     fn test_body() {
         let src = [0; 20];
@@ -485,16 +507,16 @@ mod tests {
         assert_eq!(body.len(), 20);
 
         // add patch that adds 5 bytes
-        let body = EntityBody::Copied {
+        let body = EntityBody::Copied(EntityBodyCopy {
             original_range: 100..120,
             bytes: &src,
-            patches: vec![super::Rewrite {
+            fixups: vec![super::Rewrite {
                 old_range: 3..3, // insertion
                 new_bytes: smallvec::smallvec![1, 2, 3, 4, 5],
                 new_relocs: smallvec::smallvec![],
             }],
             filtered_relocs: CompoundBitSet::new(),
-        };
+        });
 
         assert_eq!(body.len(), 25);
         assert_eq!(
@@ -505,16 +527,16 @@ mod tests {
         );
 
         // Check patch that replaces part of bytes
-        let body = EntityBody::Copied {
+        let body = EntityBody::Copied(EntityBodyCopy {
             original_range: 100..120,
             bytes: &[11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
-            patches: vec![super::Rewrite {
+            fixups: vec![super::Rewrite {
                 old_range: 3..5, // replacement (14, 15)
                 new_bytes: smallvec::smallvec![1, 2, 3, 4, 5],
                 new_relocs: smallvec::smallvec![],
             }],
             filtered_relocs: CompoundBitSet::new(),
-        };
+        });
 
         assert_eq!(body.len(), 13);
         assert_eq!(
