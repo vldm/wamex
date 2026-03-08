@@ -139,12 +139,10 @@ impl<'src> From<typed::data::RawDataChunk<'src>> for DefinedDataChunk<'src> {
                 segment_id: v.segment_id,
                 pow2align: v.pow2align,
             },
-            body: EntityBody::Copied {
-                original_range: v.original_offset..(v.original_offset + v.data.len()),
-                bytes: v.data,
-                patches: vec![],
-                filtered_relocs: CompoundBitSet::new(),
-            },
+            body: EntityBody::from_bytes(
+                v.data,
+                v.original_offset..(v.original_offset + v.data.len()),
+            ),
             name: Some(v.name),
             export_as: ExportNames::default(),
         }
@@ -155,12 +153,7 @@ impl<'src> From<&FunctionWithBody<'src>> for DefinedFunction<'src> {
     fn from(v: &FunctionWithBody<'src>) -> DefinedFunction<'src> {
         DefinedFunction {
             entity_type: v.func_type.clone(),
-            body: EntityBody::Copied {
-                original_range: v.body.range(),
-                bytes: v.body.as_bytes(),
-                patches: vec![],
-                filtered_relocs: CompoundBitSet::new(),
-            },
+            body: EntityBody::from_bytes(v.body.as_bytes(), v.body.range()),
             name: None,
             export_as: ExportNames::default(),
         }
@@ -183,12 +176,7 @@ impl<'src> From<&raw::Table<'src>> for DefinedTable<'src> {
 
         DefinedEntity {
             entity_type: v.ty,
-            body: EntityBody::Copied {
-                original_range,
-                bytes: body,
-                patches: vec![],
-                filtered_relocs: CompoundBitSet::new(),
-            },
+            body: EntityBody::from_bytes(body, original_range),
             name: None,
             export_as: ExportNames::default(),
         }
@@ -208,12 +196,7 @@ impl<'src> From<&raw::Global<'src>> for DefinedGlobal<'src> {
 
         DefinedEntity {
             entity_type: v.ty,
-            body: EntityBody::Copied {
-                original_range,
-                bytes: body,
-                patches: vec![],
-                filtered_relocs: CompoundBitSet::new(),
-            },
+            body: EntityBody::from_bytes(body, original_range),
             name: None,
             export_as: ExportNames::default(),
         }
@@ -262,6 +245,14 @@ pub enum EntityBody<'src> {
 }
 
 impl EntityBody<'_> {
+    pub fn from_bytes<'src>(bytes: &'src [u8], original_range: Range<usize>) -> EntityBody<'src> {
+        EntityBody::Copied {
+            original_range,
+            bytes,
+            patches: vec![],
+            filtered_relocs: CompoundBitSet::new(),
+        }
+    }
     pub fn len(&self) -> usize {
         match self {
             EntityBody::Copied { bytes, patches, .. } => {
@@ -321,18 +312,20 @@ impl<'a> Iterator for IterBytes<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(patch) = self.patches.first() {
-            // if in patch range
-            if patch.old_range.start >= self.original_offset {
+            // if in patch - copy patch
+            if patch.old_range.start <= self.original_offset {
                 self.patches = &self.patches[1..];
                 self.original_offset = patch.old_range.end;
                 return Some(&patch.new_bytes[..]);
             } else {
+                // if patch further - copy bytes range before patch
                 let start = self.original_offset;
                 let end = patch.old_range.start;
                 self.original_offset = patch.old_range.start;
                 return Some(&self.bytes[start..end]);
             }
         }
+        // no more patches - copy rest of bytes, or return None if no more bytes
         if self.bytes[self.original_offset..].is_empty() {
             return None;
         }
@@ -477,3 +470,56 @@ const _ASSERT_SIZE: () = {
     assert!(std::mem::size_of::<EntityRelocationEntry>() == 24);
     assert!(std::mem::size_of::<EntityBody>() == 112);
 };
+
+#[cfg(test)]
+mod tests {
+
+    use cranelift_bitset::CompoundBitSet;
+
+    use super::EntityBody;
+    #[test]
+    fn test_body() {
+        let src = [0; 20];
+
+        let body = EntityBody::from_bytes(&src, 100..120);
+        assert_eq!(body.len(), 20);
+
+        // add patch that adds 5 bytes
+        let body = EntityBody::Copied {
+            original_range: 100..120,
+            bytes: &src,
+            patches: vec![super::Rewrite {
+                old_range: 3..3, // insertion
+                new_bytes: smallvec::smallvec![1, 2, 3, 4, 5],
+                new_relocs: smallvec::smallvec![],
+            }],
+            filtered_relocs: CompoundBitSet::new(),
+        };
+
+        assert_eq!(body.len(), 25);
+        assert_eq!(
+            body.iter_bytes().collect::<Vec<u8>>(),
+            [
+                0, 0, 0, 1, 2, 3, 4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            ]
+        );
+
+        // Check patch that replaces part of bytes
+        let body = EntityBody::Copied {
+            original_range: 100..120,
+            bytes: &[11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            patches: vec![super::Rewrite {
+                old_range: 3..5, // replacement (14, 15)
+                new_bytes: smallvec::smallvec![1, 2, 3, 4, 5],
+                new_relocs: smallvec::smallvec![],
+            }],
+            filtered_relocs: CompoundBitSet::new(),
+        };
+
+        assert_eq!(body.len(), 13);
+        assert_eq!(
+            body.iter_bytes().collect::<Vec<u8>>(),
+            [11, 12, 13, 1, 2, 3, 4, 5, 16, 17, 18, 19, 20]
+        );
+    }
+}

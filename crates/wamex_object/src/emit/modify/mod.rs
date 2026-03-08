@@ -54,6 +54,8 @@ pub struct RelocTarget<'any, 'src> {
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Rewrite {
+    /// Range in bytes that should be replaced with `new_bytes`.
+    /// Or point for new insertion.
     pub old_range: std::ops::Range<usize>,
     /// Relocations with offsets relative to `Rewrite` start,
     /// and referencing either new symbol, or symbol existing in same file as one that we modify.

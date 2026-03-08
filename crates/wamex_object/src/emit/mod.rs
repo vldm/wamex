@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Result;
@@ -208,12 +208,9 @@ impl<'src> Module<'src> {
         fn_type_map: &SecondaryMap<FunctionRef, FuncTypeId>,
         output_module: &mut wasm_encoder::Module,
     ) {
-        dbg!(fn_type_map.iter().count());
-
-        dbg!(self.functions.iter().count());
-
         let mut section = FunctionSection::new();
-        for (_, type_id) in fn_type_map.iter() {
+        for (fn_ref, _) in self.functions.defined_iter() {
+            let type_id = fn_type_map[fn_ref];
             section.function(type_id.as_u32());
         }
         output_module.section(&section);
@@ -376,11 +373,14 @@ impl<'src> Module<'src> {
     ) -> Result<()> {
         let mut writer = Vec::new();
         let function_name = self.get_name(func_id.into());
-        log::debug!("Emitting function {function_name}");
 
         // TODO: We can write bytes directly.
         Self::emit_body(&func.body, &mut writer)?;
 
+        log::debug!(
+            "Emitting function {function_name}, bytes: {}",
+            hex::encode(&writer)
+        );
         section.raw(&writer);
 
         Ok(())
@@ -643,6 +643,7 @@ struct SplitModule<'src> {
     module: Module<'src>,
     resolver: OutputEntitiesResolver,
     relocs: FileRelocs,
+    our_got: Option<GotInfo>,
     got_entries: GotEntries,
 }
 
@@ -654,7 +655,7 @@ fn create_split_module<'src>(
     output_info: &OutputModuleInfo,
     static_symbols: &BTreeSet<FlatEntityRef>,
     is_main: bool,
-) -> Result<(Module<'src>, OutputEntitiesResolver, FileRelocs, GotEntries)> {
+) -> Result<SplitModule<'src>> {
     let src_file = input_files.get_file(input_file);
     let mut code_modifier = (!is_main).then(|| CodeAbsToGot::new(static_symbols, snapshot));
     let mut module: Module<'src, Building> = Module::new();
@@ -861,6 +862,31 @@ fn create_split_module<'src>(
         );
     }
 
+    let our_got = (!is_main).then(|| GotInfo {
+        memory_base: module.globals.push_import(ImportedEntity {
+            module: input_file.to_string().into(),
+            name: "__memory_base".into(),
+            entity_type: GlobalType {
+                content_type: wasmparser::ValType::I32, // TOOD: support 64bit
+                mutable: false,
+                shared: false,
+            },
+            export_as: ExportNames::default(),
+            renamed_as: None,
+        }),
+        table_base: module.globals.push_import(ImportedEntity {
+            module: input_file.to_string().into(),
+            name: "__table_base".into(),
+            entity_type: GlobalType {
+                content_type: wasmparser::ValType::I32, // TOOD: support 64bit
+                mutable: false,
+                shared: false,
+            },
+            export_as: ExportNames::default(),
+            renamed_as: None,
+        }),
+    });
+
     log::warn!("module after copying entities: {:#?}", module);
     // after index finalization, we can make some additional transformation
     let mut module = module.into_locked();
@@ -890,6 +916,16 @@ fn create_split_module<'src>(
         );
     }
 
+    let our_got_mapped = our_got.map(
+        |GotInfo {
+             memory_base,
+             table_base,
+         }| GotInfo {
+            memory_base: module.globals.stable_id(memory_base),
+            table_base: module.globals.stable_id(table_base),
+        },
+    );
+
     // Now copy and resolve relocs.
     let relocs = module.copy_and_resolve_relocs(&file_info, input_files)?;
     // collect indirect table (used by relocs)
@@ -898,7 +934,13 @@ fn create_split_module<'src>(
     // TODO: what to do if more than one source?
     module.mem_spec = src.mem_spec.clone();
 
-    Ok((module, file_info, relocs, got_entries_mapped))
+    Ok(SplitModule {
+        module,
+        resolver: file_info,
+        relocs,
+        our_got: our_got_mapped,
+        got_entries: got_entries_mapped,
+    })
 }
 
 /// Emit output modules, from split program info.
@@ -921,7 +963,8 @@ pub fn emit_modules(
     let mut output_modules = PrimaryMap::<FileId, _>::new();
     for (ident, output_info) in &program_info.output_modules {
         log::info!("Calculating module {ident}");
-        let (output, info, relocs, got_entries) = create_split_module(
+        log::debug!("Module output {:#?}", output_info);
+        let split_module = create_split_module(
             input_files,
             main_file,
             src,
@@ -934,23 +977,31 @@ pub fn emit_modules(
         // 1.1. generate main part
 
         let mut writer = wasm_encoder::Module::new();
-        log::info!("Generating module main part {ident}");
+        log::info!("Generating module {ident}");
         // TODO: Generate generate_dylink0_section
-        let layout = output.generate(&mut writer)?;
+        let layout = split_module.module.generate(&mut writer)?;
 
-        let file = output_modules.push((ident, output, writer.finish(), info, got_entries, relocs));
+        log::debug!("Module after generation: {:#?}", writer);
+        let writer = writer.finish();
+        {
+            log::error!("Writing module {ident} to file for debug");
+            let output_path = AsRef::<Path>::as_ref("/tmp").join(format!("{}.wasm", ident));
+            std::fs::write(&output_path, &writer).unwrap();
+        }
+        let file = output_modules.push((ident, split_module, writer));
         layouts[file] = layout;
     }
     log::info!("Applying relocs for modules");
 
     for file in output_modules.keys() {
         let mut imported_data = GappedMap::new();
-        let (ident, module, _, info, got_entries, _) = &output_modules[file];
+        let (ident, split_module, _) = &output_modules[file];
 
         // 2. calculate memoffsets for imported data symbols.
         log::debug!("Calculating imported data offsets for module {ident}");
-        for (orig_d, _i) in module.data.imports_iter() {
-            let src = info
+        for (orig_d, _i) in split_module.module.data.imports_iter() {
+            let src = split_module
+                .resolver
                 .get_entity_src(orig_d.into())
                 .expect("imported data symbol must have source entity");
             assert_eq!(src.file_id, main_file);
@@ -963,10 +1014,11 @@ pub fn emit_modules(
                     .get(flat_ref)
                     .expect("imported symbol should be defined somewhere"),
             );
-            let (dep_id, _, _, dep_info, _, _) = &output_modules[dep_file];
+            let (dep_id, dep_split_module, _) = &output_modules[dep_file];
 
             let dep_layout = &layouts[dep_file];
-            let sym_ref = dep_info
+            let sym_ref = dep_split_module
+                .resolver
                 .get_output_entity(&src)
                 .expect("source entity must have output entity");
             let extern_ref = match sym_ref {
@@ -983,7 +1035,10 @@ pub fn emit_modules(
                 orig_d,
                 ImportedDataDep {
                     output_location: *extern_ref,
-                    got_entry: got_entries.get(dep_id).map(|entry| entry.memory_base),
+                    got_entry: dep_split_module
+                        .got_entries
+                        .get(dep_id)
+                        .map(|entry| entry.memory_base),
                 },
             );
         }
@@ -991,9 +1046,16 @@ pub fn emit_modules(
         // 3. building relocation state and applying relocs
         log::debug!("Applying relocation state for module {ident}");
         // reborrow as mutable
-        let (_, module, writer, _, _, relocs) = &mut output_modules[file];
-        let reloc_state = RelocationState::new(module, &layouts[file], imported_data, &layouts);
-        reloc_state.fixup_offsets_and_apply_relocs(&mut *writer, relocs);
+        let (_, split_module, writer) = &mut output_modules[file];
+        let reloc_state = RelocationState::new(
+            &split_module.module,
+            &layouts[file],
+            split_module.our_got.clone(),
+            imported_data,
+            &layouts,
+        );
+
+        reloc_state.fixup_offsets_and_apply_relocs(&mut *writer, &mut split_module.relocs);
     }
     // 4. append linker sections.
     // 5. write fine using callback.
@@ -1008,7 +1070,7 @@ pub fn emit_modules(
 #[cfg(test)]
 mod tests {
     use crate::{
-        emit::create_split_module,
+        emit::{SplitModule, create_split_module},
         typed::{FileLoader, common_index::EntitiesSnapshot},
     };
 
@@ -1042,7 +1104,13 @@ mod tests {
         dbg!(&dep_graph);
         dbg!(&split);
 
-        let (output, _file_info, _, _) = create_split_module(
+        let SplitModule {
+            module: output,
+            resolver: _file_info,
+            relocs: _,
+            our_got: _,
+            got_entries: _,
+        } = create_split_module(
             &file_loader,
             input_file,
             &input.module,

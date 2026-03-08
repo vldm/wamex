@@ -47,23 +47,21 @@ pub mod resolver;
 
 use std::ops::Range;
 
-use cranelift_entity::{PrimaryMap, SecondaryMap, packed_option::ReservedValue};
-use wasmparser::Data;
+use cranelift_entity::{SecondaryMap, packed_option::ReservedValue};
 
 use crate::{
-    analysis::SplitPoint,
-    emit::memory_layout::{DataSymbolOffset, DataSymbolsOffsets},
+    emit::{
+        memory_layout::{DataSymbolOffset, DataSymbolsOffsets},
+        modify::code_abs_to_got::GotInfo,
+    },
     index::GappedMap,
     linkage::{
         file_db::FileRelocs,
         reloc::{Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth},
     },
-    raw::ElementId,
     typed::{
-        FileId, FunctionRef, GlobalRef, Module,
-        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
-        data::DataSymbolRef,
-        elements::ElementItemId,
+        FileId, FunctionRef, GlobalRef, ImportOrDefined, Module, common_index::EntityKind,
+        data::DataSymbolRef, elements::ElementItemId,
     },
 };
 
@@ -115,6 +113,7 @@ pub struct ImportedDataDep {
 pub struct RelocationState<'any, 'src> {
     current_module: &'any Module<'src>,
     current_module_layout: &'any ModuleLayout,
+    current_got: Option<GotInfo>,
     imported_data: GappedMap<DataSymbolRef, ImportedDataDep>,
     // Needed for building ImportedData + Offset relocs
     all_modules_layout: &'any SecondaryMap<FileId, ModuleLayout>,
@@ -124,12 +123,14 @@ impl<'any, 'src> RelocationState<'any, 'src> {
     pub fn new(
         current_module: &'any Module<'src>,
         current_module_layout: &'any ModuleLayout,
+        current_got: Option<GotInfo>,
         imported_data: GappedMap<DataSymbolRef, ImportedDataDep>,
         all_modules_layout: &'any SecondaryMap<FileId, ModuleLayout>,
     ) -> Self {
         Self {
             current_module,
             current_module_layout,
+            current_got,
             imported_data,
             all_modules_layout,
         }
@@ -140,10 +141,13 @@ impl<'any, 'src> RelocationState<'any, 'src> {
         //2. apply code relocs
         let code_relocs = relocs.get_code_section_relocs();
         let code_section = &mut module_bytes[self.current_module_layout.code_section.clone()];
+        log::debug!("Applying code relocs: {code_relocs:#?}, code section: {code_section:#?}");
         self.apply_relocations(code_section, code_relocs);
         //3. apply data relocs
         let data_relocs = relocs.get_data_section_relocs();
         let data_section = &mut module_bytes[self.current_module_layout.data_section.clone()];
+
+        log::debug!("Applying data relocs: {data_relocs:#?}, data section: {data_section:#?}");
         self.apply_relocations(data_section, data_relocs);
     }
 
@@ -200,7 +204,7 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                         // search for location in external module.
                         assert!(
                             matches!(reloc.relation, Relative::Got),
-                            "Relocation for imported data should be handled by modify::code_abs_to_got module and have Relative::Got relation"
+                            "Relocation for imported data should be handled by one of modify::* modules and have Relative::Got relation"
                         );
                         self.imported_data
                             .get(d)
@@ -216,28 +220,42 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                 ty => panic!("Relocation for symbol type {ty:?} doesn't have runtime addr"),
             },
             // GlobalIndex of GOT for specific symbol.
-            EntityAddressMode::BaseStaticIndex => match reloc.symbol_id {
-                EntityKind::DataSymbol(d) => {
-                    log::debug!("sym: {:?}", self.current_module.data.get_entity(d));
-                    todo!("Request our got entry");
-                    // if defined then it's our got entry.
-                    let imported_data = &self.imported_data.get(d).unwrap_or_else(|| {
-                        panic!("Cannot find imported data symbol for relocation: {reloc:?}")
-                    });
-                    imported_data
-                        .got_entry
-                        .expect("GOT entry must exist for relocation with base")
-                        .as_u32()
+            EntityAddressMode::BaseStaticIndex => {
+                match reloc.symbol_id {
+                    EntityKind::DataSymbol(d) => {
+                        let got = match self.current_module.data.get_entity(d) {
+                            ImportOrDefined::Defined(_) => {
+                                // if defined then it's our got entry.
+                                &self.current_got
+                                .as_ref()
+                                .expect("Current module doesn't have GOT, but relocation requires it")
+                                .memory_base
+                            }
+                            _ => {
+                                // if defined then it's our got entry.
+                                let imported_data = &self.imported_data.get(d).unwrap_or_else(|| {
+                                    panic!("Cannot find imported data symbol for relocation: {reloc:?}")
+                                });
+                                &imported_data
+                                    .got_entry
+                                    .expect("GOT entry must exist for relocation with base")
+                            }
+                        };
+                        got.as_u32()
+                    }
+                    ty => panic!(
+                        "Relocation for symbol type {ty:?} cannot have base static index or not implemented."
+                    ),
                 }
-                ty => panic!(
-                    "Relocation for symbol type {ty:?} cannot have base static index or not implemented."
-                ),
-            },
+            }
             EntityAddressMode::FileOffset => {
                 todo!()
             }
         };
 
+        if data.len() < 100 {
+            log::debug!("reloc: {:?}, &data: {:?}, value: {}", reloc, &data, value);
+        }
         Self::encode(
             &mut data[target_range],
             (value as i64 + reloc.addend)

@@ -657,12 +657,11 @@ pub fn compute_split_modules(
             .cloned()
             .unwrap_or_default();
         let id = SplitModuleIdentifier::Single(named_graph.module);
-        let dependencies = calculate_deps(&shared_deps, &id, &imports, None);
         (
             id,
             OutputModuleInfo {
                 defined_symbols: named_graph.reachable,
-                dependencies,
+                dependencies: BTreeMap::new(),
                 imports,
                 split_points,
                 exports: DepMiniSet::new(),
@@ -677,6 +676,12 @@ pub fn compute_split_modules(
         }
 
         process_special_entities(info, &snapshot, &mut main[0], rest, &mut shared_deps)?;
+    }
+
+    // add deps for single modules.
+    for (single_id, single) in split_module_contents.iter_mut() {
+        let dependencies = calculate_deps(&shared_deps, single_id, &single.imports, None);
+        single.dependencies = dependencies;
     }
 
     for (shared_index, shared) in shared_deps.iter().enumerate() {
