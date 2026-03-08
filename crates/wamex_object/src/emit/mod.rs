@@ -1,10 +1,11 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     io::Write,
     path::Path,
 };
 
 use anyhow::Result;
+use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use wasm_encoder::{Encode, FunctionSection};
 use wasmparser::{FuncType, GlobalType};
@@ -13,20 +14,23 @@ use crate::{
     analysis::{OutputModuleInfo, SplitModuleIdentifier, SplitProgramInfo},
     emit::{
         memory_layout::SegmentLayout,
-        modify::OutputEntityRef,
+        modify::{
+            HandleReloc, ModifyOrReloc, OutputEntityRef, RelocTarget,
+            code_abs_to_got::{CodeAbsToGot, GotInfo},
+        },
         relocation::{
             EntityLocation, FunctionInfo, ImportedDataDep, ModuleLayout, RelocationState,
             resolver::OutputEntitiesResolver,
         },
     },
     helpers::{ShiftMap, ShiftPoint, encoding_size},
-    index::{Building, GappedMap},
+    index::{Building, GappedMap, ImportOrDefined},
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
     raw::{DataSegmentId, FuncTypeId, data},
     typed::{
         DefinedFunction, EntityBody, ExportNames, FileId, FileLoader, FunctionRef, GlobalRef,
         ImportedEntity, Module, TableRef,
-        common_index::{EntitiesSnapshot, EntityKind, TempEntityKind},
+        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef, TempEntityKind},
         data::SpecificLocation,
         elements::ElementItemId,
     },
@@ -326,7 +330,6 @@ impl<'src> Module<'src> {
 
                 let func_ids = content
                     .map(|(elem_id, func_ref)| {
-                        let id = func_ref.as_u32();
                         result_indirect_fn_mapping.insert(*func_ref, elem_id);
                         func_ref.as_u32()
                     })
@@ -526,10 +529,11 @@ impl<'src> Module<'src> {
                         for reloc in patch.new_relocs.drain(..) {
                             let reloc_start = patch.old_range.start as u32 + reloc.offset;
 
+                            // new relocs are already relative to body start
+
                             let shifted_offset = shift_map
                                 .get_shifted_offset(reloc_start)
-                                .expect("new relocation cannot be in removed area")
-                                - original_range.start as u32;
+                                .expect("new relocation cannot be in removed area");
 
                             let symbol = match reloc.symbol_id {
                                 OutputEntityRef::Resolved(v) => v,
@@ -569,11 +573,11 @@ impl<'src> Module<'src> {
                             continue;
                         };
 
+                        let reloc_start = reloc.offset - original_range.start as u32;
                         // offset relative to body.
                         let shifted_offset = shift_map
-                            .get_shifted_offset(reloc.offset)
-                            .expect("relocation cannot be in removed area")
-                            - original_range.start as u32; // and then shift to section-relative offset
+                            .get_shifted_offset(reloc_start)
+                            .expect("relocation cannot be in removed area");
 
                         relocs.push(EntityRelocationEntry {
                             offset: shifted_offset,
@@ -596,7 +600,7 @@ impl<'src> Module<'src> {
             if range.is_empty() {
                 continue;
             }
-            log::warn!("we can sort relocs there");
+            // log::warn!("we can sort relocs there");
             // relocs[range.clone()].sort_unstable_by_key(|v| v.offset);
 
             match entity {
@@ -633,14 +637,26 @@ impl<'src> Module<'src> {
     }
 }
 
-type GotEntries = BTreeMap<SplitModuleIdentifier, [GlobalRef; 2]>;
-pub fn create_split_module<'src>(
+type GotEntries = BTreeMap<SplitModuleIdentifier, GotInfo>;
+
+struct SplitModule<'src> {
+    module: Module<'src>,
+    resolver: OutputEntitiesResolver,
+    relocs: FileRelocs,
+    got_entries: GotEntries,
+}
+
+fn create_split_module<'src>(
     input_files: &FileLoader,
     input_file: FileId,
     src: &Module<'src>,          // tmp field, should be FileLoader instead.
     snapshot: &EntitiesSnapshot, // this is
     output_info: &OutputModuleInfo,
+    static_symbols: &BTreeSet<FlatEntityRef>,
+    is_main: bool,
 ) -> Result<(Module<'src>, OutputEntitiesResolver, FileRelocs, GotEntries)> {
+    let src_file = input_files.get_file(input_file);
+    let mut code_modifier = (!is_main).then(|| CodeAbsToGot::new(static_symbols, snapshot));
     let mut module: Module<'src, Building> = Module::new();
     // map of entities from input file to entities in output module.
     let mut file_info = OutputEntitiesResolver::new();
@@ -652,8 +668,60 @@ pub fn create_split_module<'src>(
     for entity in &output_info.defined_symbols {
         match snapshot.unpack_ref(*entity) {
             EntityKind::Function(f) => {
-                let func = src.functions.get_entity(f);
-                let new = module.functions.push_entity(func.cloned());
+                let new = match src.functions.get_entity(f) {
+                    ImportOrDefined::Import(i) => module.functions.push_import(i.clone()),
+                    ImportOrDefined::Defined(d) => {
+                        if let Some(modifier) = &mut code_modifier {
+                            // todo: RemoveReloc target use EntityBody directly
+                            let EntityBody::Copied {
+                                original_range,
+                                bytes,
+                                patches,
+                                ..
+                            } = &d.body
+                            else {
+                                panic!(
+                                    "Trying to modify already modified function {f} has body {:#?}",
+                                    d.body
+                                );
+                            };
+                            assert!(patches.is_empty());
+                            let mut new_filtered = CompoundBitSet::new();
+                            let mut new_patches = Vec::new();
+
+                            let target = RelocTarget {
+                                body: bytes,
+                                entries: src_file
+                                    .relocs
+                                    .get_entity_relocs(f.into())
+                                    .unwrap_or_default(),
+                                start_offset: original_range.start,
+                            };
+                            let modified_body = modifier.create_entries(target)?;
+                            for (idx, i) in modified_body.into_iter().enumerate() {
+                                log::debug!("{idx}:new reloc for function {f}: {:#?}", i);
+
+                                if let ModifyOrReloc::Modify(v) = i {
+                                    new_filtered.insert(idx);
+                                    new_patches.extend(v.rewrite);
+                                }
+                            }
+                            module.functions.push_defined(DefinedFunction {
+                                entity_type: d.entity_type.clone(),
+                                body: EntityBody::Copied {
+                                    bytes,
+                                    original_range: original_range.clone(),
+                                    patches: new_patches,
+                                    filtered_relocs: new_filtered,
+                                },
+                                name: d.name.clone(),
+                                export_as: d.export_as.clone(),
+                            })
+                        } else {
+                            module.functions.push_defined(d.clone())
+                        }
+                    }
+                };
                 used_queue.push((EntityLocation::from_parts(input_file, f.into()), new.into()));
             }
             EntityKind::Global(g) => {
@@ -759,9 +827,9 @@ pub fn create_split_module<'src>(
 
     log::debug!("Building got deps imports");
     let mut got_entries = BTreeMap::new();
-    for (i, deps) in output_info.dependencies.iter() {
+    for (i, _) in output_info.dependencies.iter() {
         // TODO: check deps type?
-        let mid = module.globals.push_import(ImportedEntity {
+        let memory_base = module.globals.push_import(ImportedEntity {
             module: i.to_string().into(),
             name: "__memory_base".into(),
             entity_type: GlobalType {
@@ -773,7 +841,7 @@ pub fn create_split_module<'src>(
             renamed_as: None,
         });
 
-        let tid = module.globals.push_import(ImportedEntity {
+        let table_base = module.globals.push_import(ImportedEntity {
             module: i.to_string().into(),
             name: "__table_base".into(),
             entity_type: GlobalType {
@@ -784,7 +852,13 @@ pub fn create_split_module<'src>(
             export_as: ExportNames::default(),
             renamed_as: None,
         });
-        got_entries.insert(i.clone(), [mid, tid]);
+        got_entries.insert(
+            i.clone(),
+            GotInfo {
+                memory_base,
+                table_base,
+            },
+        );
     }
 
     log::warn!("module after copying entities: {:#?}", module);
@@ -797,10 +871,23 @@ pub fn create_split_module<'src>(
     }
 
     let mut got_entries_mapped = GotEntries::new();
-    for (i, [mem, table]) in got_entries {
-        let mem = module.globals.stable_id(mem);
-        let table = module.globals.stable_id(table);
-        got_entries_mapped.insert(i, [mem, table]);
+    for (
+        i,
+        GotInfo {
+            memory_base,
+            table_base,
+        },
+    ) in got_entries
+    {
+        let memory_base = module.globals.stable_id(memory_base);
+        let table_base = module.globals.stable_id(table_base);
+        got_entries_mapped.insert(
+            i,
+            GotInfo {
+                memory_base,
+                table_base,
+            },
+        );
     }
 
     // Now copy and resolve relocs.
@@ -816,7 +903,7 @@ pub fn create_split_module<'src>(
 
 /// Emit output modules, from split program info.
 ///
-pub fn emit_module(
+pub fn emit_modules(
     input_files: &FileLoader,
     program_info: &SplitProgramInfo,
     // path: PathBuf,
@@ -827,13 +914,22 @@ pub fn emit_module(
     let src = &input_files.get_file(main_file).module;
     let snapshot = EntitiesSnapshot::new(src);
 
+    // 0. deps of main module
+    let main_deps = &program_info.output_modules[0].1.defined_symbols;
     // 1. build modules
     let mut layouts = SecondaryMap::new();
     let mut output_modules = PrimaryMap::<FileId, _>::new();
     for (ident, output_info) in &program_info.output_modules {
         log::info!("Calculating module {ident}");
-        let (output, info, relocs, got_entries) =
-            create_split_module(input_files, main_file, src, &snapshot, output_info)?;
+        let (output, info, relocs, got_entries) = create_split_module(
+            input_files,
+            main_file,
+            src,
+            &snapshot,
+            output_info,
+            main_deps,
+            ident.is_main(),
+        )?;
 
         // 1.1. generate main part
 
@@ -887,7 +983,7 @@ pub fn emit_module(
                 orig_d,
                 ImportedDataDep {
                     output_location: *extern_ref,
-                    got_entry: got_entries.get(dep_id).map(|entry| entry[0]), // mem
+                    got_entry: got_entries.get(dep_id).map(|entry| entry.memory_base),
                 },
             );
         }
@@ -952,6 +1048,8 @@ mod tests {
             &input.module,
             &EntitiesSnapshot::new(&input.module),
             &split.output_modules[0].1.clone(),
+            &Default::default(),
+            false,
         )
         .unwrap();
 
@@ -1004,7 +1102,7 @@ mod tests {
         )
         .unwrap();
 
-        super::emit_module(&file_loader, &split, |ident, bytes| {
+        super::emit_modules(&file_loader, &split, |ident, bytes| {
             println!("Emitted module {ident} with size {}", bytes.len());
             Ok(())
         })

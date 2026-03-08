@@ -218,10 +218,12 @@ impl<'any, 'src> RelocationState<'any, 'src> {
             // GlobalIndex of GOT for specific symbol.
             EntityAddressMode::BaseStaticIndex => match reloc.symbol_id {
                 EntityKind::DataSymbol(d) => {
-                    let imported_data = self
-                        .imported_data
-                        .get(d)
-                        .expect("Cannot find imported data symbol for relocation: {reloc:?}");
+                    log::debug!("sym: {:?}", self.current_module.data.get_entity(d));
+                    todo!("Request our got entry");
+                    // if defined then it's our got entry.
+                    let imported_data = &self.imported_data.get(d).unwrap_or_else(|| {
+                        panic!("Cannot find imported data symbol for relocation: {reloc:?}")
+                    });
                     imported_data
                         .got_entry
                         .expect("GOT entry must exist for relocation with base")

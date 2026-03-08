@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::{
     SVec,
     emit::modify::cursor::Cursor,
+    helpers::RangeExt,
     linkage::reloc::{EntityAddressMode, EntityRelocationEntry},
     typed::common_index::EntityKind,
 };
@@ -122,11 +123,13 @@ pub trait HandleReloc<'src> {
         while let Some(entry) = entries.next() {
             let red_after = entries
                 .peek()
-                .map(|e| e.offset as usize..)
+                .map(|e| (e.offset as usize - target.start_offset)..)
                 .unwrap_or(target.body.len()..);
+
+            let entry = entry.shift_left(target.start_offset);
             let cursor = Cursor::new(target.body, entry.relocation_range(), prev_range, red_after);
 
-            result.push(self.create_entry(cursor, *entry)?);
+            result.push(self.create_entry(cursor, entry)?);
 
             prev_range = ..entry.offset as usize;
         }

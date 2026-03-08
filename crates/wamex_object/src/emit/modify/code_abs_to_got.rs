@@ -23,11 +23,13 @@ use crate::{
         Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
     },
     typed::{
-        DefinedGlobal, EntityBody, ExportNames, FileId, GlobalRef, common_index::EntityKind,
+        DefinedGlobal, EntityBody, ExportNames, FileId, GlobalRef,
+        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
         data::SpecificLocation,
     },
 };
 
+const INVALID_U32: u32 = 0xEFBEADDE;
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub enum StoreType {
     I32,
@@ -61,9 +63,9 @@ pub fn global_init_tmp(val_type: wasmparser::ValType) -> SVec<u8, 32> {
 }
 
 #[derive(Debug, Clone)]
-pub struct GotInfo {
-    memory_base: GlobalRef,
-    table_base: GlobalRef,
+pub struct GotInfo<T = GlobalRef> {
+    pub memory_base: T,
+    pub table_base: T,
 }
 
 impl ReservedValue for GotInfo {
@@ -79,43 +81,36 @@ impl ReservedValue for GotInfo {
 }
 
 #[derive(Debug)]
-pub struct CodeRelocationHandler {
-    /// Information about external modules GOTs (if any)
-    pub import_module_got: GappedMap<FileId, GotInfo>,
-    /// Defines where to search for symbols.
-    /// It might be our local
-    pub symbols_location: BTreeMap<EntityLocation, FileId>,
+pub struct CodeAbsToGot<'a> {
     // Temporary globals for constant extraction
     pub global_tmps: BTreeMap<StoreType, GlobalRef>,
-    // Symbols that need to be always treated as static (not converted to GOT-relative)
-    // pub always_static_symbols: BTreeSet<EntityKind>,
+    // Symbols (in input space) that need to be always treated as static (not converted to GOT-relative)
+    pub always_static_symbols: &'a BTreeSet<FlatEntityRef>,
+    pub snapshot: &'a EntitiesSnapshot,
 }
 
-impl CodeRelocationHandler {
-    pub fn new(always_static_symbols: &BTreeSet<EntityKind>) -> Self {
-        todo!()
-        // Self {
-        //     memory_base: None,
-        //     global_tmps: BTreeMap::new(),
-        //     always_static_symbols: always_static_symbols.clone(),
-        // }
+impl<'a> CodeAbsToGot<'a> {
+    pub fn new(
+        always_static_symbols: &'a BTreeSet<FlatEntityRef>,
+        snapshot: &'a EntitiesSnapshot,
+    ) -> Self {
+        Self {
+            global_tmps: BTreeMap::new(),
+            always_static_symbols,
+            snapshot,
+        }
     }
-    pub fn is_dyn_symbol(&self, entry: &EntityRelocationEntry) -> bool {
-        todo!()
-        // self.memory_base.is_some()
-        //     && !self
-        //         .always_static_symbols
-        //         .contains(&entry.symbol_id.combine(entry.symbol_type))
+    pub fn is_dyn_symbol(&self, sym: &EntityKind) -> bool {
+        let sym = self.snapshot.pack_ref(*sym);
+        // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
+        // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
+        !self.always_static_symbols.contains(&sym)
     }
 }
 
-impl<'src> HandleReloc<'src> for CodeRelocationHandler {
+impl<'src> HandleReloc<'src> for CodeAbsToGot<'_> {
     type ExtraData = ();
-    fn setup(
-        &mut self,
-        builder: &mut crate::typed::ModuleBuilder<'src>,
-        /* extra info ?*/
-    ) -> Result<()> {
+    fn setup(&mut self, builder: &mut crate::typed::ModuleBuilder<'src>) -> Result<()> {
         let memory_base = match builder.mem_spec.mem_start {
             SpecificLocation::GotBased { global, .. } => Some(global),
             _ => None,
@@ -158,42 +153,42 @@ impl<'src> HandleReloc<'src> for CodeRelocationHandler {
         buffer: Cursor<'src>,
         entry: EntityRelocationEntry,
     ) -> Result<ModifyOrReloc<Self::ExtraData>> {
-        // Only apply if dynamic base is enabled
-        // let Some(memory_base) = self.memory_base else {
-        //     return Ok(ModifyOrReloc::OriginalReloc(entry));
-        // };
-
         // TODO: move outside of this creation
-        Self::check_whitelisted_code_relocation(&entry)?;
+        if let Err(e) = Self::check_whitelisted_code_relocation(&entry) {
+            log::trace!(
+                "Relocation entry {:#?} is not suitable for code modification: {e}",
+                entry,
+            );
+            return Ok(ModifyOrReloc::OriginalReloc(entry));
+        }
 
-        todo!();
-        // match entry.symbol_type {
-        //     SymbolType::TableIndex | SymbolType::MemoryAddr if self.is_dyn_symbol(&entry) => {
-        //         return self
-        //             .new_entry(memory_base, buffer, entry)
-        //             .map(ModifyOrReloc::Modify);
-        //     }
-        //     _ => {}
-        // }
+        match entry.symbol_id {
+            EntityKind::DataSymbol(_) | EntityKind::Function(_)
+                if self.is_dyn_symbol(&entry.symbol_id) =>
+            {
+                return self.new_entry(buffer, entry).map(ModifyOrReloc::Modify);
+            }
+            _ => {}
+        }
 
         Ok(ModifyOrReloc::OriginalReloc(entry))
     }
 }
 
-impl<'src> CodeRelocationHandler {
+impl<'src> CodeAbsToGot<'_> {
     fn new_entry(
         &self,
-        memory_base: GlobalRef,
         mut buffer: Cursor<'src>,
         entry: EntityRelocationEntry,
     ) -> Result<ModificationEntry<()>> {
+        log::debug!("Creating modification entry for {:#?}", entry);
         assert!(matches!(
             (entry.symbol_id, entry.encoding),
             (EntityKind::Function(_), Encoding::Sleb)
                 | (EntityKind::DataSymbol(_), Encoding::Sleb)
                 | (EntityKind::DataSymbol(_), Encoding::Leb)
         ));
-        assert!(matches!(entry.symbol_op, EntityAddressMode::StaticIndex));
+        assert!(matches!(entry.symbol_op, EntityAddressMode::RuntimeAddr));
 
         let ix_size = match entry.encoding {
             Encoding::Leb => 2,  // memoryaddr_leb
@@ -215,7 +210,7 @@ impl<'src> CodeRelocationHandler {
         };
 
         Ok(ModificationEntry {
-            rewrite: Some(self.generate_patch(memory_base, entry, instruction)?),
+            rewrite: Some(self.generate_patch(entry, instruction)?),
             original_reloc: entry,
             extra_info: (),
         })
@@ -223,21 +218,20 @@ impl<'src> CodeRelocationHandler {
 
     fn generate_patch(
         &self,
-        memory_base: GlobalRef,
         entry: EntityRelocationEntry,
         instruction: wasmparser::Operator<'src>,
     ) -> Result<Rewrite> {
         let rewrite = match (entry.symbol_id, entry.encoding) {
             (EntityKind::DataSymbol(_), Encoding::Leb) => {
-                self.replace_memory_offset_with_global_get(memory_base, entry, instruction)?
+                self.replace_memory_offset_with_global_get(entry, instruction)?
             }
             (EntityKind::DataSymbol(_), Encoding::Sleb) => {
-                self.replace_const_get_with_global_get(memory_base, entry, instruction)?
+                self.replace_const_get_with_global_get(entry, instruction)?
             }
             (EntityKind::Function(_), Encoding::Sleb)
                 if entry.symbol_op == EntityAddressMode::RuntimeAddr =>
             {
-                self.replace_const_get_with_global_get(memory_base, entry, instruction)?
+                self.replace_const_get_with_global_get(entry, instruction)?
             }
             _ => {
                 bail!("Unsupported relocation type")
@@ -251,7 +245,6 @@ impl<'src> CodeRelocationHandler {
     // Retuns size of the replacement
     fn replace_const_get_with_global_get(
         &self,
-        memory_base: GlobalRef,
         old_entry: EntityRelocationEntry,
         instruction: Operator<'src>,
     ) -> Result<Rewrite> {
@@ -261,27 +254,25 @@ impl<'src> CodeRelocationHandler {
         );
 
         let got_offset = 0i32;
-        let got_global_index = memory_base;
         let mut new_bytes = SVec::new();
         let mut new_relocs = SVec::new();
 
         let mut writer = super::wasm_emitter::Encoder::new(&mut new_bytes, 0);
 
         log::trace!(
-            "Replacing {src_ix:?} with gapped entry (global.get {got_ix} + i32.const {offset})",
+            "Replacing {src_ix:?} with gapped entry (global.get <placeholder> + i32.const {offset})",
             src_ix = instruction,
-            got_ix = got_global_index,
             offset = got_offset
         );
 
-        let got_rel_offset = writer.global_get(got_global_index.as_u32())?;
+        let got_rel_offset = writer.global_get(INVALID_U32)?;
         let const_rel_offset = writer.i32_const(got_offset)?;
         writer.i32_add()?;
 
         new_relocs.push(OutputRelocationEntry {
             // entity should have information about GOT they used, since there maybe more than one.
             symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
-            symbol_op: old_entry.symbol_op,
+            symbol_op: EntityAddressMode::BaseStaticIndex,
             offset: got_rel_offset,
             encoding: Encoding::Leb,
             width: RelocationWidth::Bits32,
@@ -324,12 +315,10 @@ impl<'src> CodeRelocationHandler {
     /// Returns size of the replacement.
     fn replace_memory_offset_with_global_get(
         &self,
-        memory_base: GlobalRef,
-        entry: EntityRelocationEntry,
+        old_entry: EntityRelocationEntry,
         instruction: wasmparser::Operator<'_>,
     ) -> Result<Rewrite> {
         let got_offset = 0;
-        let got_global_index = memory_base;
 
         let mut new_bytes = SVec::new();
         let mut new_relocs = SVec::new();
@@ -338,7 +327,7 @@ impl<'src> CodeRelocationHandler {
         let store = Self::store_type(&instruction)?;
 
         log::trace!(
-            "Replacing {orig_ix:?} with [global.get {got_global_index} + i32.const {got_offset:?} + ix] global_store:{store:?}",
+            "Replacing {orig_ix:?} with [global.get <placeholder> + i32.const {got_offset:?} + ix] global_store:{store:?}",
             orig_ix = instruction,
         );
 
@@ -358,7 +347,17 @@ impl<'src> CodeRelocationHandler {
             })
         }
         // TODO: we can emit relocation for this global
-        let got_offset = writer.global_get(got_global_index.as_u32())?;
+        let got_offset = writer.global_get(INVALID_U32)?;
+        new_relocs.push(OutputRelocationEntry {
+            // entity should have information about GOT they used, since there maybe more than one.
+            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
+            symbol_op: EntityAddressMode::BaseStaticIndex,
+            offset: got_offset,
+            encoding: Encoding::Leb,
+            width: RelocationWidth::Bits32,
+            relation: Relative::None,
+            addend: 0,
+        });
         writer.i32_add()?;
         // add offset from global_index variable to the dyn_offset part of instruction
         // restore <value> from temp global
@@ -379,20 +378,20 @@ impl<'src> CodeRelocationHandler {
 
         new_relocs.push(OutputRelocationEntry {
             //TODO: Convert to OutputSymbolId
-            symbol_id: OutputEntityRef::from_input(entry.symbol_id),
-            symbol_op: entry.symbol_op,
+            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
+            symbol_op: old_entry.symbol_op,
             offset: mem_offsets.offset,
             relation: Relative::Got,
 
-            encoding: entry.encoding,
-            width: entry.width,
-            addend: entry.addend,
+            encoding: old_entry.encoding,
+            width: old_entry.width,
+            addend: old_entry.addend,
         });
 
         Ok(Rewrite {
             new_bytes,
             new_relocs,
-            old_range: entry.relocation_range(),
+            old_range: old_entry.relocation_range(),
         })
     }
 
