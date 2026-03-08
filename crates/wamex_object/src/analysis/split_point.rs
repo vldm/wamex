@@ -564,7 +564,7 @@ fn process_special_entities(
     if info.memories.len() != 1 {
         log::error!(
             "Expected more than one memory in source module, {:?}",
-            info.memories.items
+            info.memories
         );
     };
 

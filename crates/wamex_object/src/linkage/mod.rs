@@ -162,8 +162,8 @@ impl<'src> LinkageInfo<'src> {
     /// - for each functions body
     /// - for each data chunks
     pub fn build_regions(input: &Module) -> file_db::Regions {
-        let mut code_owners = Vec::with_capacity(input.functions.items.defined.len());
-        let mut data_owners = Vec::with_capacity(input.data.len());
+        let mut code_owners = Vec::with_capacity(input.functions.defined.len());
+        let mut data_owners = Vec::with_capacity(input.data.defined.len());
 
         for (func_ref, func) in input.functions.defined_iter() {
             code_owners.push((func.original_range(), func_ref));

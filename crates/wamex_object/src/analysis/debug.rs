@@ -16,22 +16,6 @@ pub(crate) fn print_deps_inner(
     reachable: &DepSet,
     graph: &DepGraph,
 ) {
-    let size_fn = |entity: &EntityKind| match entity {
-        EntityKind::DataSymbol(d) => info
-            .data
-            .get_entity(*d)
-            .to_defined()
-            .map(|defined| defined.body.len())
-            .unwrap_or(0),
-        EntityKind::Function(input_id) => {
-            if let Some(defined) = info.functions.items.get_entity(*input_id).to_defined() {
-                defined.body.len()
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
     let format_dep = |dep: FlatEntityRef| {
         let symbol_kind = graph.snapshot().unpack_ref(dep);
 
@@ -40,7 +24,7 @@ pub(crate) fn print_deps_inner(
             EntityKind::Function(input_id) => {
                 format!(
                     "{dep} func[{input_id}] <{name:?}> (size={})",
-                    size_fn(&symbol_kind),
+                    info.get_body_len(symbol_kind),
                     input_id = input_id.as_u32()
                 )
             }
@@ -48,7 +32,7 @@ pub(crate) fn print_deps_inner(
                 let data = info.data.get_entity(data_ref).to_defined().unwrap();
                 format!(
                     "{dep} data[{segment_id}:{start}+{size}]  <{name:?}> (size={})",
-                    size_fn(&symbol_kind),
+                    info.get_body_len(symbol_kind),
                     start = data.original_range().start,
                     segment_id = data.entity_type.segment_id.as_u32(),
                     size = data.body.len()
@@ -77,7 +61,7 @@ pub(crate) fn print_deps_inner(
     let mut total_size: usize = 0;
     for r in reachable.iter() {
         let symbol = graph.snapshot().unpack_ref(*r);
-        total_size += size_fn(&symbol);
+        total_size += info.get_body_len(symbol);
     }
     println!("SPLIT: ============== {module_name} : total size: {total_size}");
 }
@@ -87,22 +71,7 @@ pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
     use std::fmt::Write;
 
     let mut output = String::new();
-    let size_fn = |entity: &EntityKind| match entity {
-        EntityKind::DataSymbol(d) => info
-            .data
-            .get_entity(*d)
-            .to_defined()
-            .map(|defined| defined.body.len())
-            .unwrap_or(0),
-        EntityKind::Function(input_id) => {
-            if let Some(defined) = info.functions.items.get_entity(*input_id).to_defined() {
-                defined.body.len()
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
+
     let format_symbol = |dep: FlatEntityRef| {
         let symbol_kind = graph.snapshot().unpack_ref(dep);
 
@@ -111,7 +80,7 @@ pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
             EntityKind::Function(input_id) => {
                 format!(
                     "{dep} func[{input_id}] <{name:?}> (size={})",
-                    size_fn(&symbol_kind),
+                    info.get_body_len(symbol_kind),
                     input_id = input_id.as_u32()
                 )
             }
@@ -119,7 +88,7 @@ pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
                 let data = info.data.get_entity(data_ref).to_defined().unwrap();
                 format!(
                     "{dep} data[{segment_id}:{start}+{size}]  <{name:?}> (size={})",
-                    size_fn(&symbol_kind),
+                    info.get_body_len(symbol_kind),
                     start = data.original_range().start,
                     segment_id = data.entity_type.segment_id.as_u32(),
                     size = data.body.len()

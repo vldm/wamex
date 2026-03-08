@@ -29,14 +29,13 @@ use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef, types::ExportEntry};
 use crate::{
-    index::{
-        Building, CompoundList, GappedMap, ImportOrDefined, Locked, NonDefault, Temp, TempIndex,
-    },
+    index::{GappedMap, NonDefault, Temp, TempIndex},
     raw::FuncTypeId,
     typed::{
-        DefinedDataChunk, DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag,
-        ImportedDataChunk, ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable,
-        ImportedTag, WithExtraInfo, common_index::EntityKind, data::DataSymbolRef,
+        Building, DefinedDataChunk, DefinedEntity, DefinedFunction, DefinedGlobal, DefinedMemory,
+        DefinedTable, DefinedTag, ExportNames, ImportedDataChunk, ImportedEntity, ImportedFunction,
+        ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, Locked, WithExtraInfo,
+        WithoutBody, common_index::EntityKind, data::DataSymbolRef,
     },
 };
 
@@ -54,13 +53,21 @@ pub type Tags<'src, BS = Locked> =
 pub type DataChunks<'src, BS = Locked> =
     EntityCollection<DataSymbolRef, ImportedDataChunk<'src>, DefinedDataChunk<'src>, BS>;
 
+///
+/// One place for storing imports and defined entities.
+///
+/// It can have two states:
+/// - `Building` - allows adding new entities, and returns temporary `Temp<Ref>` index.
+/// - `Finished` - works with fixed structure, and returns/receives stable `Ref` index.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EntityCollection<Ref, Import, Defined, BuilderState = Locked>
 where
     Ref: TempIndex,
 {
-    /// Both defined and imports entities.
-    pub items: CompoundList<Ref, Import, Defined, BuilderState>,
+    pub imports: Vec<Import>,
+    pub defined: Vec<Defined>,
+    _pd: std::marker::PhantomData<Ref>,
+    _state: std::marker::PhantomData<BuilderState>,
 }
 
 impl<Ref, Import, Defined> Default for EntityCollection<Ref, Import, Defined, Building>
@@ -68,9 +75,7 @@ where
     Ref: TempIndex,
 {
     fn default() -> Self {
-        Self {
-            items: CompoundList::empty(),
-        }
+        Self::empty()
     }
 }
 
@@ -78,18 +83,115 @@ impl<Ref, Import, Defined> EntityCollection<Ref, Import, Defined, Building>
 where
     Ref: TempIndex,
 {
-    pub fn into_finished(self) -> EntityCollection<Ref, Import, Defined, Locked> {
-        EntityCollection {
-            items: self.items.into_finished(),
+    pub fn empty() -> Self {
+        Self {
+            imports: Vec::new(),
+            defined: Vec::new(),
+            _pd: std::marker::PhantomData,
+            _state: std::marker::PhantomData,
         }
     }
-    /// Pushes a defined entity and returns its temporary reference.
-    pub fn push_defined(&mut self, import: Defined) -> crate::index::Temp<Ref> {
-        self.items.push_defined(import)
+
+    pub fn new_raw(imports: Vec<Import>, defined: Vec<Defined>) -> Self {
+        Self {
+            imports,
+            defined,
+            _pd: std::marker::PhantomData,
+            _state: std::marker::PhantomData,
+        }
     }
-    /// Pushes an import entity and returns its temporary reference.
-    pub fn push_import(&mut self, import: Import) -> crate::index::Temp<Ref> {
-        self.items.push_import(import)
+
+    pub fn imports_slice(&self) -> &[Import] {
+        self.imports.as_slice()
+    }
+    pub fn defined_slice(&self) -> &[Defined] {
+        self.defined.as_slice()
+    }
+
+    pub fn into_finished(self) -> EntityCollection<Ref, Import, Defined, Locked> {
+        EntityCollection {
+            imports: self.imports,
+            defined: self.defined,
+            _pd: std::marker::PhantomData,
+            _state: std::marker::PhantomData,
+        }
+    }
+
+    /// Returns iterator over imported entities.
+    /// The returned iterator yields pairs of (compound index, import reference).
+    pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Temp<Ref>, &Import)> {
+        self.imports
+            .iter()
+            .enumerate()
+            // import index is same as compound
+            .map(|(import_id, import)| (Temp::from_import(import_id), import))
+    }
+
+    /// Returns iterator over defined entities.
+    /// The returned iterator yields pairs of (compound index, defined reference).
+    pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Temp<Ref>, &Defined)> {
+        self.defined
+            .iter()
+            .enumerate()
+            .map(move |(defined_id, defined)| {
+                (
+                    // defined index is shifted by imports count
+                    Temp::from_defined(defined_id),
+                    defined,
+                )
+            })
+    }
+
+    /// Returns iterator over all entities, both imported and defined.
+    /// The returned iterator yields pairs of (compound index, entity reference).
+    /// Entity reference is wrapped in `ImportOrDefined` enum.
+    pub fn iter(&self) -> impl Iterator<Item = (Temp<Ref>, ImportOrDefined<&Import, &Defined>)> {
+        let imports = self
+            .imports_iter()
+            .map(|(id, import)| (id, ImportOrDefined::Import(import)));
+        let defined = self
+            .defined_iter()
+            .map(|(id, defined)| (id, ImportOrDefined::Defined(defined)));
+        imports.chain(defined)
+    }
+
+    /// Returns imported entity by index, if index is in imports range.
+    /// For import by import index use `imports` field directly.
+    pub fn get_import(&self, idx: Temp<Ref>) -> Option<&Import> {
+        let import_idx = idx.as_import()?;
+        Some(&self.imports[import_idx.index()])
+    }
+
+    /// Returns defined entity by index, if index is in defined range.
+    /// For import by defined index use `defined` field directly.
+    pub fn get_defined(&self, idx: Temp<Ref>) -> Option<&Defined> {
+        let defined_idx = idx.as_defined()?;
+        Some(&self.defined[defined_idx.index()])
+    }
+
+    /// Returns either imported or defined entity by compound index.
+    pub fn get_entity(&self, idx: Temp<Ref>) -> ImportOrDefined<&Import, &Defined> {
+        if idx.as_bits() & Temp::<Ref>::DEFINED_FLAG == 0 {
+            let import_id = idx.as_bits() as usize;
+            ImportOrDefined::Import(&self.imports[import_id])
+        } else {
+            let defined_id = (idx.as_bits() & !Temp::<Ref>::DEFINED_FLAG) as usize;
+            ImportOrDefined::Defined(&self.defined[defined_id])
+        }
+    }
+
+    /// Pushes new imported entity and returns its compound index.
+    /// This is differ from `push_defined`, since later index is "shifted" by imports count.
+    pub fn push_import(&mut self, import: impl Into<Import>) -> Temp<Ref> {
+        self.imports.push(import.into());
+        Temp::from_import(self.imports.len() - 1)
+    }
+
+    /// Pushes new defined entity and returns its "defined" index.
+    /// This defined index can be converted to compound by calling `get_compound_index`.
+    pub fn push_defined(&mut self, defined: impl Into<Defined>) -> Temp<Ref> {
+        self.defined.push(defined.into());
+        Temp::from_defined(self.defined.len() - 1)
     }
     /// Pushes either import or defined entity, depending on the variant of `ImportOrDefined`.
     pub fn push_entity(
@@ -107,8 +209,8 @@ impl<'src, Ref, Import, Defined> EntityCollection<Ref, Import, Defined>
 where
     Ref: TempIndex,
 {
-    pub fn from_parts(
-        mut declared: CompoundList<Ref, Import, Defined>,
+    pub fn extend_with_info(
+        mut self,
         mut names: GappedMap<Ref, NonDefault<Cow<'src, str>>>,
         exports: Vec<ExportEntry<'src, Ref>>,
     ) -> Self
@@ -118,76 +220,254 @@ where
     {
         for exports in &exports {
             let no_name = names.get(exports.entity_index).is_none();
-            let is_defined = declared
-                .get_entity(exports.entity_index)
-                .to_defined()
-                .is_some();
+            let is_defined = self.get_entity(exports.entity_index).to_defined().is_some();
             // if name is not present in names map
             if no_name && is_defined {
                 // insert it into names map
                 names.insert(exports.entity_index, NonDefault::from(exports.name.clone()));
             }
-            declared
-                .get_entity_mut(exports.entity_index)
+            self.get_entity_mut(exports.entity_index)
                 .export_as_mut()
                 .add_export(exports.name.clone());
         }
 
         for (r, name) in names.iter() {
-            declared
-                .get_entity_mut(r)
-                .set_name(name.clone().into_inner());
+            self.get_entity_mut(r).set_name(name.clone().into_inner());
         }
 
-        Self { items: declared }
-    }
-    pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Defined)> {
-        self.items.defined_iter()
-    }
-    pub fn defined_iter_mut(&mut self) -> impl ExactSizeIterator<Item = (Ref, &mut Defined)> {
-        self.items.defined_iter_mut()
-    }
-    pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Import)> {
-        self.items.imports_iter()
-    }
-    pub fn iter(&self) -> impl Iterator<Item = (Ref, ImportOrDefined<&Import, &Defined>)> {
-        self.items.iter()
+        self
     }
     pub fn iter_all_ids(&self) -> impl ExactSizeIterator<Item = Ref> {
-        (0..(self.items.imports.len() + self.items.defined.len())).map(EntityRef::new)
-    }
-    pub fn get_entity(&self, entity: Ref) -> ImportOrDefined<&Import, &Defined> {
-        self.items.get_entity(entity)
+        (0..(self.imports.len() + self.defined.len())).map(EntityRef::new)
     }
     pub fn len(&self) -> usize {
-        self.items.imports.len() + self.items.defined.len()
+        self.imports.len() + self.defined.len()
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-    pub fn stable_id(&self, entity: Temp<Ref>) -> Ref {
-        self.items.stable_id(entity)
     }
     pub fn add_exports(&mut self, entity: Ref, export_name: Cow<'src, str>)
     where
         Import: WithExtraInfo<'src>,
         Defined: WithExtraInfo<'src>,
     {
-        self.items
-            .get_entity_mut(entity)
+        self.get_entity_mut(entity)
             .export_as_mut()
             .add_export(export_name);
     }
+
     pub fn exports_iter(&self) -> impl Iterator<Item = (Ref, Cow<'src, str>)>
     where
         Import: WithExtraInfo<'src>,
         Defined: WithExtraInfo<'src>,
     {
-        self.items.iter().flat_map(|(r, entity)| {
+        self.iter().flat_map(|(r, entity)| {
             let iter = entity.export_as().names.clone().into_iter();
 
             iter.map(move |export_name| (r, export_name))
         })
+    }
+    // Convert temporary index to stable index.
+    pub fn stable_id(&self, idx: Temp<Ref>) -> Ref {
+        idx.to_stable(self.imports.len())
+    }
+    /// Returns iterator over imported entities.
+    /// The returned iterator yields pairs of (compound index, import reference).
+    pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Import)> {
+        self.imports
+            .iter()
+            .enumerate()
+            // import index is same as compound
+            .map(|(import_id, import)| (Ref::new(import_id), import))
+    }
+
+    /// Returns iterator over defined entities.
+    /// The returned iterator yields pairs of (compound index, defined reference).
+    pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Defined)> {
+        self.defined
+            .iter()
+            .enumerate()
+            .map(move |(defined_id, defined)| {
+                (
+                    // defined index is shifted by imports count
+                    Ref::new(defined_id + self.imports.len()),
+                    defined,
+                )
+            })
+    }
+    pub fn defined_iter_mut(&mut self) -> impl ExactSizeIterator<Item = (Ref, &mut Defined)> {
+        let imports_len = self.imports.len();
+        self.defined
+            .iter_mut()
+            .enumerate()
+            .map(move |(defined_id, defined)| {
+                (
+                    // defined index is shifted by imports count
+                    Ref::new(defined_id + imports_len),
+                    defined,
+                )
+            })
+    }
+
+    /// Returns iterator over all entities, both imported and defined.
+    /// The returned iterator yields pairs of (compound index, entity reference).
+    /// Entity reference is wrapped in `ImportOrDefined` enum.
+    pub fn iter(&self) -> impl Iterator<Item = (Ref, ImportOrDefined<&Import, &Defined>)> {
+        let imports = self
+            .imports_iter()
+            .map(|(id, import)| (id, ImportOrDefined::Import(import)));
+        let defined = self
+            .defined_iter()
+            .map(|(id, defined)| (id, ImportOrDefined::Defined(defined)));
+        imports.chain(defined)
+    }
+    /// Returns either imported or defined entity by index.
+    pub fn get_entity(&self, stable_index: Ref) -> ImportOrDefined<&Import, &Defined> {
+        self.try_get_entity(stable_index)
+            .expect("Index out of bounds")
+    }
+    pub fn get_entity_mut(
+        &mut self,
+        stable_index: Ref,
+    ) -> ImportOrDefined<&mut Import, &mut Defined> {
+        self.try_get_entity_mut(stable_index)
+            .expect("Index out of bounds")
+    }
+    pub fn try_get_entity_mut(
+        &mut self,
+        stable_index: Ref,
+    ) -> Option<ImportOrDefined<&mut Import, &mut Defined>> {
+        let num_imports = self.imports.len();
+        if stable_index.index() < num_imports {
+            Some(ImportOrDefined::Import(
+                &mut self.imports[stable_index.index()],
+            ))
+        } else {
+            let defined_index = stable_index.index() - num_imports;
+            if defined_index < self.defined.len() {
+                Some(ImportOrDefined::Defined(&mut self.defined[defined_index]))
+            } else {
+                None
+            }
+        }
+    }
+    /// Returns entity by index, or `None` if index is out of bounds.
+    pub fn try_get_entity(&self, stable_index: Ref) -> Option<ImportOrDefined<&Import, &Defined>> {
+        let num_imports = self.imports.len();
+        if stable_index.index() < num_imports {
+            Some(ImportOrDefined::Import(&self.imports[stable_index.index()]))
+        } else {
+            let defined_index = stable_index.index() - num_imports;
+            if defined_index < self.defined.len() {
+                Some(ImportOrDefined::Defined(&self.defined[defined_index]))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Either imported or defined entity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum ImportOrDefined<Import, Defined> {
+    Import(Import),
+    Defined(Defined),
+}
+
+impl<Import, Defined> ImportOrDefined<Import, Defined> {
+    pub fn to_defined(self) -> Option<Defined> {
+        match self {
+            ImportOrDefined::Defined(d) => Some(d),
+            _ => None,
+        }
+    }
+    pub fn to_imported(self) -> Option<Import> {
+        match self {
+            ImportOrDefined::Import(i) => Some(i),
+            _ => None,
+        }
+    }
+}
+impl<Import, Defined> ImportOrDefined<&Import, &Defined> {
+    pub fn cloned(&self) -> ImportOrDefined<Import, Defined>
+    where
+        Import: Clone,
+        Defined: Clone,
+    {
+        match *self {
+            ImportOrDefined::Import(i) => ImportOrDefined::Import(i.clone()),
+            ImportOrDefined::Defined(d) => ImportOrDefined::Defined(d.clone()),
+        }
+    }
+}
+
+trait WithType {
+    type Type;
+    fn get_type(&self) -> &Self::Type;
+}
+impl<T> WithType for DefinedEntity<'_, T> {
+    type Type = T;
+
+    fn get_type(&self) -> &Self::Type {
+        &self.entity_type
+    }
+}
+
+impl<T> WithType for WithoutBody<'_, T> {
+    type Type = T;
+
+    fn get_type(&self) -> &Self::Type {
+        &self.entity_type
+    }
+}
+
+impl<'any, ImportInner, D> ImportOrDefined<&'any ImportedEntity<'_, ImportInner>, &'any D>
+where
+    D: WithType<Type = ImportInner>,
+{
+    pub fn get_type(&self) -> &'any ImportInner {
+        match self {
+            ImportOrDefined::Import(import) => &import.entity_type,
+            ImportOrDefined::Defined(defined) => defined.get_type(),
+        }
+    }
+}
+
+impl<'src, Import, Defined> ImportOrDefined<&Import, &Defined>
+where
+    Import: WithExtraInfo<'src>,
+    Defined: WithExtraInfo<'src>,
+{
+    pub fn export_as(&self) -> &ExportNames<'src> {
+        match self {
+            ImportOrDefined::Import(import) => import.export_as(),
+            ImportOrDefined::Defined(defined) => defined.export_as(),
+        }
+    }
+    pub fn name(&self) -> Option<&Cow<'src, str>> {
+        match self {
+            ImportOrDefined::Import(import) => import.name(),
+            ImportOrDefined::Defined(defined) => defined.name(),
+        }
+    }
+}
+
+impl<'src, Import, Defined> ImportOrDefined<&mut Import, &mut Defined>
+where
+    Import: WithExtraInfo<'src>,
+    Defined: WithExtraInfo<'src>,
+{
+    pub fn export_as_mut(&mut self) -> &mut ExportNames<'src> {
+        match self {
+            ImportOrDefined::Import(import) => import.export_as_mut(),
+            ImportOrDefined::Defined(defined) => defined.export_as_mut(),
+        }
+    }
+    pub fn set_name(&mut self, name: Cow<'src, str>) {
+        match self {
+            ImportOrDefined::Import(import) => import.set_name(name),
+            ImportOrDefined::Defined(defined) => defined.set_name(name),
+        }
     }
 }
 

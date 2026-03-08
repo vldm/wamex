@@ -273,7 +273,7 @@ mod tests {
 
         let snapshot = EntitiesSnapshot::new(&module);
 
-        module.functions.items.iter().for_each(|(func_ref, _)| {
+        module.functions.iter().for_each(|(func_ref, _)| {
             let entity_kind = EntityKind::Function(func_ref);
             let flat_ref = snapshot.pack_ref(func_ref);
             let unpacked = snapshot.unpack_ref(flat_ref);

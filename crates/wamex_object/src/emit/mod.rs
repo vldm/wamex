@@ -24,12 +24,12 @@ use crate::{
         },
     },
     helpers::{ShiftMap, ShiftPoint, encoding_size},
-    index::{Building, GappedMap, ImportOrDefined},
+    index::GappedMap,
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
-    raw::{DataSegmentId, FuncTypeId, data},
+    raw::{DataSegmentId, FuncTypeId},
     typed::{
-        DefinedFunction, EntityBody, ExportNames, FileId, FileLoader, FunctionRef, GlobalRef,
-        ImportedEntity, Module, TableRef,
+        Building, DefinedFunction, EntityBody, ExportNames, FileId, FileLoader, FunctionRef,
+        GlobalRef, ImportOrDefined, ImportedEntity, Module, TableRef,
         common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef, TempEntityKind},
         data::SpecificLocation,
         elements::ElementItemId,
@@ -263,7 +263,7 @@ impl<'src> Module<'src> {
         if !self.start_functions.is_empty() {
             #[cfg(debug_assertions)]
             self.start_functions.iter().for_each(|f| {
-                let func = self.functions.items.get_entity(*f);
+                let func = self.functions.get_entity(*f);
                 let is_void =
                     func.get_type().params().is_empty() && func.get_type().results().is_empty();
                 assert!(
@@ -301,7 +301,7 @@ impl<'src> Module<'src> {
     ) -> Result<GappedMap<FunctionRef, ElementItemId>> {
         let func_id_table = self.indirect_function_table.table_id;
         assert!(
-            self.tables.items.try_get_entity(func_id_table).is_some(),
+            self.tables.try_get_entity(func_id_table).is_some(),
             "Indirect function table must be defined as a table in the module"
         );
 

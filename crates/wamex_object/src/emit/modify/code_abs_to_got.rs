@@ -123,8 +123,7 @@ impl<'src> HandleReloc<'src> for CodeAbsToGot<'_> {
         // TODO: ensure_global_got_base exist
         for (store_type, content_type) in init_each_store_var() {
             //TODO: Don't assert that this id won't shift
-            let global_id =
-                builder.globals.items.imports.len() + builder.globals.items.defined.len();
+            let global_id = builder.globals.imports.len() + builder.globals.defined.len();
             self.global_tmps
                 .insert(store_type, GlobalRef::new(global_id));
 

@@ -17,7 +17,6 @@ use wasmparser::{ElementItems, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
-    index::{Building, CompoundList, Locked},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
@@ -37,6 +36,12 @@ impl_entity_index! {
     #[display = "sym"]
     pub struct SymbolId;
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Locked {}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+
+pub enum Building {}
 
 type FileWithData<'src> = Yoke<LoadedFile<'src>, Box<[u8]>>;
 
@@ -156,18 +161,18 @@ impl<'src> Module<'src> {
         let imports = entities::read_imports(reader)?;
         let exports = entities::read_exports(reader)?;
 
-        let functions = entities::Functions::from_parts(
-            CompoundList::new(
-                imports.0,
-                reader
-                    .code
-                    .section_payload
-                    .defined_funcs
-                    .values()
-                    .map(Into::into)
-                    .collect(),
-            )
-            .into_finished(),
+        let functions = entities::Functions::new_raw(
+            imports.0,
+            reader
+                .code
+                .section_payload
+                .defined_funcs
+                .values()
+                .map(Into::into)
+                .collect(),
+        )
+        .into_finished()
+        .extend_with_info(
             reader
                 .names
                 .functions
@@ -177,24 +182,25 @@ impl<'src> Module<'src> {
                 .collect(),
             exports.0,
         );
-        let tables = entities::Tables::from_parts(
-            CompoundList::new(imports.1, reader.tables.values().map(Into::into).collect())
-                .into_finished(),
-            reader
-                .names
-                .tables
-                .iter()
-                // TODO: remove
-                .map(|(id, name)| (id, (*name).into()))
-                .collect(),
-            exports.1,
-        );
-        let memories = entities::Memories::from_parts(
-            CompoundList::new(
-                imports.2,
-                reader.memories.values().map(Into::into).collect(),
-            )
-            .into_finished(),
+        let tables =
+            entities::Tables::new_raw(imports.1, reader.tables.values().map(Into::into).collect())
+                .into_finished()
+                .extend_with_info(
+                    reader
+                        .names
+                        .tables
+                        .iter()
+                        // TODO: remove
+                        .map(|(id, name)| (id, (*name).into()))
+                        .collect(),
+                    exports.1,
+                );
+        let memories = entities::Memories::new_raw(
+            imports.2,
+            reader.memories.values().map(Into::into).collect(),
+        )
+        .into_finished()
+        .extend_with_info(
             reader
                 .names
                 .memories
@@ -204,9 +210,12 @@ impl<'src> Module<'src> {
                 .collect(),
             exports.2,
         );
-        let globals = entities::Globals::from_parts(
-            CompoundList::new(imports.3, reader.globals.values().map(Into::into).collect())
-                .into_finished(),
+        let globals = entities::Globals::new_raw(
+            imports.3,
+            reader.globals.values().map(Into::into).collect(),
+        )
+        .into_finished()
+        .extend_with_info(
             reader
                 .names
                 .globals
@@ -217,18 +226,19 @@ impl<'src> Module<'src> {
             exports.3,
         );
 
-        let tags = entities::Tags::from_parts(
-            CompoundList::new(imports.4, reader.tags.values().map(Into::into).collect())
-                .into_finished(),
-            reader
-                .names
-                .tags
-                .iter()
-                // TODO: remove
-                .map(|(id, name)| (id, (*name).into()))
-                .collect(),
-            exports.4,
-        );
+        let tags =
+            entities::Tags::new_raw(imports.4, reader.tags.values().map(Into::into).collect())
+                .into_finished()
+                .extend_with_info(
+                    reader
+                        .names
+                        .tags
+                        .iter()
+                        // TODO: remove
+                        .map(|(id, name)| (id, (*name).into()))
+                        .collect(),
+                    exports.4,
+                );
 
         for (import_id, import) in reader.imports.iter() {
             match import.ty {
@@ -335,17 +345,13 @@ impl<'src> Module<'src> {
                     let filtered =
                         data::DataChunk::canonicalize_data_symbols(sliced, &mut file_symbol_db);
                     for (_, chunk) in filtered {
-                        sliced_chunks
-                            .items
-                            .push_defined(DefinedDataChunk::from(chunk));
+                        sliced_chunks.push_defined(DefinedDataChunk::from(chunk));
                     }
 
                     continue 'iter;
                 };
 
-                sliced_chunks
-                    .items
-                    .push_defined(DefinedDataChunk::from(segment_chunk));
+                sliced_chunks.push_defined(DefinedDataChunk::from(segment_chunk));
             }
 
             sliced_chunks.into_finished()
@@ -412,7 +418,7 @@ impl<'src> Module<'src> {
         }
         val
     }
-    // Get entity name
+    /// Get entity name
     pub fn get_name(&self, entity: EntityKind) -> Cow<'src, str> {
         let debug_name = match entity {
             EntityKind::Function(func_id) => self.functions.get_entity(func_id).name().cloned(),
@@ -426,7 +432,24 @@ impl<'src> Module<'src> {
 
         debug_name.unwrap_or_else(|| format!("{entity}").into())
     }
-
+    /// Calculate estimated size of entity.
+    pub fn get_body_len(&self, entity: EntityKind) -> usize {
+        match entity {
+            EntityKind::DataSymbol(d) => self
+                .data
+                .get_entity(d)
+                .to_defined()
+                .map(|defined| defined.body.len()),
+            EntityKind::Function(func_id) => self
+                .functions
+                .get_entity(func_id)
+                .to_defined()
+                .map(|defined| defined.body.len()),
+            _ => None,
+        }
+        .unwrap_or_default()
+    }
+    /// Get entity export names
     pub fn entities_exports(&self) -> impl Iterator<Item = EntityKind> + '_ {
         let functions = self
             .functions
@@ -570,7 +593,7 @@ impl<'src> ModuleBuilder<'src> {
                 self.indirect_function_table.table_id
             );
         }
-        self.tables.items.push_defined(&raw::Table {
+        self.tables.push_defined(&raw::Table {
             ty: TableType {
                 table64: false,
                 shared: false,
@@ -592,7 +615,7 @@ impl<'src> ModuleBuilder<'src> {
                 self.mem_spec.mem_id
             );
         }
-        self.memories.items.push_defined(WithoutBody {
+        self.memories.push_defined(WithoutBody {
             entity_type: raw::MemoryType {
                 memory64: false,
                 shared: false,
