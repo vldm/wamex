@@ -201,11 +201,15 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                         .to_imported()
                         .is_some()
                     {
+                        // log::error!("reloc {reloc:?}");
                         // search for location in external module.
-                        assert!(
-                            matches!(reloc.relation, Relative::Got),
-                            "Relocation for imported data should be handled by one of modify::* modules and have Relative::Got relation"
-                        );
+
+                        // TODO: absolute addr for main module
+                        if !matches!(reloc.relation, Relative::Got) {
+                            log::error!(
+                                "Relocation for imported data should be handled by one of modify::* modules and have Relative::Got relation"
+                            );
+                        }
                         self.imported_data
                             .get(d)
                             .expect("Cannot find imported data symbol for relocation: {reloc:?}")

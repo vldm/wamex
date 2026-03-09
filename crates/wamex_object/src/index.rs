@@ -391,7 +391,7 @@ pub trait TempIndex: EntityRef {
 /// Used during building phase, when final indexes are not known, because some imports may shift defined entities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 #[display("{_0}")]
-pub struct Temp<Idx: TempIndex>(u32, std::marker::PhantomData<Idx>);
+pub struct Temp<Idx>(u32, std::marker::PhantomData<Idx>);
 impl<Idx: TempIndex> Temp<Idx> {
     pub const DEFINED_FLAG: u32 = 1 << 31;
     pub const MAX_VALUE: u32 = Self::DEFINED_FLAG - 1;
@@ -421,9 +421,9 @@ impl<Idx: TempIndex> Temp<Idx> {
     }
 
     #[inline]
-    pub fn as_defined(&self) -> Option<Idx> {
+    pub fn as_defined(&self) -> Option<u32> {
         if (self.0 & Self::DEFINED_FLAG) != 0 {
-            Some(Idx::from_u32(self.0 & !Self::DEFINED_FLAG))
+            Some(self.0 & !Self::DEFINED_FLAG)
         } else {
             None
         }

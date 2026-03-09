@@ -158,14 +158,14 @@ where
     /// Returns imported entity by index, if index is in imports range.
     /// For import by import index use `imports` field directly.
     pub fn get_import(&self, idx: Temp<Ref>) -> Option<&Import> {
-        let import_idx = idx.as_import()?;
+        let import_idx = idx.to_stable(self.imports.len());
         Some(&self.imports[import_idx.index()])
     }
 
     /// Returns defined entity by index, if index is in defined range.
     /// For import by defined index use `defined` field directly.
     pub fn get_defined(&self, idx: Temp<Ref>) -> Option<&Defined> {
-        let defined_idx = idx.as_defined()?;
+        let defined_idx = idx.to_stable(self.imports.len());
         Some(&self.defined[defined_idx.index()])
     }
 
@@ -192,6 +192,14 @@ where
     pub fn push_defined(&mut self, defined: impl Into<Defined>) -> Temp<Ref> {
         self.defined.push(defined.into());
         Temp::from_defined(self.defined.len() - 1)
+    }
+    /// Returns the next defined index that will be assigned to the next defined entity.
+    pub fn next_defined_key(&self) -> Temp<Ref> {
+        Temp::from_defined(self.defined.len())
+    }
+    /// Returns the next import index that will be assigned to the next imported entity.
+    pub fn next_import_key(&self) -> Temp<Ref> {
+        Temp::from_import(self.imports.len())
     }
     /// Pushes either import or defined entity, depending on the variant of `ImportOrDefined`.
     pub fn push_entity(

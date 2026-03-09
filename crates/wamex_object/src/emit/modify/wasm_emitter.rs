@@ -59,6 +59,14 @@ where
         Ok(res)
     }
 
+    fn encode_5byte_invalid(&mut self) -> Result<u32, std::io::Error> {
+        let mut buf = [0; 5];
+        buf.copy_from_slice(&[0xde, 0xad, 0xbe, 0xef, 0x00]);
+        let res = self.offset;
+        self.push_bytes(&buf)?;
+        Ok(res)
+    }
+
     // TODO: const expr can have multiple vals so we can only return Vec<u32>
     pub fn encode_const_expr(
         &mut self,
@@ -79,6 +87,11 @@ where
         self.push_byte(0x23)?;
         self.encode_leb_5byte(g)
     }
+    /// Encode [`Instruction::GlobalGet`] with 0xdeadbeef global_id and return offset of global_id start
+    pub fn global_get_invalid(&mut self) -> Result<u32, std::io::Error> {
+        self.push_byte(0x23)?;
+        self.encode_5byte_invalid()
+    }
 
     /// Encode [`Instruction::GlobalSet`] and return offset of global_id start
     pub fn global_set(&mut self, g: u32) -> Result<u32, std::io::Error> {
@@ -90,6 +103,12 @@ where
     pub fn i32_const(&mut self, c: i32) -> Result<u32, std::io::Error> {
         self.push_byte(0x41)?;
         self.encode_sleb_5byte(c)
+    }
+
+    /// Encode [`Instruction::I32Const`] with 0xdeadbeef value and return offset of constant start
+    pub fn i32_const_invalid(&mut self) -> Result<u32, std::io::Error> {
+        self.push_byte(0x41)?;
+        self.encode_5byte_invalid()
     }
 
     /// Encode [`Instruction::I32Add`] and return offset of instruction start
@@ -254,6 +273,11 @@ where
     pub fn i64_store32(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x3E)?;
         self.encode_memarg32(m)
+    }
+
+    /// Encode [`Instruction::End`].
+    pub fn end(&mut self) -> Result<(), std::io::Error> {
+        self.push_byte(0x0B)
     }
 }
 

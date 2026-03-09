@@ -11,21 +11,22 @@ use anyhow::{Result, bail, ensure};
 use cranelift_entity::{EntityRef, packed_option::ReservedValue};
 use wasmparser::{GlobalType, Operator};
 
-use super::{Cursor, HandleFixups};
+use super::{
+    Cursor, HandleFixups, OutputEntityRef, OutputRelocationEntry, Rewrite,
+    wasm_emitter::MemArgOffsets,
+};
 use crate::{
     SVec,
-    emit::modify::{OutputEntityRef, OutputRelocationEntry, Rewrite, wasm_emitter::MemArgOffsets},
+    index::Temp,
     linkage::reloc::{
         Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
     },
     typed::{
-        DefinedGlobal, EntityBody, ExportNames, GlobalRef,
+        DefinedGlobal, EntityBody, ExportNames, FileId, FunctionRef, GlobalRef,
         common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
         data::SpecificLocation,
     },
 };
-
-const INVALID_U32: u32 = 0xEFBEADDE;
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub enum StoreType {
     I32,
@@ -139,17 +140,18 @@ impl<'a> CodeAbsToGot<'a> {
             });
         }
 
-        todo!();
-        // self.memory_base = memory_base;
         Ok(())
     }
 }
 
 impl<'src> HandleFixups<'src> for CodeAbsToGot<'_> {
     type ExtraData = ();
+    type EntityRef = FunctionRef;
     fn create_entry(
         &self,
+        _entity_ref: Temp<Self::EntityRef>,
         buffer: Cursor<'src>,
+        _input_file: FileId,
         entry: EntityRelocationEntry,
     ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
         // TODO: move outside of this creation
@@ -260,31 +262,19 @@ impl<'src> CodeAbsToGot<'_> {
             offset = got_offset
         );
 
-        let got_rel_offset = writer.global_get(INVALID_U32)?;
+        let got_rel_offset = writer.global_get_invalid()?;
         let const_rel_offset = writer.i32_const(got_offset)?;
         writer.i32_add()?;
 
-        new_relocs.push(OutputRelocationEntry {
-            // entity should have information about GOT they used, since there maybe more than one.
-            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
-            symbol_op: EntityAddressMode::BaseStaticIndex,
-            offset: got_rel_offset,
-            encoding: Encoding::Leb,
-            width: RelocationWidth::Bits32,
-            relation: Relative::None,
-            addend: 0,
-        });
+        new_relocs.push(
+            EntityRelocationEntry::index_base(got_rel_offset, old_entry.symbol_id)
+                .into_from_input(),
+        );
+        let mut entry = old_entry.into_from_input();
+        entry.relation = Relative::Got;
+        entry.offset = const_rel_offset;
 
-        new_relocs.push(OutputRelocationEntry {
-            // TODO: Handle old memory index
-            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
-            symbol_op: old_entry.symbol_op,
-            offset: const_rel_offset,
-            relation: Relative::Got,
-            encoding: old_entry.encoding,
-            width: old_entry.width,
-            addend: old_entry.addend,
-        });
+        new_relocs.push(entry);
         Ok(Rewrite {
             old_range: old_entry.relocation_range(),
             new_relocs,
@@ -342,17 +332,11 @@ impl<'src> CodeAbsToGot<'_> {
             })
         }
         // TODO: we can emit relocation for this global
-        let got_offset = writer.global_get(INVALID_U32)?;
-        new_relocs.push(OutputRelocationEntry {
-            // entity should have information about GOT they used, since there maybe more than one.
-            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
-            symbol_op: EntityAddressMode::BaseStaticIndex,
-            offset: got_offset,
-            encoding: Encoding::Leb,
-            width: RelocationWidth::Bits32,
-            relation: Relative::None,
-            addend: 0,
-        });
+        let got_offset = writer.global_get_invalid()?;
+        // entity should have information about GOT they used, since there maybe more than one.
+        new_relocs.push(
+            EntityRelocationEntry::index_base(got_offset, old_entry.symbol_id).into_from_input(),
+        );
         writer.i32_add()?;
         // add offset from global_index variable to the dyn_offset part of instruction
         // restore <value> from temp global
@@ -371,17 +355,11 @@ impl<'src> CodeAbsToGot<'_> {
         }
         let mem_offsets = self.encode_store_ix(&mut writer, &instruction)?; // And now write original instruction
 
-        new_relocs.push(OutputRelocationEntry {
-            //TODO: Convert to OutputSymbolId
-            symbol_id: OutputEntityRef::from_input(old_entry.symbol_id),
-            symbol_op: old_entry.symbol_op,
-            offset: mem_offsets.offset,
-            relation: Relative::Got,
+        let mut entry = old_entry.into_from_input();
+        entry.relation = Relative::Got;
+        entry.offset = mem_offsets.offset;
 
-            encoding: old_entry.encoding,
-            width: old_entry.width,
-            addend: old_entry.addend,
-        });
+        new_relocs.push(entry);
 
         Ok(Rewrite {
             new_bytes,

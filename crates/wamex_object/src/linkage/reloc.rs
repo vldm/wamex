@@ -187,6 +187,37 @@ impl<Index, Op> RelocationEntry<Index, Op> {
         }
     }
 }
+impl EntityRelocationEntry {
+    pub fn index_base(offset_of_got: u32, symbol_ref: EntityKind) -> Self {
+        Self {
+            // entity should have information about GOT they used, since there maybe more than one.
+            symbol_id: symbol_ref,
+            symbol_op: EntityAddressMode::BaseStaticIndex,
+            offset: offset_of_got,
+            encoding: Encoding::Leb,
+            width: RelocationWidth::Bits32,
+            relation: Relative::None,
+            addend: 0,
+        }
+    }
+    pub fn runtime_addr(place_for_adddr: u32, symbol_ref: EntityKind, is_got: bool) -> Self {
+        // only data or fn can have runtime addr
+        debug_assert!(symbol_ref.is_function() || symbol_ref.is_data());
+        Self {
+            symbol_id: symbol_ref,
+            symbol_op: EntityAddressMode::RuntimeAddr,
+            offset: place_for_adddr,
+            encoding: Encoding::Sleb,
+            width: RelocationWidth::Bits32,
+            relation: if is_got {
+                Relative::Got
+            } else {
+                Relative::None
+            },
+            addend: 0,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 /// Enumeration of all symbols that can be stored in `Symbols` table.

@@ -7,7 +7,7 @@ use wasmparser::TypeRef;
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
-    emit::modify::Rewrite,
+    emit::modify::{OutputRelocationEntry, Rewrite},
     linkage::reloc::EntityRelocationEntry,
     raw::{self, FunctionWithBody},
     typed::{self},

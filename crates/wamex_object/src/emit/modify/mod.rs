@@ -1,15 +1,21 @@
 use anyhow::Result;
+use wasmparser::RelocationEntry;
 
 use crate::{
     SVec,
     emit::modify::cursor::Cursor,
     helpers::RangeExt,
-    linkage::reloc::{EntityAddressMode, EntityRelocationEntry},
-    typed::{EntityBodyCopy, common_index::EntityKind},
+    index::Temp,
+    linkage::reloc::{
+        Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
+    },
+    typed::{EntityBodyCopy, FileId, common_index::EntityKind},
 };
 
 pub mod code_abs_to_got;
 pub mod cursor;
+pub mod data_abs_to_got;
+// pub mod start_fn_gen;
 pub mod wasm_emitter;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -33,6 +39,30 @@ impl OutputEntityRef {
 pub type OutputRelocationEntry =
     crate::linkage::reloc::RelocationEntry<OutputEntityRef, EntityAddressMode>;
 
+impl EntityRelocationEntry {
+    pub fn into_resolved(self) -> OutputRelocationEntry {
+        OutputRelocationEntry {
+            symbol_id: OutputEntityRef::Resolved(self.symbol_id),
+            symbol_op: self.symbol_op,
+            addend: self.addend,
+            offset: self.offset,
+            relation: self.relation,
+            encoding: self.encoding,
+            width: self.width,
+        }
+    }
+    pub fn into_from_input(self) -> OutputRelocationEntry {
+        OutputRelocationEntry {
+            symbol_id: OutputEntityRef::FromInput(self.symbol_id),
+            symbol_op: self.symbol_op,
+            addend: self.addend,
+            offset: self.offset,
+            relation: self.relation,
+            encoding: self.encoding,
+            width: self.width,
+        }
+    }
+}
 ///
 /// Represents a rewrite operation that modifies a specific range of bytes.
 /// It can be new instructions or data placement, inside `Symbol`.
@@ -75,6 +105,7 @@ pub struct ModificationEntry<D = ()> {
 /// The main purpose of this patches is to replace some symbol references with other types.
 /// e.g. converting absoulte address to got-relative, or replacing a function call with an indirect call.
 pub trait HandleFixups<'src> {
+    type EntityRef: Copy;
     type ExtraData;
 
     // TODO: Suport modification that need two or more relocs
@@ -83,26 +114,32 @@ pub trait HandleFixups<'src> {
     /// Return None if no modification is needed for this entry.
     fn create_entry(
         &self,
+        entity: Temp<Self::EntityRef>,
         buffer: Cursor<'src>,
+        // Usefull when we need to manually resolve relocs
+        input_file: FileId,
         entry: EntityRelocationEntry,
     ) -> Result<Option<(Rewrite, Self::ExtraData)>>;
 }
 
 pub fn create_fixup_for_entity<'src, H: HandleFixups<'src>>(
     entity: &mut EntityBodyCopy<'src>,
+    entity_ref: Temp<H::EntityRef>,
+
+    input_file: FileId,
     entity_relocs: &[EntityRelocationEntry],
     handler: &H,
 ) -> Result<Vec<H::ExtraData>> {
     let mut result = vec![];
-    let mut entries = entity_relocs.iter().peekable();
+    let mut entries = entity_relocs.iter().enumerate().peekable();
     let mut prev_range = ..0usize;
 
     // TODO: instead of marking buffer - enforce this guarantee in relocation collection.
-
-    while let Some(entry) = entries.next() {
+    // use while instead of for, to have access of iterator inside loop.
+    while let Some((idx, entry)) = entries.next() {
         let red_after = entries
             .peek()
-            .map(|e| (e.offset as usize - entity.original_range.start)..)
+            .map(|(_, e)| (e.offset as usize - entity.original_range.start)..)
             .unwrap_or(entity.bytes.len()..);
 
         let reloc = entry.shift_left(entity.original_range.start);
@@ -114,8 +151,12 @@ pub fn create_fixup_for_entity<'src, H: HandleFixups<'src>>(
             red_after,
         );
 
-        if let Some((rewrite, extra_data)) = handler.create_entry(cursor, reloc)? {
+        if let Some((rewrite, extra_data)) =
+            handler.create_entry(entity_ref, cursor, input_file, reloc)?
+        {
             entity.fixups.push(rewrite);
+
+            entity.filtered_relocs.insert(idx);
             result.push(extra_data);
         }
 
