@@ -85,7 +85,7 @@ impl<Entity> EntityLocation<Entity> {
 }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct FunctionInfo {
-    pub code_offset: usize,
+    pub code_offset: u32,
     pub indirect_table_index: Option<ElementItemId>,
 }
 

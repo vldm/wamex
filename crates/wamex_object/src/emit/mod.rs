@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    io::Write,
+    io::{self, Write},
     path::Path,
 };
 
@@ -17,6 +17,7 @@ use crate::{
             OutputEntityRef,
             code_abs_to_got::{CodeAbsToGot, GotInfo},
             data_abs_to_got::DataAbsToGot,
+            wasm_emitter,
         },
         relocation::{
             EntityLocation, FunctionInfo, ImportedDataDep, ModuleLayout, RelocationState,
@@ -368,9 +369,7 @@ impl<'src> Module<'src> {
         &self,
         func_id: FunctionRef,
         func: &DefinedFunction<'_>,
-
-        section: &mut wasm_encoder::CodeSection,
-    ) -> Result<()> {
+    ) -> Result<Vec<u8>, std::io::Error> {
         let mut writer = Vec::new();
         let function_name = self.get_name(func_id.into());
 
@@ -381,56 +380,45 @@ impl<'src> Module<'src> {
             "Emitting function {function_name}, bytes: {}",
             hex::encode(&writer)
         );
-        section.raw(&writer);
 
-        Ok(())
+        Ok(writer)
     }
     fn generate_code_section(
         &self,
         output_module: &mut wasm_encoder::Module,
     ) -> Result<SecondaryMap<FunctionRef, FunctionInfo>> {
-        let defined_functions_count = self.functions.defined_iter().len() as u32
-            + if !self.start_functions.is_empty() {
-                1 // start function
-            } else {
-                0
-            };
-
-        // function definitions start after small "header"
-        let start_of_functions_def = encoding_size(defined_functions_count);
-
         let mut functions_mapping = SecondaryMap::new();
-        let mut section = wasm_encoder::CodeSection::new();
-        for (id, output_func) in self.functions.defined_iter() {
-            // TODO: shift relocs
-            let function_start_offset = start_of_functions_def + section.byte_len();
-            self._generate_defined_function(id, output_func, &mut section)?;
-            functions_mapping[id] = FunctionInfo {
-                code_offset: function_start_offset,
-                indirect_table_index: None,
-            }
-        }
+        let section = wasm_emitter::SectionAdapter::new(|section| {
+            for (id, output_func) in self.functions.defined_iter() {
+                let function = self._generate_defined_function(id, output_func)?;
 
-        // TODO: push it as last defined during into_finalized() call?
-        // TODO: check fn type to be void.
-        if !self.start_functions.is_empty() {
-            let start_fn_ref = FunctionRef::new(self.functions.len());
-            // generate start function as last function in code section, and add call to all start functions in its body
-            let mut func = wasm_encoder::Function::new([]);
-            let mut sink = func.instructions();
-            for func_ref in &self.start_functions {
-                sink.call(func_ref.as_u32()); // TODO: Relocs?
+                let function_start_offset = section.push_raw_item(&function)?;
+                functions_mapping[id] = FunctionInfo {
+                    code_offset: function_start_offset,
+                    indirect_table_index: None,
+                }
             }
-            sink.end();
 
-            let function_start_offset = start_of_functions_def + section.byte_len();
-            section.function(&func);
-            functions_mapping[start_fn_ref] = FunctionInfo {
-                code_offset: function_start_offset,
-                indirect_table_index: None,
+            // TODO: push it as last defined during into_finalized() call?
+            // TODO: check fn type to be void.
+            if !self.start_functions.is_empty() {
+                let start_fn_ref = FunctionRef::new(self.functions.len());
+                // generate start function as last function in code section, and add call to all start functions in its body
+                let mut func = wasm_encoder::Function::new([]);
+                let mut sink = func.instructions();
+                for func_ref in &self.start_functions {
+                    sink.call(func_ref.as_u32()); // TODO: Relocs?
+                }
+                sink.end();
+
+                let function_start_offset = section.push_raw_item(&func.into_raw_body())?;
+                functions_mapping[start_fn_ref] = FunctionInfo {
+                    code_offset: function_start_offset,
+                    indirect_table_index: None,
+                }
             }
-        }
-
+            Ok(())
+        })?;
         output_module.section(&section);
 
         Ok(functions_mapping)
@@ -650,7 +638,7 @@ impl<'src> Module<'src> {
         body: &EntityBody,
         // output
         writer: &mut impl Write,
-    ) -> Result<()> {
+    ) -> Result<(), io::Error> {
         for buf in body.iter_chunks() {
             writer.write_all(buf)?;
         }

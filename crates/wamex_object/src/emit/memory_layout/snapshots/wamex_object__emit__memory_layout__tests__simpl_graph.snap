@@ -12,9 +12,9 @@ expression: print_data_format
 [.rodata:data2] .Lanon.40cffdd5158028b640e87266bd095959.2
 00000012  63 6F 6E 73 74 61 6E 74                           |constant|
 
-[.rodata:data4294967295] <padding> (size: 2)
+[.rodata] <padding> (size: 2)
 [.rodata:data3] .Lswitch.table.indirect_fn
-0000001C  01 00 00 00 02 00 00 00  03 00 00 00              |............|
+0000001C  01 00 00 00 02 00 00 00  03 00 00 00              |············|
           └[1]───────┘└[2]───────┘ └[3]───────┘             
   REFS (this part)
   [1] hello_world   range=0x001C..0x0020 (4)

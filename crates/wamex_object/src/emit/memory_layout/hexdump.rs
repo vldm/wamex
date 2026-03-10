@@ -206,9 +206,13 @@ pub trait SymbolDebugExt {
     fn entity_name(&self, entity: EntityKind) -> String;
     fn bytes(&self) -> Vec<u8>;
 
-    fn print_header(&self, out: impl Write, base: &mut usize);
+    // return true if body should be skipped.
+    fn print_header(&self, out: impl Write) -> bool;
     fn debug_symbol_ext(&self, mut out: impl Write, base: &mut usize, color: bool) {
-        self.print_header(&mut out, base);
+        if self.print_header(&mut out) {
+            *base += self.bytes().len();
+            return;
+        }
 
         let input_symbol = self.get_symbol_shifted_relocs();
         let refs = input_symbol
@@ -256,7 +260,7 @@ impl SymbolDebugExt for SymbolDebug<'_> {
         self.body.iter_bytes().collect()
     }
 
-    fn print_header(&self, mut out: impl Write, base: &mut usize) {
+    fn print_header(&self, mut out: impl Write) -> bool {
         if self.symbol_index.is_reserved_value() {
             writeln!(
                 out,
@@ -265,8 +269,7 @@ impl SymbolDebugExt for SymbolDebug<'_> {
                 body_len = self.body.len(),
             )
             .unwrap();
-            *base += self.body.len();
-            return;
+            return true;
         }
         writeln!(
             out,
@@ -276,6 +279,7 @@ impl SymbolDebugExt for SymbolDebug<'_> {
             name = self.symbol_name,
         )
         .unwrap();
+        false
     }
 }
 
@@ -296,7 +300,7 @@ impl SymbolDebugExt for SectionDebug<'_> {
         self.bytes.to_vec()
     }
 
-    fn print_header(&self, mut out: impl Write, base: &mut usize) {
+    fn print_header(&self, mut out: impl Write) -> bool {
         writeln!(
             out,
             "[{name}] (size: {size})",
@@ -304,7 +308,7 @@ impl SymbolDebugExt for SectionDebug<'_> {
             size = self.bytes.len()
         )
         .unwrap();
-        *base += self.bytes.len();
+        false
     }
 }
 #[cfg(test)]

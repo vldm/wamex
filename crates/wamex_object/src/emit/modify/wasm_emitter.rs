@@ -10,7 +10,7 @@
 //!
 
 use std::{
-    io::{Seek, SeekFrom, Write},
+    io::{Cursor, Seek, SeekFrom, Write},
     ops::Range,
 };
 
@@ -35,6 +35,18 @@ impl<W> Encoder<W> {
             written_range: starting_offset..starting_offset,
         }
     }
+    /// Returns start point for the `Encoder`.
+    pub fn start(&self) -> u32 {
+        self.written_range.start
+    }
+    /// Returns the current offset within the encoder.
+    pub fn offset(&self) -> u32 {
+        self.offset
+    }
+    /// Consume encoder and return the inner writer.
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
     /// Extend current written range with additional space,
     /// the additional_offset is added to the current offset.
     ///
@@ -44,6 +56,36 @@ impl<W> Encoder<W> {
         if self.offset > self.written_range.end {
             self.written_range.end = self.offset;
         }
+    }
+
+    /// Call a func with a child encoder, starting at the given offset and prevent going above it.
+    pub fn with_child_encoder<F, U>(
+        &mut self,
+        starting_offset: u32,
+        func: F,
+    ) -> Result<U, std::io::Error>
+    where
+        F: FnOnce(&mut Encoder<&mut W>) -> Result<U, std::io::Error>,
+    {
+        if starting_offset < self.written_range.start || starting_offset > self.written_range.end {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Starting offset is out of written range",
+            ));
+        }
+
+        let mut sliced_encoder = Encoder {
+            writer: &mut self.writer,
+            offset: starting_offset,
+            written_range: starting_offset..starting_offset,
+        };
+        let result = func(&mut sliced_encoder)?;
+        self.offset = sliced_encoder.offset;
+        // After func call, we need to extend the main encoder's range with the sliced encoder's range.
+        self.written_range.end = sliced_encoder.written_range.end;
+
+        // and return back
+        Ok(result)
     }
 }
 
@@ -75,7 +117,7 @@ impl<S: Seek> Seek for Encoder<S> {
             SeekFrom::End(e) => checked_add(self.written_range.end, e)?,
         };
         // offset should be in range, or at the end of written range (to allow appending)
-        if !self.written_range.contains(&new_offset) && new_offset != self.written_range.end {
+        if new_offset < self.written_range.start || new_offset > self.written_range.end {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "Seek out of written range",
@@ -103,7 +145,7 @@ where
         Ok(())
     }
 
-    fn encode_leb_5byte(&mut self, v: u32) -> Result<u32, std::io::Error> {
+    pub fn encode_leb_5byte(&mut self, v: u32) -> Result<u32, std::io::Error> {
         let mut buf = [0; 5];
         encode::encode_leb128_u32_5byte(v, &mut buf);
         let res = self.offset;
@@ -111,7 +153,7 @@ where
         Ok(res)
     }
 
-    fn encode_sleb_5byte(&mut self, v: i32) -> Result<u32, std::io::Error> {
+    pub fn encode_sleb_5byte(&mut self, v: i32) -> Result<u32, std::io::Error> {
         let mut buf = [0; 5];
         encode::encode_leb128_i32_5byte(v, &mut buf);
         let res = self.offset;
@@ -119,7 +161,9 @@ where
         Ok(res)
     }
 
-    fn encode_5byte_invalid(&mut self) -> Result<u32, std::io::Error> {
+    /// Encode constant with 5 byte len, reserved for sleb/leb encoding
+    /// with invalid value `0xdeadbeef00`
+    pub fn encode_5byte_invalid(&mut self) -> Result<u32, std::io::Error> {
         let mut buf = [0; 5];
         buf.copy_from_slice(&[0xde, 0xad, 0xbe, 0xef, 0x00]);
         let res = self.offset;
@@ -358,7 +402,7 @@ impl EncodeWithRelocOffset for u32 {
         encoder.encode_leb_5byte(*self)
     }
 }
-
+#[derive(Debug)]
 pub struct MemArgOffsets {
     pub offset: u32,
     pub memory_index: Option<u32>,
@@ -369,38 +413,119 @@ pub struct MemArgOffsets {
 /// Creating a new `SectionList` will reserve place for <bytes_len> of section and <list_count>.
 /// Calling `push_item` allow `SectionList` to count items,
 /// and after calling `finish`, the `SectionList` will update <bytes_len> and <list_count> in the `Encoder` and return it.
+#[derive(Debug)]
 pub struct SectionList<W> {
     encoder: Encoder<W>,
-    bytes_pos: usize,
-    count_pos: usize,
+    bytes_pos: u32,
+    count_pos: u32,
 
-    items_count: usize,
+    items_count: u32,
 }
 
-impl<W> SectionList<W> {
+impl<W: Write> SectionList<W> {
     /// Create new section in the given writer.
     /// Reserve space for <bytes_len> and <list_count>.
     ///
     /// This constructor will consume `Encoder` and return a `SectionList` object.
     /// To return back `Encoder`, one should call `finish`.
-    pub fn create_section(encoder: Encoder<W>) -> Result<SectionList<W>, std::io::Error> {
-        todo!()
+    pub fn create_section(mut encoder: Encoder<W>) -> Result<SectionList<W>, std::io::Error> {
+        if encoder.offset != encoder.written_range.end {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Encoder should be at the end of written range",
+            ));
+        }
+        let start = encoder.start();
+        let bytes_pos = encoder.encode_5byte_invalid()? - start;
+        let start = encoder.start();
+        let count_pos = encoder.encode_5byte_invalid()? - start;
+        Ok(SectionList {
+            encoder,
+            bytes_pos,
+            count_pos,
+            items_count: 0,
+        })
     }
 
-    pub fn finish(self) -> Result<W, std::io::Error> {
-        todo!()
+    /// Finish section, update <bytes_len> and <list_count> and return back `Encoder`.
+    pub fn finish(mut self) -> Result<Encoder<W>, std::io::Error>
+    where
+        W: Seek,
+    {
+        let bytes_len = self.encoder.written_range.end - self.bytes_pos - 5; // 5 bytes for the length itself
+        self.encoder.seek(SeekFrom::Start(self.bytes_pos as u64))?;
+        self.encoder.encode_leb_5byte(bytes_len)?;
+        self.encoder.seek(SeekFrom::Start(self.count_pos as u64))?;
+        self.encoder.encode_leb_5byte(self.items_count)?;
+        self.encoder.seek(SeekFrom::End(0))?;
+
+        Ok(self.encoder)
     }
 
-    pub fn push_item(&mut self, item: &[u8]) -> Result<(), std::io::Error> {
-        todo!()
+    /// Execute a function with a child encoder for the next item in the section.
+    ///
+    pub fn item_from_encoder<F, U>(&mut self, func: F) -> Result<U, std::io::Error>
+    where
+        F: FnOnce(&mut Encoder<&mut W>) -> Result<U, std::io::Error>,
+    {
+        self.items_count += 1;
+        self.encoder.with_child_encoder(self.encoder.offset, func)
+    }
+
+    /// Push bytes to section as an item.
+    ///
+    /// Returns offset of start
+    pub fn push_raw_item(&mut self, item: &[u8]) -> Result<u32, std::io::Error>
+    where
+        Encoder<W>: std::fmt::Debug,
+    {
+        let start_offset = self.encoder.offset;
+        self.item_from_encoder(|encoder| encoder.push_bytes(item))?;
+        Ok(start_offset)
     }
 }
 
-// fn encode_section(sink: &mut Vec<u8>, count: u32, bytes: &[u8]) {
-//     (encoding_size(count) + bytes.len()).encode(sink);
-//     count.encode(sink);
-//     sink.extend(bytes);
-// }
+/// Adapter to wasm_encoder
+#[derive(Debug)]
+pub struct SectionAdapter {
+    bytes: Vec<u8>,
+    id: u8,
+}
+
+impl wasm_encoder::Section for SectionAdapter {
+    fn id(&self) -> u8 {
+        self.id
+    }
+    fn append_to(&self, dst: &mut Vec<u8>) {
+        dst.push(self.id);
+        dst.extend_from_slice(&self.bytes);
+    }
+}
+
+impl wasm_encoder::Encode for SectionAdapter {
+    fn encode(&self, dst: &mut Vec<u8>) {
+        dst.extend_from_slice(&self.bytes);
+    }
+}
+
+pub type MemWriter = Cursor<Vec<u8>>;
+impl SectionAdapter {
+    pub fn new<F>(func: F) -> Result<Self, std::io::Error>
+    where
+        F: FnOnce(&mut SectionList<MemWriter>) -> Result<(), std::io::Error>,
+    {
+        let buf = Cursor::new(Vec::new());
+        let encoder = Encoder::new(buf, 0);
+        let section_list = SectionList::create_section(encoder)?;
+        let mut section_list = section_list;
+        func(&mut section_list)?;
+        let encoder = section_list.finish()?;
+        Ok(SectionAdapter {
+            bytes: encoder.into_inner().into_inner(),
+            id: 0, // TODO: pass id as param
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -449,5 +574,35 @@ mod tests {
 
         // Check final buffer content
         assert_eq!(&buf.get_ref()[..], &[0x01, 0xFF, 0x03, 0xEE, 0xDD]);
+    }
+
+    #[test]
+    fn test_section_list() {
+        let mut buf = Cursor::new(Vec::new());
+        let encoder = Encoder::new(&mut buf, 0);
+        let mut section_list = SectionList::create_section(encoder).unwrap();
+
+        let offset = section_list.push_raw_item(&[0x01, 0x02]).unwrap();
+
+        assert_eq!(offset, 10); // 5 bytes for length + 5 bytes for count
+        let offset = section_list.push_raw_item(&[0x03]).unwrap();
+        assert_eq!(offset, 12); // 5 bytes for length + 5 bytes for count + 2 bytes for previous item
+        section_list
+            .item_from_encoder(|e| e.push_bytes(&[0x04, 0x05, 0x06]))
+            .unwrap();
+
+        let _ = section_list.finish().unwrap();
+
+        // The final buffer should contain:
+        // - 5 bytes for the length (3 items + 6 bytes)
+        // - 5 bytes for the count (3 items)
+        // - the items themselves
+        assert_eq!(
+            &buf.get_ref()[..],
+            &[
+                0x8B, 0x80, 0x80, 0x80, 0x00, 0x83, 0x80, 0x80, 0x80, 0x00, 0x01, 0x02, 0x03, 0x04,
+                0x05, 0x06
+            ]
+        );
     }
 }
