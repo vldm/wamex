@@ -151,7 +151,7 @@ impl EntityAddressMode {
 /// - resolution of symbol index to typed entity_id
 /// - application of symbol offset.
 ///
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct RelocationEntry<SymbolIndex, SymbolOp> {
     /// Optional addend to be added to the resulting value.
     pub addend: i64,
@@ -216,6 +216,24 @@ impl EntityRelocationEntry {
             },
             addend: 0,
         }
+    }
+}
+
+// small repr for relocation entry:
+// offset: {offset} encode={encoding}{width}({sym_id}[@{SymOp}+{Relative}] + addend)
+impl<Sym: Debug, Op: Debug> Debug for RelocationEntry<Sym, Op> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Reloc: offset={offset :#x}, encode={encoding:?}{width:?}(sym_id={symbol_id:?}[@{symbol_op:?}+{relation:?}] + {addend:#x})",
+            offset = self.offset,
+            encoding = self.encoding,
+            width = self.width,
+            symbol_id = self.symbol_id,
+            symbol_op = self.symbol_op,
+            relation = self.relation,
+            addend = self.addend
+        )
     }
 }
 
@@ -298,7 +316,7 @@ pub enum Encoding {
 /// Base of addr/index is stored can be stored in global variable.
 /// This enum indicates which variable stores this base.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum Relative {
     /// Absolute address
     None,
@@ -309,11 +327,29 @@ pub enum Relative {
     /// Data Symbol relative to it's location in memory (addr = addend - offset)
     LocRel,
 }
+impl Debug for Relative {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Got => write!(f, "Got"),
+            Self::Tls => write!(f, "Tls"),
+            Self::LocRel => write!(f, "LocRel"),
+            Self::None => Ok(()),
+        }
+    }
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum RelocationWidth {
     Bits32,
     Bits64,
+}
+impl Debug for RelocationWidth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bits32 => write!(f, "32"),
+            Self::Bits64 => write!(f, "64"),
+        }
+    }
 }
 
 // Is not used anymore - but during implementation we highlighted what entities are actually used

@@ -7,7 +7,6 @@ use itertools::Itertools;
 use crate::{
     SVec,
     emit::modify::wasm_emitter,
-    helpers::RangeExt,
     index::{GappedMap, ReservedValue},
     linkage::file_db::FileRelocs,
     raw::DataSegmentId,
@@ -17,7 +16,7 @@ use crate::{
     },
 };
 
-mod hexdump;
+pub mod hexdump;
 
 #[derive(Clone, Debug)]
 struct ChunkRepr<'a>(DefinedDataChunk<'a>, Cow<'a, str>, DataSymbolRef);
@@ -162,6 +161,7 @@ impl<'src> SegmentLayout<'src> {
         print_data_format: &mut impl std::fmt::Write,
         color: bool, // std::io::stdout().is_terminal()
     ) {
+        use hexdump::SymbolDebugExt;
         writeln!(print_data_format, "<Module {module_name}>").unwrap();
 
         let mut base = 0;
@@ -171,42 +171,15 @@ impl<'src> SegmentLayout<'src> {
                 let name = &chunk.1;
                 let symbol_index = chunk.2;
 
-                if chunk.2.is_reserved_value() {
-                    writeln!(
-                        print_data_format,
-                        "[{segment}:{symbol_index}] <padding> (size: {})",
-                        chunk.0.body.len(),
-                    )
-                    .unwrap();
-                    base += chunk.0.body.len();
-                    continue;
-                }
-                writeln!(print_data_format, "[{segment}:{symbol_index}] {name}",).unwrap();
-                let chunk = &chunk.0.body;
-
-                let input_symbol = file_relocs
-                    .get_data_relocs(symbol_index)
-                    .unwrap_or_default();
-                let refs = input_symbol
-                    .iter()
-                    .map(|reloc| {
-                        let id = reloc.symbol_id;
-                        let name = module.get_name(id);
-                        hexdump::Ref {
-                            range: reloc
-                                .relocation_range()
-                                .shift_left(chunk.original_range().start),
-                            name,
-                        }
-                    })
-                    .collect();
-                let part = hexdump::DataPart {
-                    bytes: &mut chunk.iter_bytes(),
-                    refs,
+                let db = hexdump::SymbolDebug {
+                    module,
+                    file_relocs,
+                    segment,
+                    symbol_name: name,
+                    symbol_index,
+                    body: &chunk.0.body,
                 };
-                hexdump::render_part(&mut *print_data_format, base, part, color);
-                // TODO: add padding
-                base += chunk.len();
+                db.debug_symbol_ext(&mut *print_data_format, &mut base, color);
             }
         }
     }

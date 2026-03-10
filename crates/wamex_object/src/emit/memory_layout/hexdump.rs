@@ -1,15 +1,23 @@
-use std::{borrow::Cow, fmt::Write, ops::Range};
+use std::{fmt::Write, ops::Range};
 
-pub struct DataPart<'a> {
+use cranelift_entity::packed_option::ReservedValue;
+
+use crate::{
+    helpers::RangeExt,
+    linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
+    typed::{EntityBody, Module, common_index::EntityKind, data::DataSymbolRef},
+};
+
+pub struct DataPart {
     // pub name: &'a str,
-    pub bytes: &'a mut dyn Iterator<Item = u8>,
-    pub refs: Vec<Ref<'a>>,
+    pub bytes: Vec<u8>,
+    pub refs: Vec<Ref>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Ref<'a> {
+pub struct Ref {
     pub range: Range<usize>,
-    pub name: Cow<'a, str>,
+    pub name: String,
 }
 
 /// Renders a hexdump of a DataPart with optional color highlighting for references.
@@ -18,8 +26,7 @@ pub struct Ref<'a> {
 /// part - the DataPart to render.
 pub fn render_part(mut out: impl Write, part_base: usize, part: DataPart, color: bool) {
     // Collect bytes into a vector for indexing
-    let bytes: Vec<u8> = part.bytes.collect();
-    dbg!(&bytes);
+    let bytes: Vec<u8> = part.bytes;
     // Mark bytes to ref index
     let mut byte_to_ref: Vec<Option<usize>> = vec![None; bytes.len()];
     for (idx, r) in part.refs.iter().enumerate() {
@@ -59,13 +66,22 @@ pub fn render_part(mut out: impl Write, part_base: usize, part: DataPart, color:
         }
 
         write!(out, " |").ok();
-        for &b in chunk {
+        for (j, &b) in chunk.iter().enumerate() {
             let ch = if (0x20..=0x7E).contains(&b) {
                 b as char
             } else {
-                '.'
+                '·' // U+00B7 middle dot — ligature-safe
             };
-            write!(out, "{ch}").ok();
+            if color {
+                if let Some(ref_id) = byte_to_ref[line_idx * cols + j] {
+                    let (fg, bg) = palette(ref_id);
+                    write!(out, "\x1b[{fg};{bg}m{ch}\x1b[0m").ok();
+                } else {
+                    write!(out, "{ch}").ok();
+                }
+            } else {
+                write!(out, "{ch}").ok();
+            }
         }
         writeln!(out, "|").ok();
 
@@ -161,29 +177,149 @@ pub fn render_part(mut out: impl Write, part_base: usize, part: DataPart, color:
     writeln!(out).ok();
 }
 
-/// Returns (fg_code, bg_code)
+/// Returns (fg_code, bg_code) — high-contrast ANSI pairs, excluding default white-on-black.
 fn palette(i: usize) -> (String, String) {
-    let i = (i * 3) % 8;
-    let bg = 40 + i;
-    let fg_code = if i >= 5 { "30" } else { "97" }; // 30=black, 97=bright white
-    (fg_code.to_string(), bg.to_string())
+    // Hand-picked (fg, bg) pairs: every combination has strong contrast,
+    // avoids default terminal colors (white on black), and adjacent indices
+    // use distinct hues for easy visual discrimination.
+    const PAIRS: &[(&str, &str)] = &[
+        ("97", "41"),  // bright white on red
+        ("30", "42"),  // black on green
+        ("97", "44"),  // bright white on blue
+        ("30", "43"),  // black on yellow
+        ("97", "45"),  // bright white on magenta
+        ("30", "46"),  // black on cyan
+        ("30", "47"),  // black on white
+        ("97", "101"), // bright white on bright red
+        ("30", "102"), // black on bright green
+        ("97", "104"), // bright white on bright blue
+        ("30", "103"), // black on bright yellow
+        ("30", "106"), // black on bright cyan
+        ("97", "105"), // bright white on bright magenta
+    ];
+    let (fg, bg) = PAIRS[i % PAIRS.len()];
+    (fg.to_string(), bg.to_string())
 }
 
+pub trait SymbolDebugExt {
+    fn get_symbol_shifted_relocs(&self) -> Box<[EntityRelocationEntry]>;
+    fn entity_name(&self, entity: EntityKind) -> String;
+    fn bytes(&self) -> Vec<u8>;
+
+    fn print_header(&self, out: impl Write, base: &mut usize);
+    fn debug_symbol_ext(&self, mut out: impl Write, base: &mut usize, color: bool) {
+        self.print_header(&mut out, base);
+
+        let input_symbol = self.get_symbol_shifted_relocs();
+        let refs = input_symbol
+            .iter()
+            .map(|reloc| {
+                let id = reloc.symbol_id;
+                let name = self.entity_name(id);
+                Ref {
+                    range: reloc.relocation_range(),
+                    name,
+                }
+            })
+            .collect();
+        let bytes = self.bytes();
+        let len = bytes.len();
+        let part = DataPart { bytes, refs };
+        render_part(&mut out, *base, part, color);
+        *base += len;
+    }
+}
+
+pub struct SymbolDebug<'a> {
+    pub module: &'a Module<'a>,
+    pub file_relocs: &'a FileRelocs,
+    pub segment: &'a str,
+    pub symbol_name: &'a str,
+    pub symbol_index: DataSymbolRef,
+    pub body: &'a EntityBody<'a>,
+}
+
+impl SymbolDebugExt for SymbolDebug<'_> {
+    fn get_symbol_shifted_relocs(&self) -> Box<[EntityRelocationEntry]> {
+        self.file_relocs
+            .get_data_relocs(self.symbol_index)
+            .unwrap_or_default()
+            .iter()
+            .map(|r| r.shift_left(self.body.original_range().start))
+            .collect()
+    }
+
+    fn entity_name(&self, entity: EntityKind) -> String {
+        self.module.get_name(entity).to_string()
+    }
+    fn bytes(&self) -> Vec<u8> {
+        self.body.iter_bytes().collect()
+    }
+
+    fn print_header(&self, mut out: impl Write, base: &mut usize) {
+        if self.symbol_index.is_reserved_value() {
+            writeln!(
+                out,
+                "[{segment}] <padding> (size: {body_len})",
+                segment = self.segment,
+                body_len = self.body.len(),
+            )
+            .unwrap();
+            *base += self.body.len();
+            return;
+        }
+        writeln!(
+            out,
+            "[{segment}:{symbol_index}] {name}",
+            segment = self.segment,
+            symbol_index = self.symbol_index,
+            name = self.symbol_name,
+        )
+        .unwrap();
+    }
+}
+
+pub struct SectionDebug<'a> {
+    pub name: &'a str,
+    pub bytes: &'a [u8],
+    pub relocs: &'a [EntityRelocationEntry],
+}
+impl SymbolDebugExt for SectionDebug<'_> {
+    fn get_symbol_shifted_relocs(&self) -> Box<[EntityRelocationEntry]> {
+        self.relocs.to_vec().into_boxed_slice()
+    }
+
+    fn entity_name(&self, entity: EntityKind) -> String {
+        entity.to_string()
+    }
+    fn bytes(&self) -> Vec<u8> {
+        self.bytes.to_vec()
+    }
+
+    fn print_header(&self, mut out: impl Write, base: &mut usize) {
+        writeln!(
+            out,
+            "[{name}] (size: {size})",
+            name = self.name,
+            size = self.bytes.len()
+        )
+        .unwrap();
+        *base += self.bytes.len();
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn show_example() {
         let part = DataPart {
-            bytes: &mut [
+            bytes: vec![
                 0x01, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0xDE, 0xAD,
                 0xBE, 0xEF, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x00, 0x00, 0x00, 0x34, 0x12, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22, 0x33, 0x44,
                 0x55, 0x66, 0x77, 0x88, 0x99, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
                 0xEE, 0xFF, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
-            ]
-            .iter()
-            .copied(),
+            ],
             refs: vec![
                 Ref {
                     range: 0..6,

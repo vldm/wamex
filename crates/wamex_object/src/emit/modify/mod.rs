@@ -1,14 +1,11 @@
 use anyhow::Result;
-use wasmparser::RelocationEntry;
 
 use crate::{
     SVec,
     emit::modify::cursor::Cursor,
     helpers::RangeExt,
     index::Temp,
-    linkage::reloc::{
-        Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
-    },
+    linkage::reloc::{EntityAddressMode, EntityRelocationEntry},
     typed::{EntityBodyCopy, FileId, common_index::EntityKind},
 };
 
@@ -84,19 +81,6 @@ impl Rewrite {
     pub fn size(&self) -> isize {
         self.new_bytes.len() as isize - self.old_range.len() as isize
     }
-}
-
-/// Represents a modification entry that describes changes to be made
-/// to a specific range of bytes in a WebAssembly module.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModificationEntry<D = ()> {
-    /// Indicates if this entry rewrites some of the original bytes.
-    /// It could be replacing of
-    pub rewrite: Option<Rewrite>,
-    // Debug?/Trace info about original relocation
-    pub original_reloc: EntityRelocationEntry,
-    // if this reloc needs to be handled with extra data
-    pub extra_info: D,
 }
 
 /// Implementation of modification routine.

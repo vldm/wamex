@@ -135,8 +135,9 @@ impl<'a> DataAbsToGot<'a> {
         let func = wasm_encoder::Function::new([]);
         new_bytes.clear();
         new_bytes.extend(func.into_raw_body());
-
-        let mut encoder = Encoder::new(new_bytes, 0);
+        let len = new_bytes.len() as u32;
+        log::error!("Start function body len: {len}");
+        let mut encoder = Encoder::new(new_bytes, len);
         for data_entry in &resolved_inits {
             Self::push_init(&mut encoder, new_relocs, data_entry, MEMORY_INDEX)?;
         }

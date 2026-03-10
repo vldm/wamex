@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Display};
+
 use cranelift_entity::packed_option::ReservedValue;
 use derive_more::{Display, From};
 
@@ -28,7 +30,7 @@ impl_entity_index! {
 
 /// A tagged reference to an entity in a WebAssembly module.
 /// Can be converted to `FlatEntityRef` in order to get a unified index.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, From, Display)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, From, Display)]
 #[display("{_0}")]
 pub enum EntityKind {
     Function(FunctionRef),
@@ -38,6 +40,12 @@ pub enum EntityKind {
     Memory(MemoryRef),
     Tag(TagRef),
     Type(FuncTypeId),
+}
+
+impl Debug for EntityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
+    }
 }
 
 impl ReservedValue for EntityKind {

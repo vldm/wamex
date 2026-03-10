@@ -9,37 +9,97 @@
 //! - Unlike `InstructionSink` methods cannot be used in sequence as in builder.
 //!
 
-use std::io::Write;
+use std::{
+    io::{Seek, SeekFrom, Write},
+    ops::Range,
+};
 
 use wasm_encoder::{Encode, MemArg};
 
 use crate::emit::relocation::encode;
 
+/// Wrapper around Write/Seek that track written range, and position and
+/// ensures that seek are done within written range.
+#[derive(Debug)]
 pub struct Encoder<W> {
     writer: W,
     offset: u32,
+    written_range: Range<u32>,
+}
+
+impl<W> Encoder<W> {
+    pub fn new(writer: W, starting_offset: u32) -> Self {
+        Encoder {
+            writer,
+            offset: starting_offset,
+            written_range: starting_offset..starting_offset,
+        }
+    }
+    /// Extend current written range with additional space,
+    /// the additional_offset is added to the current offset.
+    ///
+    /// This call should be used with call to internal writer, to declare used range.
+    fn extend_range(&mut self, additional_offset: u32) {
+        self.offset += additional_offset;
+        if self.offset > self.written_range.end {
+            self.written_range.end = self.offset;
+        }
+    }
+}
+
+impl<W: Write> Write for Encoder<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let res = self.writer.write(buf)?;
+        self.extend_range(res as u32);
+        Ok(res)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+impl<S: Seek> Seek for Encoder<S> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let checked_add = |pos: u32, offset: i64| -> std::io::Result<u32> {
+            let err = || std::io::Error::new(std::io::ErrorKind::InvalidInput, "Seek overflow");
+            (pos as i64)
+                .checked_add(offset)
+                .ok_or_else(err)?
+                .try_into()
+                .map_err(|_| err())
+        };
+
+        let new_offset = match pos {
+            SeekFrom::Current(c) => checked_add(self.offset, c)?,
+            SeekFrom::Start(s) => checked_add(self.written_range.start, s as i64)?,
+            SeekFrom::End(e) => checked_add(self.written_range.end, e)?,
+        };
+        // offset should be in range, or at the end of written range (to allow appending)
+        if !self.written_range.contains(&new_offset) && new_offset != self.written_range.end {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Seek out of written range",
+            ));
+        }
+
+        self.offset = new_offset;
+        let seek_pos = self.offset - self.written_range.start;
+        self.writer.seek(SeekFrom::Start(seek_pos as u64))?;
+        Ok(seek_pos as u64)
+    }
 }
 
 impl<W> Encoder<W>
 where
     W: Write,
 {
-    pub fn new(writer: W, starting_offset: u32) -> Self {
-        Encoder {
-            writer,
-            offset: starting_offset,
-        }
-    }
-
     pub fn push_byte(&mut self, byte: u8) -> Result<(), std::io::Error> {
-        self.writer.write_all(&[byte])?;
-        self.offset += 1;
+        self.write_all(&[byte])?;
         Ok(())
     }
 
     pub fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
-        self.writer.write_all(bytes)?;
-        self.offset += bytes.len() as u32;
+        self.write_all(bytes)?;
         Ok(())
     }
 
@@ -302,4 +362,92 @@ impl EncodeWithRelocOffset for u32 {
 pub struct MemArgOffsets {
     pub offset: u32,
     pub memory_index: Option<u32>,
+}
+
+/// Wrapper for emitting list-like sections in streaming fashion.
+///
+/// Creating a new `SectionList` will reserve place for <bytes_len> of section and <list_count>.
+/// Calling `push_item` allow `SectionList` to count items,
+/// and after calling `finish`, the `SectionList` will update <bytes_len> and <list_count> in the `Encoder` and return it.
+pub struct SectionList<W> {
+    encoder: Encoder<W>,
+    bytes_pos: usize,
+    count_pos: usize,
+
+    items_count: usize,
+}
+
+impl<W> SectionList<W> {
+    /// Create new section in the given writer.
+    /// Reserve space for <bytes_len> and <list_count>.
+    ///
+    /// This constructor will consume `Encoder` and return a `SectionList` object.
+    /// To return back `Encoder`, one should call `finish`.
+    pub fn create_section(encoder: Encoder<W>) -> Result<SectionList<W>, std::io::Error> {
+        todo!()
+    }
+
+    pub fn finish(self) -> Result<W, std::io::Error> {
+        todo!()
+    }
+
+    pub fn push_item(&mut self, item: &[u8]) -> Result<(), std::io::Error> {
+        todo!()
+    }
+}
+
+// fn encode_section(sink: &mut Vec<u8>, count: u32, bytes: &[u8]) {
+//     (encoding_size(count) + bytes.len()).encode(sink);
+//     count.encode(sink);
+//     sink.extend(bytes);
+// }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn test_encoder() {
+        let mut buf = Cursor::new(Vec::new());
+        let mut encoder = Encoder::new(&mut buf, 5);
+
+        assert_eq!(encoder.offset, 5);
+        assert_eq!(encoder.written_range, 5..5);
+
+        encoder.push_byte(0x01).unwrap();
+        assert_eq!(encoder.offset, 6);
+        assert_eq!(encoder.written_range, 5..6);
+
+        encoder.push_bytes(&[0x02, 0x03, 0x04, 0x05]).unwrap();
+        assert_eq!(encoder.offset, 10);
+        assert_eq!(encoder.written_range, 5..10);
+
+        encoder.seek(SeekFrom::Start(1)).unwrap();
+
+        encoder.push_byte(0xFF).unwrap();
+
+        assert_eq!(encoder.offset, 7); // 5 + 1 (seek) + 1 (push)
+        assert_eq!(encoder.written_range, 5..10);
+
+        // go to end
+        encoder.seek(SeekFrom::End(0)).unwrap();
+
+        encoder.seek(SeekFrom::Current(-2)).unwrap();
+
+        encoder.push_byte(0xEE).unwrap();
+        assert_eq!(encoder.offset, 9); //
+        assert_eq!(encoder.written_range, 5..10);
+
+        encoder.seek(SeekFrom::End(-1)).unwrap();
+
+        encoder.push_byte(0xDD).unwrap();
+
+        assert_eq!(encoder.offset, 10);
+        assert_eq!(encoder.written_range, 5..10);
+
+        // Check final buffer content
+        assert_eq!(&buf.get_ref()[..], &[0x01, 0xFF, 0x03, 0xEE, 0xDD]);
+    }
 }

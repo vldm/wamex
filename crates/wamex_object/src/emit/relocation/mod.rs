@@ -51,7 +51,7 @@ use cranelift_entity::{SecondaryMap, packed_option::ReservedValue};
 
 use crate::{
     emit::{
-        memory_layout::{DataSymbolOffset, DataSymbolsOffsets},
+        memory_layout::{self, DataSymbolOffset, DataSymbolsOffsets},
         modify::code_abs_to_got::GotInfo,
     },
     index::GappedMap,
@@ -141,13 +141,34 @@ impl<'any, 'src> RelocationState<'any, 'src> {
         //2. apply code relocs
         let code_relocs = relocs.get_code_section_relocs();
         let code_section = &mut module_bytes[self.current_module_layout.code_section.clone()];
-        log::debug!("Applying code relocs: {code_relocs:#?}, code section: {code_section:#?}");
+        if log::Level::Debug <= log::max_level() {
+            use memory_layout::hexdump::SymbolDebugExt;
+            let mut res = String::new();
+            memory_layout::hexdump::SectionDebug {
+                name: "Code section",
+                bytes: code_section,
+                relocs: code_relocs,
+            }
+            .debug_symbol_ext(&mut res, &mut 0, true);
+            log::debug!("Applying code relocs: {res}",);
+        }
+
         self.apply_relocations(code_section, code_relocs);
         //3. apply data relocs
         let data_relocs = relocs.get_data_section_relocs();
         let data_section = &mut module_bytes[self.current_module_layout.data_section.clone()];
 
-        log::debug!("Applying data relocs: {data_relocs:#?}, data section: {data_section:#?}");
+        if log::Level::Debug <= log::max_level() {
+            use memory_layout::hexdump::SymbolDebugExt;
+            let mut res = String::new();
+            memory_layout::hexdump::SectionDebug {
+                name: "Data section",
+                bytes: data_section,
+                relocs: data_relocs,
+            }
+            .debug_symbol_ext(&mut res, &mut 0, true);
+            log::debug!("Applying data relocs: {res}",);
+        }
         self.apply_relocations(data_section, data_relocs);
     }
 

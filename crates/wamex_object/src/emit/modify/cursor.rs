@@ -13,6 +13,7 @@ use anyhow::Result;
 ///
 ///
 /// The aim of this object is to handle overlapping of modification entries.
+/// (mostly for debug and strict assertions)
 pub struct Cursor<'any> {
     buffer: &'any [u8],
     green: Range<usize>,
