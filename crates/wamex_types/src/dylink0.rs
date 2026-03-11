@@ -82,9 +82,9 @@ impl<'src> Dylink0Section<'src> {
     }
 
     #[cfg(feature = "parser")]
-    pub fn from_reader(mut reader: Dylink0SectionReader<'src>) -> Result<Self> {
+    pub fn from_reader(reader: Dylink0SectionReader<'src>) -> Result<Self> {
         let mut this = Dylink0Section::default();
-        while let Some(subsection) = reader.next() {
+        for subsection in reader {
             match subsection? {
                 Dylink0Subsection::MemInfo(mem_info) => {
                     this.memory_size = mem_info.memory_size;
@@ -93,7 +93,7 @@ impl<'src> Dylink0Section<'src> {
                     this.table_alignment = mem_info.table_alignment;
                 }
                 Dylink0Subsection::Needed(needed) => {
-                    this.needed_libraries = needed.into_iter().map(|s| Cow::Borrowed(s)).collect();
+                    this.needed_libraries = needed.into_iter().map(Cow::Borrowed).collect();
                 }
 
                 Dylink0Subsection::ImportInfo(imports) => {

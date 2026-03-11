@@ -1835,7 +1835,6 @@ name = "wamex_macro"
 version = "0.1.0"
 dependencies = [
  "base16",
- "digest",
  "proc-macro2",
  "quote",
  "sha2",

@@ -10,13 +10,12 @@
 //!
 
 use std::{
-    borrow::Borrow,
     fmt::Debug,
     io::{Cursor, Seek, SeekFrom, Write},
     ops::Range,
 };
 
-use wasm_encoder::{Encode, MemArg};
+use wasm_encoder::MemArg;
 
 use crate::{
     emit::{

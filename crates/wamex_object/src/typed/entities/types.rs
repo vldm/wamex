@@ -1,4 +1,4 @@
-use std::{borrow::Cow, iter, ops::Range};
+use std::{borrow::Cow, ops::Range};
 
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::EntityRef;
@@ -7,7 +7,7 @@ use wasmparser::TypeRef;
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
-    emit::modify::{OutputRelocationEntry, Rewrite, wasm_emitter},
+    emit::modify::{Rewrite, wasm_emitter},
     linkage::reloc::EntityRelocationEntry,
     raw::{self, FunctionWithBody},
     typed::{self},
@@ -327,7 +327,7 @@ impl<'a> IterBytes<'a> {
             original_offset: 0,
         }
     }
-    pub fn len(&self) -> usize {
+    pub fn size(&self) -> usize {
         let start_len = self.bytes.len() as isize;
         self.patches
             .iter()
@@ -376,7 +376,7 @@ impl<'a> wasm_emitter::EncodeWithRelocOffset for IterBytes<'a> {
         // copy iter
         let iter = *self;
 
-        let len = iter.len() as u32;
+        let len = iter.size() as u32;
         encoder.encode_leb_5byte(len)?;
         let pos = encoder.offset();
         for item in iter {

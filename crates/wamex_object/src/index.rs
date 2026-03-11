@@ -22,8 +22,6 @@ use cranelift_entity::packed_option::PackedOption;
 pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 use derive_more::Display;
 
-use crate::typed::{DefinedEntity, ExportNames, ImportedEntity, WithExtraInfo, WithoutBody};
-
 macro_rules! impl_entity_index {
     ( $(
         $(#[display = $display:literal])?
@@ -152,12 +150,7 @@ where
             .filter_map(|(k, v)| v.expand_ref().map(|v| (k, v)))
     }
     pub fn last_key(&self) -> Option<K> {
-        self.map
-            .iter()
-            .rev()
-            .filter(|(_, v)| !v.is_none())
-            .next()
-            .map(|(k, _)| k)
+        self.map.iter().rfind(|(_, v)| !v.is_none()).map(|(k, _)| k)
     }
     pub fn next_key(&self) -> K {
         self.last_key()

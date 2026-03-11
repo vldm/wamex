@@ -16,22 +16,26 @@ mod logs;
 mod module_alloc;
 
 pub type Result<T, E = String> = std::result::Result<T, E>;
-
+#[derive(Debug)]
+pub struct CantResolveDependency {
+    module_id: ModuleId,
+    dependency: ModuleId,
+    entry: Option<String>,
+    sub_error: Option<Box<dyn error::Error>>,
+}
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("Module {} not found", .module_id.module_name())]
     ModuleNotFound { module_id: ModuleId },
 
     #[error(
-        "Cannot resolve dependency {dependency:?}:{entry} needed for module {module_id:?}\n => {sub_error}", entry = .entry.as_deref().unwrap_or("<none>"), 
-        sub_error = .sub_error.as_ref().map(|e| e.to_string()).unwrap_or("<none>".to_string())
+        "Cannot resolve dependency {dependency:?}:{entry} needed for module {module_id:?}\n => {sub_error}", 
+        entry = .0.entry.as_deref().unwrap_or("<none>"), 
+        sub_error = .0.sub_error.as_ref().map(|e| e.to_string()).unwrap_or("<none>".to_string()),
+        module_id = .0.module_id,
+        dependency = .0.dependency,
     )]
-    CannotResolveDependency {
-        module_id: ModuleId,
-        dependency: ModuleId,
-        entry: Option<String>,
-        sub_error: Option<Box<dyn error::Error>>,
-    },
+    CannotResolveDependency(Box<CantResolveDependency>),
     #[error("Failed to fetch url: {url}, result:{error:?}")]
     FetchError { url: String, error: JsValue },
 
@@ -85,19 +89,15 @@ impl Drop for GuardedAllocEntry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 enum ModuleFetchState {
     Loaded {
         module_version: BumpVersion,
         module: InstantiatedModule,
     },
     Pending(Vec<Waiter>),
+    #[default]
     Invalid,
-}
-impl Default for ModuleFetchState {
-    fn default() -> Self {
-        Self::Invalid
-    }
 }
 
 #[derive(Debug, Default)]
@@ -135,6 +135,7 @@ impl ModuleInfo {
             _ => None,
         }
     }
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_fetch_state(&mut self) {
         match std::mem::replace(&mut self.latest_module, ModuleFetchState::Pending(vec![])) {
             ModuleFetchState::Loaded {
@@ -162,6 +163,8 @@ impl ModuleInfo {
             }
         }
     }
+
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_loaded_state(
         &mut self,
         module_version: BumpVersion,
@@ -247,7 +250,7 @@ impl LinkageState {
         let module = self
             .modules
             .entry(module_id.module_name().to_string())
-            .or_insert_with(|| ModuleInfo::default());
+            .or_insert_with(ModuleInfo::default);
         module.to_fetch_state();
     }
 
@@ -290,16 +293,16 @@ impl LinkageState {
 
         // If version > replace state to loaded
         // if version <= keep old module
-        if let Some((old_v, _)) = module.outdated_versions.last() {
-            if version <= *old_v {
-                warn!(
-                    "Loaded module {} version not updated (old:{:?}, new:{:?}), skipping reload",
-                    module_id.module_name(),
-                    old_v,
-                    version
-                );
-                module.abort_fetch();
-            }
+        if let Some((old_v, _)) = module.outdated_versions.last()
+            && version <= *old_v
+        {
+            warn!(
+                "Loaded module {} version not updated (old:{:?}, new:{:?}), skipping reload",
+                module_id.module_name(),
+                old_v,
+                version
+            );
+            module.abort_fetch();
         }
 
         let waiters = module.to_loaded_state(version, im);
@@ -314,7 +317,6 @@ impl LinkageState {
         trace!("Object keys: {:?}", {
             let keys = Object::keys(obj);
             (0..keys.length())
-                .into_iter()
                 .map(|i| {
                     let key = keys.get(i);
                     key.as_string().unwrap_or_default()
@@ -328,7 +330,7 @@ impl LinkageState {
         let obj = wasm_bindgen::exports();
 
         trace!("Main exports value: {:?}", obj);
-        let obj = obj.try_into().unwrap();
+        let obj = obj.into();
         Self::debug_keys(&obj);
         copy_imports(&new_object, &obj, false).unwrap();
         let set = Reflect::set(
@@ -353,8 +355,7 @@ impl LinkageState {
             let mut state = state_cell
                 .try_borrow_mut()
                 .expect("LinkageState global reentrant borrow");
-            let res = op(&mut state);
-            res
+            op(&mut state)
         })
     }
 }
@@ -366,10 +367,9 @@ async fn fetch_buffer(url: String) -> Result<JsValue, Error> {
     })?;
     let window = web_sys::window().unwrap();
     let future = JsFuture::from(window.fetch_with_request(&request));
-    let response = future.await.map_err(|e| Error::FetchError {
-        url: url,
-        error: e.into(),
-    })?;
+    let response = future
+        .await
+        .map_err(|e| Error::FetchError { url, error: e })?;
 
     let response = response
         .dyn_ref::<Response>()
@@ -441,17 +441,17 @@ pub async fn try_load(module_id: ModuleId) -> Result<bool, Error> {
 
     debug!("Module {} version: {:?}", module_id.module_name(), version);
 
-    if let Some(old_version) = LinkageState::global(|state| state.old_version(&module_id)) {
-        if version <= old_version {
-            warn!(
-                "Module {} version not updated (old:{:?}, new:{:?}), skipping reload",
-                module_id.module_name(),
-                old_version,
-                version
-            );
-            LinkageState::global(|state| state.abort_load_module(&module_id));
-            return Ok(false);
-        }
+    if let Some(old_version) = LinkageState::global(|state| state.old_version(&module_id))
+        && version <= old_version
+    {
+        warn!(
+            "Module {} version not updated (old:{:?}, new:{:?}), skipping reload",
+            module_id.module_name(),
+            old_version,
+            version
+        );
+        LinkageState::global(|state| state.abort_load_module(&module_id));
+        return Ok(false);
     }
 
     let module_id_clone = module_id.clone();
@@ -481,15 +481,19 @@ pub async fn try_load(module_id: ModuleId) -> Result<bool, Error> {
                 metadata.needed_libraries
             );
             for dep in &metadata.needed_libraries {
-                let dep_id = ModuleId::dep_from_module(&module_id, &dep);
-                Box::pin(try_load(dep_id.clone())).await.map_err(|e| {
-                    Error::CannotResolveDependency {
-                        module_id: module_id.clone(),
-                        dependency: dep_id,
-                        entry: None,
-                        sub_error: Some(Box::new(e)),
-                    }
-                })?;
+                let dep_id = ModuleId::dep_from_module(&module_id, dep);
+                let fut = Box::pin(try_load(dep_id.clone()));
+                let res = fut.await;
+                if let Err(e) = res {
+                    return Err(Error::CannotResolveDependency(Box::new(
+                        CantResolveDependency {
+                            module_id: module_id.clone(),
+                            dependency: dep_id,
+                            entry: None,
+                            sub_error: Some(Box::new(e)),
+                        },
+                    )));
+                }
             }
         }
 
@@ -583,13 +587,16 @@ pub async fn try_load(module_id: ModuleId) -> Result<bool, Error> {
 }
 
 /// Forcibly unload module.
+///
+/// If no version is provided in module_id - all versions will be unloaded.
+/// If version is provided only remove from outdated versions if it matches.
+///
+/// # Safety
 /// Each submodule can have static data, which is allocated dynamically on module load.
 ///
 /// Calling this function will free that memory, and can cause use-after-free if some code still holds references
 /// to that memory.
 ///
-/// If no version is provided in module_id - all versions will be unloaded.
-/// If version is provided only remove from outdated versions if it matches.
 pub async unsafe fn unload(module_id: ModuleId) -> Result<(), Error> {
     let done = LinkageState::global(|state| {
         if module_id.version().is_none() {
@@ -624,12 +631,12 @@ pub async unsafe fn unload(module_id: ModuleId) -> Result<(), Error> {
             return false;
         };
 
-        if let Some(version) = module_id.version() {
-            if let Some(instantiated) = module.outdated_versions.remove(&version) {
-                debug!("Unloaded module: {:?} version: {:?}", module_id, version);
-                instantiated.free(state);
-                return true;
-            }
+        if let Some(version) = module_id.version()
+            && let Some(instantiated) = module.outdated_versions.remove(&version)
+        {
+            debug!("Unloaded module: {:?} version: {:?}", module_id, version);
+            instantiated.free(state);
+            return true;
         }
 
         false

@@ -56,7 +56,7 @@ impl AllocState {
         let table_offset = self.try_find_free_table(table_size).unwrap_or_else(|| {
             let offset = self.table.length();
             self.table
-                .grow(table_size as u32)
+                .grow(table_size)
                 .expect("Failed to grow WebAssembly Table");
             offset
         });
@@ -121,10 +121,10 @@ impl AllocState {
                 }
             }
         }
-        if found_entry.is_none() {
-            if let Some((index, _)) = closest_entry {
-                found_entry = Some(index);
-            }
+        if found_entry.is_none()
+            && let Some((index, _)) = closest_entry
+        {
+            found_entry = Some(index);
         }
 
         let index = found_entry?;

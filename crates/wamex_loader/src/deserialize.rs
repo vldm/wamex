@@ -5,7 +5,7 @@ use wasm_bindgen::JsValue;
 use super::Error;
 
 pub fn deserialize_metadata(array: &[u8]) -> Result<Dylink0Section<'_>, Error> {
-    let decoded = wasmparser::Dylink0SectionReader::new(wasmparser::BinaryReader::new(&array, 0));
+    let decoded = wasmparser::Dylink0SectionReader::new(wasmparser::BinaryReader::new(array, 0));
     Dylink0Section::from_reader(decoded).map_err(|e| {
         Error::DeserializationError(format!("Failed to parse dylink.0 section: {e}").into())
     })

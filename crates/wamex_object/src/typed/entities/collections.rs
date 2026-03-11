@@ -409,7 +409,7 @@ impl<Import, Defined> ImportOrDefined<&Import, &Defined> {
     }
 }
 
-trait WithType {
+pub trait WithType {
     type Type;
     fn get_type(&self) -> &Self::Type;
 }

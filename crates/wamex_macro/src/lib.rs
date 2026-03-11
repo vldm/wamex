@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
-use digest::Digest;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use sha2::{Digest, Sha256};
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream, Parser},
@@ -97,9 +97,9 @@ impl Parse for SplitArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         macro_rules! ensure_is_empty {
             ($arg_name:expr) => {
-                if $arg_name.is_some() {
+                if let Some(arg_name) = $arg_name {
                     return Err(syn::Error::new(
-                        $arg_name.unwrap().span(),
+                        arg_name.span(),
                         "Argument specified multiple times, first specified at",
                     ));
                 }
@@ -257,7 +257,7 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
     // But using span for this make incremental extraction impossible - since a lot of symbols changes each time.
     // Instead of span we use file path. But currently this not fix a case where multiple functions have the same name in the same file.
     let unique_identifier =
-        base16::encode_lower(&sha2::Sha256::digest(format!("{name} {file_name}",))[..16]);
+        base16::encode_lower(&<Sha256 as Digest>::digest(format!("{name} {file_name}",))[..16]);
 
     let impl_import_ident = format_ident!(
         "__wamex_00{module_name}00_import_{name}_{uniq_id_prefix}{unique_identifier}"
@@ -428,5 +428,4 @@ fn split_inner(args: SplitArgs, item_fn: ItemFn, file_name: &str) -> TokenStream
 
         }
     }
-    .into()
 }

@@ -24,15 +24,14 @@ use crate::{
             resolver::OutputEntitiesResolver,
         },
     },
-    helpers::{ShiftMap, ShiftPoint, encoding_size},
+    helpers::{ShiftMap, ShiftPoint},
     index::{GappedMap, TempIndex},
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
-    raw::{DataSegmentId, FuncTypeId},
+    raw::FuncTypeId,
     typed::{
         Building, DefinedEntity, DefinedFunction, EntityBody, EntityBodyCopy, ExportNames, FileId,
-        FileLoader, FunctionRef, GlobalRef, ImportOrDefined, ImportedEntity, Module, TableRef,
+        FileLoader, FunctionRef, ImportOrDefined, ImportedEntity, Module, TableRef,
         common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef, TempEntityKind},
-        data::SpecificLocation,
         elements::ElementItemId,
     },
 };

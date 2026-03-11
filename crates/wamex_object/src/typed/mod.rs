@@ -14,11 +14,10 @@ pub use entities::*;
 use itertools::chain;
 use log::warn;
 use smallvec::smallvec;
-use wasmparser::{ElementItems, FunctionBody, TableType, TypeRef};
+use wasmparser::{ElementItems, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
-    SVec,
     index::Temp,
     linkage::{
         LinkageInfo,
@@ -75,6 +74,7 @@ impl FileLoader {
         Ok(id)
     }
 
+    #[allow(dead_code, reason = "used for tests")]
     pub(crate) fn load_from_bytes(&mut self, data: Box<[u8]>) -> Result<FileId> {
         let file =
             FileWithData::try_attach_to_cart(data, |data| LoadedFile::from_wasm_bytes(data))?;

@@ -58,7 +58,7 @@ impl<K: Ord, V> MiniMap<K, V> {
         K: std::borrow::Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        if let Ok(pos) = self.entries.binary_search_by(Self::compare_with(&key)) {
+        if let Ok(pos) = self.entries.binary_search_by(Self::compare_with(key)) {
             let (_, value) = self.entries.remove(pos);
             Some(value)
         } else {
