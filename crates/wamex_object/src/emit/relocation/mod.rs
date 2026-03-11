@@ -135,13 +135,14 @@ impl<'any, 'src> RelocationState<'any, 'src> {
             all_modules_layout,
         }
     }
-    pub fn fixup_offsets_and_apply_relocs(&self, module_bytes: &mut [u8], relocs: &mut FileRelocs) {
+    pub fn shift_offsets_and_apply_relocs(&self, module_bytes: &mut [u8], relocs: &mut FileRelocs) {
         //1. fixup relocs ranges (from entity-relative to section-relative)
-        self.fixup_offsets(relocs);
+        self.shift_reloc_offsets(relocs);
         //2. apply code relocs
         let code_relocs = relocs.get_code_section_relocs();
         let code_section = &mut module_bytes[self.current_module_layout.code_section.clone()];
         if log::Level::Debug <= log::max_level() {
+            let mut code_start = self.current_module_layout.code_section.start;
             use memory_layout::hexdump::SymbolDebugExt;
             let mut res = String::new();
             memory_layout::hexdump::SectionDebug {
@@ -149,7 +150,7 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                 bytes: code_section,
                 relocs: code_relocs,
             }
-            .debug_symbol_ext(&mut res, &mut 0, true);
+            .debug_symbol_ext(&mut res, &mut code_start, true);
             log::debug!("Applying code relocs: {res}",);
         }
 
@@ -160,25 +161,26 @@ impl<'any, 'src> RelocationState<'any, 'src> {
 
         if log::Level::Debug <= log::max_level() {
             use memory_layout::hexdump::SymbolDebugExt;
+            let mut data_start = self.current_module_layout.data_section.start;
             let mut res = String::new();
             memory_layout::hexdump::SectionDebug {
                 name: "Data section",
                 bytes: data_section,
                 relocs: data_relocs,
             }
-            .debug_symbol_ext(&mut res, &mut 0, true);
+            .debug_symbol_ext(&mut res, &mut data_start, true);
             log::debug!("Applying data relocs: {res}",);
         }
         self.apply_relocations(data_section, data_relocs);
     }
 
-    fn fixup_offsets(&self, relocs: &mut FileRelocs) {
+    fn shift_reloc_offsets(&self, relocs: &mut FileRelocs) {
         for (onwer, relocs) in relocs.iter_relocs_mut() {
             match onwer {
                 EntityKind::Function(func) => {
                     let func_info = self.current_module_layout.functions_mapping[func];
                     for reloc in relocs {
-                        reloc.offset += func_info.code_offset as u32;
+                        reloc.offset += func_info.code_offset;
                     }
                 }
                 EntityKind::DataSymbol(data_symbol) => {
@@ -278,9 +280,6 @@ impl<'any, 'src> RelocationState<'any, 'src> {
             }
         };
 
-        if data.len() < 100 {
-            log::debug!("reloc: {:?}, &data: {:?}, value: {}", reloc, &data, value);
-        }
         Self::encode(
             &mut data[target_range],
             (value as i64 + reloc.addend)

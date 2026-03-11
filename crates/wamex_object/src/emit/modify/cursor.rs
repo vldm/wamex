@@ -41,6 +41,11 @@ impl<'any> Cursor<'any> {
     pub fn green_buf(&self) -> &'any [u8] {
         &self.buffer[self.green.clone()]
     }
+
+    /// Get the range of the green zone.
+    pub fn green_range(&self) -> Range<usize> {
+        self.green.clone()
+    }
     // Try to extend the green zone before its current start.
     // By moving the start backwards into grey zone.
     //

@@ -10,13 +10,21 @@
 //!
 
 use std::{
+    borrow::Borrow,
+    fmt::Debug,
     io::{Cursor, Seek, SeekFrom, Write},
     ops::Range,
 };
 
 use wasm_encoder::{Encode, MemArg};
 
-use crate::emit::relocation::encode;
+use crate::{
+    emit::{
+        memory_layout::{self, DataStream},
+        relocation::encode,
+    },
+    typed::data::SpecificLocation,
+};
 
 /// Wrapper around Write/Seek that track written range, and position and
 /// ensures that seek are done within written range.
@@ -145,12 +153,24 @@ where
         Ok(())
     }
 
+    pub fn encode_leb_any_size(&mut self, v: u32) -> Result<(), std::io::Error> {
+        let (buf, _) = leb128fmt::encode_u32(v).unwrap();
+        self.push_bytes(&buf)?;
+        Ok(())
+    }
+
     pub fn encode_leb_5byte(&mut self, v: u32) -> Result<u32, std::io::Error> {
         let mut buf = [0; 5];
         encode::encode_leb128_u32_5byte(v, &mut buf);
         let res = self.offset;
         self.push_bytes(&buf)?;
         Ok(res)
+    }
+
+    pub fn encode_sleb_any_size(&mut self, v: i32) -> Result<(), std::io::Error> {
+        let (buf, _) = leb128fmt::encode_s32(v).unwrap();
+        self.push_bytes(&buf)?;
+        Ok(())
     }
 
     pub fn encode_sleb_5byte(&mut self, v: i32) -> Result<u32, std::io::Error> {
@@ -180,10 +200,24 @@ where
         W: Write,
     {
         let mut tmp_vec = Vec::new();
-        expr.encode(&mut tmp_vec);
+        wasm_encoder::Encode::encode(&expr, &mut tmp_vec);
 
+        log::error!(
+            "const_expr: {const_expr:?}",
+            const_expr = hex::encode(&tmp_vec)
+        );
         self.push_bytes(&tmp_vec)?;
         Ok(())
+    }
+
+    /// Encode length prefixed bytes.
+    /// Return offset of bytes start.
+    pub fn encode_len_prefixed_bytes(&mut self, bytes: &[u8]) -> Result<u32, std::io::Error> {
+        let len = bytes.len() as u32;
+        self.encode_leb_5byte(len)?;
+        let pos = self.offset();
+        self.push_bytes(bytes)?;
+        Ok(pos)
     }
 
     /// Encode [`Instruction::GlobalGet`] and return offset of global_id start
@@ -191,6 +225,7 @@ where
         self.push_byte(0x23)?;
         self.encode_leb_5byte(g)
     }
+
     /// Encode [`Instruction::GlobalGet`] with 0xdeadbeef global_id and return offset of global_id start
     pub fn global_get_invalid(&mut self) -> Result<u32, std::io::Error> {
         self.push_byte(0x23)?;
@@ -385,7 +420,7 @@ where
     }
 }
 
-trait EncodeWithRelocOffset {
+pub trait EncodeWithRelocOffset {
     type Offsets;
 
     fn encode<W>(&self, encoder: &mut Encoder<W>) -> Result<Self::Offsets, std::io::Error>
@@ -410,7 +445,7 @@ pub struct MemArgOffsets {
 
 /// Wrapper for emitting list-like sections in streaming fashion.
 ///
-/// Creating a new `SectionList` will reserve place for <bytes_len> of section and <list_count>.
+/// Creating a new `SectionList` will push id and reserve place for <bytes_len> of section and <list_count>.
 /// Calling `push_item` allow `SectionList` to count items,
 /// and after calling `finish`, the `SectionList` will update <bytes_len> and <list_count> in the `Encoder` and return it.
 #[derive(Debug)]
@@ -428,13 +463,17 @@ impl<W: Write> SectionList<W> {
     ///
     /// This constructor will consume `Encoder` and return a `SectionList` object.
     /// To return back `Encoder`, one should call `finish`.
-    pub fn create_section(mut encoder: Encoder<W>) -> Result<SectionList<W>, std::io::Error> {
+    pub fn create_section(
+        mut encoder: Encoder<W>,
+        id: u8,
+    ) -> Result<SectionList<W>, std::io::Error> {
         if encoder.offset != encoder.written_range.end {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "Encoder should be at the end of written range",
             ));
         }
+        encoder.push_byte(id)?;
         let start = encoder.start();
         let bytes_pos = encoder.encode_5byte_invalid()? - start;
         let start = encoder.start();
@@ -452,7 +491,7 @@ impl<W: Write> SectionList<W> {
     where
         W: Seek,
     {
-        let bytes_len = self.encoder.written_range.end - self.bytes_pos - 5; // 5 bytes for the length itself
+        let bytes_len = self.encoder.written_range.end - self.count_pos;
         self.encoder.seek(SeekFrom::Start(self.bytes_pos as u64))?;
         self.encoder.encode_leb_5byte(bytes_len)?;
         self.encoder.seek(SeekFrom::Start(self.count_pos as u64))?;
@@ -472,16 +511,26 @@ impl<W: Write> SectionList<W> {
         self.encoder.with_child_encoder(self.encoder.offset, func)
     }
 
-    /// Push bytes to section as an item.
+    /// Return current position in section.
+    /// Offset 0 is immediately after the id and size of the section
+    pub fn pos_in_section(&self) -> u32 {
+        self.encoder.offset() - self.count_pos // id, bytes_len
+    }
+
+    /// Push raw bytes with calculated length prefix to section as an item.
     ///
-    /// Returns offset of start
-    pub fn push_raw_item(&mut self, item: &[u8]) -> Result<u32, std::io::Error>
+    /// Returns offset of item start related to the start of the section.
+    pub fn raw_len_prefixed(&mut self, item: &[u8]) -> Result<u32, std::io::Error>
     where
         Encoder<W>: std::fmt::Debug,
     {
-        let start_offset = self.encoder.offset;
-        self.item_from_encoder(|encoder| encoder.push_bytes(item))?;
-        Ok(start_offset)
+        self.item_from_encoder(|encoder| {
+            encoder.encode_leb_5byte(item.len() as u32)?;
+            let start_offset = encoder.offset(); // id, bytes_len
+            encoder.push_bytes(item)?;
+            Ok(start_offset)
+        })
+        .map(|offset| offset - self.count_pos)
     }
 }
 
@@ -489,44 +538,89 @@ impl<W: Write> SectionList<W> {
 #[derive(Debug)]
 pub struct SectionAdapter {
     bytes: Vec<u8>,
-    id: u8,
 }
 
 impl wasm_encoder::Section for SectionAdapter {
     fn id(&self) -> u8 {
-        self.id
+        self.bytes[0]
     }
     fn append_to(&self, dst: &mut Vec<u8>) {
-        dst.push(self.id);
         dst.extend_from_slice(&self.bytes);
     }
 }
 
 impl wasm_encoder::Encode for SectionAdapter {
     fn encode(&self, dst: &mut Vec<u8>) {
-        dst.extend_from_slice(&self.bytes);
+        // Encode requires writing section without id
+        dst.extend_from_slice(&self.bytes[1..]);
     }
 }
 
 pub type MemWriter = Cursor<Vec<u8>>;
 impl SectionAdapter {
-    pub fn new<F>(func: F) -> Result<Self, std::io::Error>
+    pub fn new<F>(id: u8, func: F) -> Result<Self, std::io::Error>
     where
         F: FnOnce(&mut SectionList<MemWriter>) -> Result<(), std::io::Error>,
     {
         let buf = Cursor::new(Vec::new());
         let encoder = Encoder::new(buf, 0);
-        let section_list = SectionList::create_section(encoder)?;
+        let section_list = SectionList::create_section(encoder, id)?;
         let mut section_list = section_list;
+        log::error!(
+            "section_list: {section_list:?}",
+            section_list = DebugHexEncoder(&section_list.encoder)
+        );
         func(&mut section_list)?;
+
+        log::error!(
+            "section_list: {section_list:?}",
+            section_list = DebugHexEncoder(&section_list.encoder)
+        );
         let encoder = section_list.finish()?;
+
+        log::error!(
+            "encoder after: {encoder:?}",
+            encoder = DebugHexEncoder(&encoder)
+        );
         Ok(SectionAdapter {
             bytes: encoder.into_inner().into_inner(),
-            id: 0, // TODO: pass id as param
         })
     }
 }
 
+pub fn data_segment_adapter<W>(
+    encoder: &mut Encoder<W>,
+    location: Option<SpecificLocation>,
+    data_stream: DataStream<'_>,
+) -> Result<(), std::io::Error>
+where
+    W: Write,
+{
+    // where segment:
+    // - header (mode/offset)
+    // - len of data
+    // - data bytes
+
+    let encoded = memory_layout::SegmentLayout::segment_header(location)?;
+    encoder.push_bytes(&encoded)?;
+    log::error!("data segment header: {encoded:02x?}");
+    log::error!("data_stream: {data_stream:?}");
+    data_stream.encode(encoder)?;
+    Ok(())
+}
+
+struct DebugHexEncoder<'a, W>(&'a Encoder<W>);
+
+impl<W> Debug for DebugHexEncoder<'_, Cursor<W>>
+where
+    W: AsRef<[u8]>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SectionList")
+            .field("encoder", &hex::encode(self.0.writer.get_ref().as_ref()))
+            .finish()
+    }
+}
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -580,28 +674,30 @@ mod tests {
     fn test_section_list() {
         let mut buf = Cursor::new(Vec::new());
         let encoder = Encoder::new(&mut buf, 0);
-        let mut section_list = SectionList::create_section(encoder).unwrap();
+        let mut section_list = SectionList::create_section(encoder, 0x12).unwrap();
 
-        let offset = section_list.push_raw_item(&[0x01, 0x02]).unwrap();
+        let offset = section_list.raw_len_prefixed(&[0x01, 0x02]).unwrap();
 
-        assert_eq!(offset, 10); // 5 bytes for length + 5 bytes for count
-        let offset = section_list.push_raw_item(&[0x03]).unwrap();
-        assert_eq!(offset, 12); // 5 bytes for length + 5 bytes for count + 2 bytes for previous item
+        assert_eq!(offset, 10); // 5 bytes for count + 5 bytes of item len
+        let offset = section_list.raw_len_prefixed(&[0x03]).unwrap();
+        assert_eq!(offset, 17); // 5 bytes for count + (5 + 2) bytes for previous item + 5 bytes of this item len
         section_list
             .item_from_encoder(|e| e.push_bytes(&[0x04, 0x05, 0x06]))
             .unwrap();
 
         let _ = section_list.finish().unwrap();
 
-        // The final buffer should contain:
-        // - 5 bytes for the length (3 items + 6 bytes)
-        // - 5 bytes for the count (3 items)
-        // - the items themselves
         assert_eq!(
             &buf.get_ref()[..],
             &[
-                0x8B, 0x80, 0x80, 0x80, 0x00, 0x83, 0x80, 0x80, 0x80, 0x00, 0x01, 0x02, 0x03, 0x04,
-                0x05, 0x06
+                0x12, //section id
+                0x95, 0x80, 0x80, 0x80, 0x00, // len
+                0x83, 0x80, 0x80, 0x80, 0x00, // count
+                0x82, 0x80, 0x80, 0x80, 0x00, // len of first item
+                0x01, 0x02, // content of first item
+                0x81, 0x80, 0x80, 0x80, 0x00, // len of second item
+                0x03, // content of second item
+                0x04, 0x05, 0x06 // content of raw third item
             ]
         );
     }

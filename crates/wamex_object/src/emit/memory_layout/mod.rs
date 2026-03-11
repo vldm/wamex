@@ -11,7 +11,7 @@ use crate::{
     linkage::file_db::FileRelocs,
     raw::DataSegmentId,
     typed::{
-        DefinedDataChunk, Module,
+        DefinedDataChunk, IterBytes, Module,
         data::{BASE_ALIGNMENT, DataSymbolRef, RawDataChunk, SegmentPlacement, SpecificLocation},
     },
 };
@@ -41,13 +41,15 @@ impl<'src> SegmentLayout<'src> {
     /// Symbols from passive segments will not be present in the mapping.
     ///
     pub fn build_for_module(module: &Module<'src>) -> Result<(Segments<'src>, DataSymbolsOffsets)> {
+        // Align memory if needed
         let mem_start = module.mem_spec.mem_start;
         let padding = Self::calculate_padding(mem_start.offset(), 2 << BASE_ALIGNMENT);
         let mem_start = mem_start.add_offset(padding);
 
         let (mut results, mut mapping) = (PrimaryMap::new(), DataSymbolsOffsets::new());
 
-        let (mut segment_offset, mut mem_offset) = (0, 0);
+        // TODO: Make it less fragile (currently it relies on the fact that we use 5byte encoding for count)
+        let (mut segment_offset, mut mem_offset) = (5, 0); // 5 bytes for count of segments in section header.
 
         debug_assert!(
             module
@@ -86,7 +88,7 @@ impl<'src> SegmentLayout<'src> {
             let location = Self::calculate_location(info.location, mem_start, mem_offset);
 
             // and shift segment offset by len of header.
-            segment_offset += Self::segment_header(location)?.len() as u32;
+            segment_offset += Self::segment_header(location)?.len() as u32 + 5; // 5 bytes for len of data
 
             let mut data_parts: Vec<ChunkRepr<'src>> = Vec::new();
             for (symbol_index, symbol) in grp {
@@ -141,16 +143,18 @@ impl<'src> SegmentLayout<'src> {
     }
 
     /// Convert segment layout to data segment output, which can be encoded into wasm. (excluding segment header)
-    pub fn data_stream(&self) -> impl ExactSizeIterator<Item = u8> {
+    pub fn data_stream(&self) -> DataStream<'_> {
         let total_size: usize = self.data_parts.iter().map(|chunk| chunk.0.body.len()).sum();
 
-        DataStream {
-            iter: self
-                .data_parts
-                .iter()
-                .flat_map(|chunk| chunk.0.body.iter_bytes()),
-            total_size,
-        }
+        let iter: std::iter::FlatMap<
+            std::slice::Iter<'_, ChunkRepr<'_>>,
+            IterBytes<'_>,
+            for<'a> fn(&'a ChunkRepr<'_>) -> IterBytes<'a>,
+        > = self
+            .data_parts
+            .iter()
+            .flat_map(|chunk| chunk.0.body.iter_chunks());
+        DataStream { iter, total_size }
     }
 
     pub fn debug_layout(
@@ -205,7 +209,9 @@ impl<'src> SegmentLayout<'src> {
         }
     }
 
-    fn segment_header(location: Option<SpecificLocation>) -> Result<SVec<u8, 32>> {
+    pub fn segment_header(
+        location: Option<SpecificLocation>,
+    ) -> Result<SVec<u8, 32>, std::io::Error> {
         Ok(match location {
             None => {
                 // passive segment
@@ -220,7 +226,6 @@ impl<'src> SegmentLayout<'src> {
                 encoder.push_byte(0x00)?; // mem index + flag
                 let offset = location.to_init_expr();
                 encoder.encode_const_expr(&offset)?;
-                encoder.push_byte(0x0B)?; // end of instruction
                 result
             }
         })
@@ -280,27 +285,47 @@ impl ReservedValue for DataSymbolOffset {
     }
 }
 
-struct DataStream<I> {
-    iter: I,
+#[derive(Debug, Clone)]
+pub struct DataStream<'a> {
+    iter: std::iter::FlatMap<
+        std::slice::Iter<'a, ChunkRepr<'a>>,
+        IterBytes<'a>,
+        for<'b> fn(&'b ChunkRepr<'a>) -> IterBytes<'b>,
+    >,
     total_size: usize,
 }
-impl<I> Iterator for DataStream<I>
-where
-    I: Iterator<Item = u8>,
-{
-    type Item = u8;
+
+impl DataStream<'_> {
+    fn bytes_len(&self) -> usize {
+        self.total_size
+    }
+}
+
+impl<'a> Iterator for DataStream<'a> {
+    type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()
     }
 }
 
-impl<I> ExactSizeIterator for DataStream<I>
-where
-    I: Iterator<Item = u8>,
-{
-    fn len(&self) -> usize {
-        self.total_size
+impl wasm_emitter::EncodeWithRelocOffset for DataStream<'_> {
+    type Offsets = u32; // offset to bytes stream start
+    fn encode<W>(
+        &self,
+        encoder: &mut wasm_emitter::Encoder<W>,
+    ) -> std::result::Result<Self::Offsets, std::io::Error>
+    where
+        W: std::io::Write,
+    {
+        encoder.encode_leb_5byte(self.bytes_len() as u32)?;
+
+        let offset = encoder.offset();
+        for bytes in self.clone() {
+            encoder.push_bytes(bytes)?
+        }
+
+        Ok(offset)
     }
 }
 

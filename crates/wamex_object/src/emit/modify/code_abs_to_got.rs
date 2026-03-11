@@ -5,6 +5,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::Write,
+    ops::Range,
 };
 
 use anyhow::{Result, bail, ensure};
@@ -209,26 +210,36 @@ impl<'src> CodeAbsToGot<'_> {
             }
             instr
         };
+        log::error!(
+            "INSTRUCTION {:#?}, green_range: {:?}, reloc_range: {:?}",
+            instruction,
+            buffer.green_range(),
+            entry.relocation_range()
+        );
 
-        Ok(Some((self.generate_patch(entry, instruction)?, ())))
+        Ok(Some((
+            self.generate_patch(entry, buffer.green_range(), instruction)?,
+            (),
+        )))
     }
 
     fn generate_patch(
         &self,
         entry: EntityRelocationEntry,
+        ix_range: Range<usize>,
         instruction: wasmparser::Operator<'src>,
     ) -> Result<Rewrite> {
         let rewrite = match (entry.symbol_id, entry.encoding) {
             (EntityKind::DataSymbol(_), Encoding::Leb) => {
-                self.replace_memory_offset_with_global_get(entry, instruction)?
+                self.replace_memory_offset_with_global_get(entry, ix_range, instruction)?
             }
             (EntityKind::DataSymbol(_), Encoding::Sleb) => {
-                self.replace_const_get_with_global_get(entry, instruction)?
+                self.replace_const_get_with_global_get(entry, ix_range, instruction)?
             }
             (EntityKind::Function(_), Encoding::Sleb)
                 if entry.symbol_op == EntityAddressMode::RuntimeAddr =>
             {
-                self.replace_const_get_with_global_get(entry, instruction)?
+                self.replace_const_get_with_global_get(entry, ix_range, instruction)?
             }
             _ => {
                 bail!("Unsupported relocation type")
@@ -243,6 +254,7 @@ impl<'src> CodeAbsToGot<'_> {
     fn replace_const_get_with_global_get(
         &self,
         old_entry: EntityRelocationEntry,
+        ix_range: Range<usize>,
         instruction: Operator<'src>,
     ) -> Result<Rewrite> {
         ensure!(
@@ -276,7 +288,7 @@ impl<'src> CodeAbsToGot<'_> {
 
         new_relocs.push(entry);
         Ok(Rewrite {
-            old_range: old_entry.relocation_range(),
+            old_range: ix_range,
             new_relocs,
             new_bytes,
         })
@@ -301,6 +313,7 @@ impl<'src> CodeAbsToGot<'_> {
     fn replace_memory_offset_with_global_get(
         &self,
         old_entry: EntityRelocationEntry,
+        ix_range: Range<usize>,
         instruction: wasmparser::Operator<'_>,
     ) -> Result<Rewrite> {
         let got_offset = 0;
@@ -315,7 +328,6 @@ impl<'src> CodeAbsToGot<'_> {
             "Replacing {orig_ix:?} with [global.get <placeholder> + i32.const {got_offset:?} + ix] global_store:{store:?}",
             orig_ix = instruction,
         );
-
         // TODO: Replace with local?
         // store <value> to temp global
         if let Some(store_type) = &store {
@@ -364,7 +376,7 @@ impl<'src> CodeAbsToGot<'_> {
         Ok(Rewrite {
             new_bytes,
             new_relocs,
-            old_range: old_entry.relocation_range(),
+            old_range: ix_range,
         })
     }
 

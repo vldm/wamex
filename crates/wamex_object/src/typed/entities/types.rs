@@ -1,4 +1,4 @@
-use std::{borrow::Cow, ops::Range};
+use std::{borrow::Cow, iter, ops::Range};
 
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::EntityRef;
@@ -7,7 +7,7 @@ use wasmparser::TypeRef;
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
-    emit::modify::{OutputRelocationEntry, Rewrite},
+    emit::modify::{OutputRelocationEntry, Rewrite, wasm_emitter},
     linkage::reloc::EntityRelocationEntry,
     raw::{self, FunctionWithBody},
     typed::{self},
@@ -275,7 +275,7 @@ impl EntityBody<'_> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    pub fn iter_chunks(&self) -> impl Iterator<Item = &[u8]> {
+    pub fn iter_chunks(&self) -> IterBytes<'_> {
         match self {
             EntityBody::Copied(EntityBodyCopy {
                 bytes,
@@ -313,19 +313,25 @@ impl<'src> From<EntityBodyCopy<'src>> for EntityBody<'src> {
 }
 
 // Iter that print in place patched body.
-#[derive(Debug)]
-struct IterBytes<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct IterBytes<'a> {
     bytes: &'a [u8],
     patches: &'a [Rewrite],
     original_offset: usize,
 }
 impl<'a> IterBytes<'a> {
-    fn new(bytes: &'a [u8], patches: &'a [Rewrite]) -> Self {
+    pub fn new(bytes: &'a [u8], patches: &'a [Rewrite]) -> Self {
         Self {
             bytes,
             patches,
             original_offset: 0,
         }
+    }
+    pub fn len(&self) -> usize {
+        let start_len = self.bytes.len() as isize;
+        self.patches
+            .iter()
+            .fold(start_len, |len, patch| len + patch.size()) as usize
     }
 }
 
@@ -354,6 +360,29 @@ impl<'a> Iterator for IterBytes<'a> {
         let start = self.original_offset;
         self.original_offset = self.bytes.len();
         Some(&self.bytes[start..])
+    }
+}
+
+impl<'a> wasm_emitter::EncodeWithRelocOffset for IterBytes<'a> {
+    type Offsets = u32; // offset of bytes start in output module
+
+    fn encode<W>(
+        &self,
+        encoder: &mut wasm_emitter::Encoder<W>,
+    ) -> Result<Self::Offsets, std::io::Error>
+    where
+        W: std::io::Write,
+    {
+        // copy iter
+        let iter = *self;
+
+        let len = iter.len() as u32;
+        encoder.encode_leb_5byte(len)?;
+        let pos = encoder.offset();
+        for item in iter {
+            encoder.push_bytes(item)?;
+        }
+        Ok(pos)
     }
 }
 

@@ -12,7 +12,7 @@ use wasmparser::{FuncType, GlobalType};
 use crate::{
     analysis::{OutputModuleInfo, SplitModuleIdentifier, SplitProgramInfo},
     emit::{
-        memory_layout::SegmentLayout,
+        memory_layout::{DataSymbolsOffsets, SegmentLayout},
         modify::{
             OutputEntityRef,
             code_abs_to_got::{CodeAbsToGot, GotInfo},
@@ -43,9 +43,6 @@ pub mod relocation;
 
 impl<'src> Module<'src> {
     pub fn generate(&self, output_module: &mut wasm_encoder::Module) -> Result<ModuleLayout> {
-        // TODO: Support extra segments.
-        let (segments, data_mapping) = SegmentLayout::build_for_module(self)?;
-
         // self.generate_dylink0_section(output_module)?;
 
         let fn_type_map = self.generate_type_section(output_module);
@@ -61,8 +58,8 @@ impl<'src> Module<'src> {
         self.generate_start_function_section(output_module);
 
         let indirect_fn_mapping = self.generate_element_section(output_module)?;
-        self.generate_data_count_section(&segments, output_module);
-        let code_start = output_module.len() + 1; // +1 for code section id, we need to know offset of code section for code relocs.
+        self.generate_data_count_section(output_module);
+        let code_start = output_module.len() + 1 + 5; // +1 for code section id + 5 for bytes len, we need to know offset of code section for code relocs.
         let mut functions_mapping = self.generate_code_section(output_module)?;
         let code_range = code_start..output_module.len();
 
@@ -71,8 +68,8 @@ impl<'src> Module<'src> {
             functions_mapping[func_ref].indirect_table_index = Some(*elem_id);
         }
 
-        let data_start = output_module.len() + 1; // +1 for data section id, we need to know offset of data section for data relocs.
-        self.generate_data_section(&segments, output_module)?;
+        let data_start = output_module.len() + 1 + 5; // +1 for data section id + 5 for bytes len, we need to know offset of data section for data relocs.
+        let data_mapping = self.generate_data_section(output_module)?;
         let data_range = data_start..output_module.len();
 
         // // self.generate_wasm_bindgen_sections(output_module);
@@ -355,13 +352,9 @@ impl<'src> Module<'src> {
         Ok(res)
     }
 
-    fn generate_data_count_section(
-        &self,
-        segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
-        output_module: &mut wasm_encoder::Module,
-    ) {
+    fn generate_data_count_section(&self, output_module: &mut wasm_encoder::Module) {
         output_module.section(&wasm_encoder::DataCountSection {
-            count: segments.len() as u32,
+            count: self.mem_spec.data_segments.len() as u32,
         });
     }
 
@@ -388,37 +381,38 @@ impl<'src> Module<'src> {
         output_module: &mut wasm_encoder::Module,
     ) -> Result<SecondaryMap<FunctionRef, FunctionInfo>> {
         let mut functions_mapping = SecondaryMap::new();
-        let section = wasm_emitter::SectionAdapter::new(|section| {
-            for (id, output_func) in self.functions.defined_iter() {
-                let function = self._generate_defined_function(id, output_func)?;
+        let section =
+            wasm_emitter::SectionAdapter::new(wasm_encoder::SectionId::Code.into(), |section| {
+                for (id, output_func) in self.functions.defined_iter() {
+                    let function = self._generate_defined_function(id, output_func)?;
 
-                let function_start_offset = section.push_raw_item(&function)?;
-                functions_mapping[id] = FunctionInfo {
-                    code_offset: function_start_offset,
-                    indirect_table_index: None,
+                    let function_start_offset = section.raw_len_prefixed(&function)?;
+                    functions_mapping[id] = FunctionInfo {
+                        code_offset: function_start_offset,
+                        indirect_table_index: None,
+                    }
                 }
-            }
 
-            // TODO: push it as last defined during into_finalized() call?
-            // TODO: check fn type to be void.
-            if !self.start_functions.is_empty() {
-                let start_fn_ref = FunctionRef::new(self.functions.len());
-                // generate start function as last function in code section, and add call to all start functions in its body
-                let mut func = wasm_encoder::Function::new([]);
-                let mut sink = func.instructions();
-                for func_ref in &self.start_functions {
-                    sink.call(func_ref.as_u32()); // TODO: Relocs?
-                }
-                sink.end();
+                // TODO: push it as last defined during into_finalized() call?
+                // TODO: check fn type to be void.
+                if !self.start_functions.is_empty() {
+                    let start_fn_ref = FunctionRef::new(self.functions.len());
+                    // generate start function as last function in code section, and add call to all start functions in its body
+                    let mut func = wasm_encoder::Function::new([]);
+                    let mut sink = func.instructions();
+                    for func_ref in &self.start_functions {
+                        sink.call(func_ref.as_u32()); // TODO: Relocs?
+                    }
+                    sink.end();
 
-                let function_start_offset = section.push_raw_item(&func.into_raw_body())?;
-                functions_mapping[start_fn_ref] = FunctionInfo {
-                    code_offset: function_start_offset,
-                    indirect_table_index: None,
+                    let function_start_offset = section.raw_len_prefixed(&func.into_raw_body())?;
+                    functions_mapping[start_fn_ref] = FunctionInfo {
+                        code_offset: function_start_offset,
+                        indirect_table_index: None,
+                    }
                 }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })?;
         output_module.section(&section);
 
         Ok(functions_mapping)
@@ -426,38 +420,38 @@ impl<'src> Module<'src> {
 
     fn generate_data_section(
         &self,
-        segments: &PrimaryMap<DataSegmentId, SegmentLayout>,
         output_module: &mut wasm_encoder::Module,
-    ) -> Result<()> {
-        let mut section = wasm_encoder::DataSection::new();
+    ) -> Result<DataSymbolsOffsets> {
+        // encoding:
+        // - len of data section
+        // - count of segments
+        // - [segments]
+        // where segment:
+        // - header (mode/offset)
+        // - len of data
+        // - data bytes
 
-        for (_id, layout) in segments.iter() {
-            if layout.is_empty() {
-                continue;
-            }
+        // Order data symbols by their segments.
+        let (segments, data_mapping) = SegmentLayout::build_for_module(self)?;
 
-            let expr = layout
-                .memory_location()
-                .as_ref()
-                .map(SpecificLocation::to_init_expr);
+        let adapter =
+            wasm_emitter::SectionAdapter::new(wasm_encoder::SectionId::Data.into(), |section| {
+                for (_id, layout) in segments.iter() {
+                    section.item_from_encoder(|e| {
+                        wasm_emitter::data_segment_adapter(
+                            e,
+                            layout.memory_location(),
+                            layout.data_stream(),
+                        )
+                    })?;
+                }
 
-            section.segment(wasm_encoder::DataSegment {
-                mode: expr
-                    .as_ref()
-                    .map_or(wasm_encoder::DataSegmentMode::Passive, |offset| {
-                        wasm_encoder::DataSegmentMode::Active {
-                            memory_index: layout.memory_index(),
-                            offset,
-                        }
-                    }),
-                data: layout.data_stream(),
-            });
-            // todo: collect relocs
-        }
+                Ok(())
+            })?;
 
-        output_module.section(&section);
+        output_module.section(&adapter);
 
-        Ok(())
+        Ok(data_mapping)
     }
 
     /// Copy relocs to new FileRelocs.
@@ -1029,7 +1023,7 @@ pub fn emit_modules(
         // TODO: Generate generate_dylink0_section
         let layout = split_module.module.generate(&mut writer)?;
 
-        log::debug!("Module after generation: {:#?}", writer);
+        // log::debug!("Module after generation: {:#?}", writer);
         let writer = writer.finish();
         {
             log::error!("Writing module {ident} to file for debug");
@@ -1103,13 +1097,18 @@ pub fn emit_modules(
             &layouts,
         );
 
-        reloc_state.fixup_offsets_and_apply_relocs(&mut *writer, &mut split_module.relocs);
+        reloc_state.shift_offsets_and_apply_relocs(&mut *writer, &mut split_module.relocs);
     }
     // 4. append linker sections.
     // 5. write fine using callback.
 
     for (_, (ident, _, bytes, ..)) in &output_modules {
         log::info!("Emitting module {ident}");
+        {
+            log::error!("Writing module {ident}_fxd to file for debug");
+            let output_path = AsRef::<Path>::as_ref("/tmp").join(format!("{}_fxd.wasm", ident));
+            std::fs::write(&output_path, bytes).unwrap();
+        }
         emit_fn(ident, bytes)?;
     }
     Ok(())
@@ -1191,11 +1190,8 @@ mod tests {
         todo!()
     }
 
-    #[test]
-    fn split_routine() {
-        env_logger::try_init().ok();
+    fn split_routine_generic(src: &[u8]) {
         let mut file_loader = FileLoader::new();
-        let src = crate::testfiles::EXAMPLE_WASM;
         let input_file = file_loader
             .load_from_bytes(src.to_vec().into_boxed_slice())
             .unwrap();
@@ -1223,5 +1219,19 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn split_routine_example() {
+        env_logger::try_init().ok();
+        let src = crate::testfiles::EXAMPLE_WASM;
+        split_routine_generic(src);
+    }
+
+    #[test]
+    fn split_routine_simple() {
+        env_logger::try_init().ok();
+        let src = crate::testfiles::SIMPLE_GRAPH;
+        split_routine_generic(src);
     }
 }

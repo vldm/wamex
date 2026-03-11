@@ -8,6 +8,9 @@ one created during Module::new() and other is referenced by reloc
 - [X] memory non copied (no references in reloc i think).
 - [X] elements missing
 - [X] one of two globals is missing - probably not referenced in relocs. (should be included into main)
+- [X] reloc broke code 
+- [X] sub module don't use memory_base for their variables.
+- [X] data relocs in main modue is shifted
 
 # Features/low-priority:
 - [ ] process relocs
