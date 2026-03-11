@@ -155,19 +155,12 @@ impl<'src> HandleFixups<'src> for CodeAbsToGot<'_> {
         _input_file: FileId,
         entry: EntityRelocationEntry,
     ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
-        // TODO: move outside of this creation
-        if let Err(e) = Self::check_whitelisted_code_relocation(&entry) {
-            log::trace!(
-                "Relocation entry {:#?} is not suitable for code modification: {e}",
-                entry,
-            );
-            return Ok(None);
-        }
-
         match entry.symbol_id {
             EntityKind::DataSymbol(_) | EntityKind::Function(_)
-                if self.is_dyn_symbol(&entry.symbol_id) =>
+                if entry.symbol_op == EntityAddressMode::RuntimeAddr
+                    && self.is_dyn_symbol(&entry.symbol_id) =>
             {
+                Self::check_whitelisted_code_relocation(&entry)?;
                 return self.new_entry(buffer, entry);
             }
             _ => {}

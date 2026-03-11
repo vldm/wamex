@@ -25,7 +25,7 @@ use crate::{
         },
     },
     helpers::{ShiftMap, ShiftPoint, encoding_size},
-    index::GappedMap,
+    index::{GappedMap, TempIndex},
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
     raw::{DataSegmentId, FuncTypeId},
     typed::{
@@ -86,17 +86,6 @@ impl<'src> Module<'src> {
         })
     }
 
-    fn start_fn_type(&self) -> Option<(FunctionRef, FuncType)> {
-        if self.start_functions.is_empty() {
-            None
-        } else {
-            Some((
-                FunctionRef::new(self.functions.len()),
-                FuncType::new([], []),
-            ))
-        }
-    }
-
     /// Generate type section, return map from FunctionId to type index.
     pub fn generate_type_section(
         &self,
@@ -105,17 +94,10 @@ impl<'src> Module<'src> {
         let mut function_types = SecondaryMap::new();
         let mut uniq_types = HashMap::<&wasmparser::FuncType, FuncTypeId>::new();
 
-        // add start fn void type if start fn exist
-        let start_fn = self.start_fn_type();
-        let start_fn_iter = start_fn
-            .iter()
-            .map(|(func_ref, func_type)| (*func_ref, func_type));
-
         let func_types = self
             .functions
             .iter()
-            .map(|(id, func)| (id, func.get_type()))
-            .chain(start_fn_iter.clone());
+            .map(|(id, func)| (id, func.get_type()));
 
         // Collect unique types
         for (id, func_type) in func_types {
@@ -255,22 +237,9 @@ impl<'src> Module<'src> {
     /// Start fn section - is just a number of entrypoint function.
     /// We will place one function with void signature as start function, with calls of all functions defined in `self.start_functions` array.
     fn generate_start_function_section(&self, output_module: &mut wasm_encoder::Module) {
-        if !self.start_functions.is_empty() {
-            #[cfg(debug_assertions)]
-            self.start_functions.iter().for_each(|f| {
-                let func = self.functions.get_entity(*f);
-                let is_void =
-                    func.get_type().params().is_empty() && func.get_type().results().is_empty();
-                assert!(
-                    is_void,
-                    "Start function must have void signature. Function {} has non-void signature",
-                    f
-                );
-            });
-            // then during code generation we will generate start function as latest defined function.
-            let start_fn_id = self.functions.len();
+        if let Some(start_function) = &self.extra_state.start_function {
             output_module.section(&wasm_encoder::StartSection {
-                function_index: start_fn_id.try_into().unwrap(),
+                function_index: start_function.as_u32(),
             });
         }
     }
@@ -393,24 +362,6 @@ impl<'src> Module<'src> {
                     }
                 }
 
-                // TODO: push it as last defined during into_finalized() call?
-                // TODO: check fn type to be void.
-                if !self.start_functions.is_empty() {
-                    let start_fn_ref = FunctionRef::new(self.functions.len());
-                    // generate start function as last function in code section, and add call to all start functions in its body
-                    let mut func = wasm_encoder::Function::new([]);
-                    let mut sink = func.instructions();
-                    for func_ref in &self.start_functions {
-                        sink.call(func_ref.as_u32()); // TODO: Relocs?
-                    }
-                    sink.end();
-
-                    let function_start_offset = section.raw_len_prefixed(&func.into_raw_body())?;
-                    functions_mapping[start_fn_ref] = FunctionInfo {
-                        code_offset: function_start_offset,
-                        indirect_table_index: None,
-                    }
-                }
                 Ok(())
             })?;
         output_module.section(&section);

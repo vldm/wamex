@@ -13,10 +13,13 @@ use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::Reser
 pub use entities::*;
 use itertools::chain;
 use log::warn;
-use wasmparser::{ElementItems, TableType, TypeRef};
+use smallvec::smallvec;
+use wasmparser::{ElementItems, FunctionBody, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
+    SVec,
+    index::Temp,
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
@@ -38,10 +41,16 @@ impl_entity_index! {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Locked {}
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Locked {
+    pub start_function: Option<FunctionRef>,
+}
 
-pub enum Building {}
+#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Building {
+    /// List of functions to be called on module start.
+    /// Should have `()->void` type and can be defined or imported.
+    pub start_functions: Vec<Temp<FunctionRef>>,
+}
 
 type FileWithData<'src> = Yoke<LoadedFile<'src>, Box<[u8]>>;
 
@@ -145,9 +154,7 @@ pub struct Module<'src, BuilderState = Locked> {
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
     pub mem_spec: data::MemSpec<'src>,
-    /// List of functions to be called on module start.
-    /// Should have `()->void` type and can be defined or imported.
-    pub start_functions: Vec<FunctionRef>,
+    pub extra_state: BuilderState,
 }
 
 impl<'src> Module<'src> {
@@ -368,7 +375,9 @@ impl<'src> Module<'src> {
             globals,
             tags,
             mem_spec,
-            start_functions: reader.code.start_func.into_iter().collect(),
+            extra_state: Locked {
+                start_function: reader.code.start_func,
+            },
         };
 
         Ok((this, file_symbol_db))
@@ -579,7 +588,7 @@ impl<'src> ModuleBuilder<'src> {
             indirect_function_table: elements::IndirectFunctionTable::new(
                 TableRef::reserved_value(),
             ),
-            start_functions: Vec::default(),
+            extra_state: Building::default(),
         }
     }
 
@@ -635,9 +644,11 @@ impl<'src> ModuleBuilder<'src> {
     /// so it's requiered to either call [`create_empty_indirect_fn_table`] and [`create_base_memory`]
     /// or push tables/memories before calling this method.
     ///
+    /// Also this method init start_fn based on list of start functions provided during building phase
+    ///
     /// Panics: if no default memory/indirect function can be found.
     ///
-    pub fn into_locked(self) -> Module<'src, Locked> {
+    pub fn into_locked(mut self) -> Module<'src, Locked> {
         let tables = self.tables.into_finished();
         let mut indirect_function_table = self.indirect_function_table;
         if indirect_function_table.table_id.is_reserved_value() {
@@ -651,16 +662,49 @@ impl<'src> ModuleBuilder<'src> {
             mem_spec.mem_id = memory_id;
         }
 
+        let fn_imports = self.functions.imports.len();
+
+        let start_fns = self
+            .extra_state
+            .start_functions
+            .into_iter()
+            .map(|temp| temp.to_stable(fn_imports))
+            .collect::<Vec<_>>();
+
+        let start_body = Self::generate_start_function(&start_fns);
+        let defined_id = self.functions.push_defined(start_body);
+
         Module {
             tables,
             memories,
             mem_spec,
             indirect_function_table,
-            start_functions: self.start_functions,
+            extra_state: Locked {
+                start_function: Some(defined_id.to_stable(fn_imports)),
+            },
             functions: self.functions.into_finished(),
             globals: self.globals.into_finished(),
             tags: self.tags.into_finished(),
             data: self.data.into_finished(),
+        }
+    }
+
+    fn generate_start_function(start_functions: &[FunctionRef]) -> DefinedFunction<'src> {
+        let mut func = wasm_encoder::Function::new([]);
+        let mut ixs = func.instructions();
+        for func_ref in start_functions {
+            ixs.call(func_ref.as_u32());
+        }
+
+        DefinedFunction {
+            body: EntityBody::New {
+                new_bytes: func.into_raw_body().into(),
+                // TODO: add relocs
+                new_relocs: smallvec![],
+            },
+            name: Some("_start".into()),
+            entity_type: raw::FuncType::new(None, None),
+            export_as: ExportNames::default(),
         }
     }
 }

@@ -54,18 +54,21 @@ impl<'a> DataAbsToGot<'a> {
         input_snapshot: &'a EntitiesSnapshot,
         module: &mut crate::typed::ModuleBuilder,
     ) -> Self {
+        let start_fn = module.functions.push_defined(DefinedFunction {
+            entity_type: FuncType::new([], []),
+            body: EntityBody::New {
+                new_relocs: SmallVec::new(),
+                new_bytes: SmallVec::new(),
+            },
+            name: Some("__wamex_reloc_init".into()),
+            export_as: ExportNames::default(),
+        });
+        module.extra_state.start_functions.push(start_fn);
+
         Self {
             always_static_symbols,
             input_snapshot,
-            start_fn: module.functions.push_defined(DefinedFunction {
-                entity_type: FuncType::new([], []),
-                body: EntityBody::New {
-                    new_relocs: SmallVec::new(),
-                    new_bytes: SmallVec::new(),
-                },
-                name: Some("__wamex_reloc_init".into()),
-                export_as: ExportNames::default(),
-            }),
+            start_fn,
         }
     }
     pub fn is_dyn_symbol(&self, sym: &EntityKind) -> bool {
@@ -214,17 +217,10 @@ impl<'src> HandleFixups<'src> for DataAbsToGot<'_> {
         input_file: FileId,
         entry: EntityRelocationEntry,
     ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
-        // TODO: move outside of this creation
-        if let Err(e) = Self::check_whitelisted_data_relocation(&entry) {
-            log::trace!(
-                "Relocation entry {:#?} is not suitable for data modification: {e}",
-                entry,
-            );
-            return Ok(None);
-        }
-
         match entry.symbol_id {
             EntityKind::Function(_) | EntityKind::DataSymbol(_) => {
+                // TODO: move outside of this creation
+                Self::check_whitelisted_data_relocation(&entry)?;
                 let extra = DataSymbolInit {
                     storage: entity_ref,
                     relocated_symbol: EntityLocation::from_parts(input_file, entry.symbol_id),
@@ -240,11 +236,14 @@ impl<'src> HandleFixups<'src> for DataAbsToGot<'_> {
 }
 impl DataAbsToGot<'_> {
     fn new_entry(&self, _buffer: Cursor<'_>, entry: EntityRelocationEntry) -> Result<Rewrite> {
+        debug_assert_eq!(entry.encoding, Encoding::Fixed);
+        debug_assert_eq!(entry.relocation_range().len(), 4);
+
         Ok(Rewrite {
             old_range: entry.relocation_range(),
             // this will be emited in _start function with dyn relocation.
             new_relocs: SVec::new(),
-            new_bytes: smallvec::smallvec![0; entry.relocation_range().len()],
+            new_bytes: smallvec::smallvec![0xde, 0xad, 0xbe, 0xef], // dummy value, will be replaced with actual code in _start function
         })
     }
 
