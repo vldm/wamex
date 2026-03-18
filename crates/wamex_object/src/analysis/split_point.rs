@@ -363,6 +363,7 @@ fn find_split_points_wamex(info: &Module) -> anyhow::Result<Vec<SplitPoint>> {
     find_split_points_with_prefix(info, WAMEX_ENTRY_PREFIX)
 }
 
+#[tracing::instrument(skip_all)]
 pub fn find_split_points(
     info: &Module,
     split_point_type: SplitPointExtractor,
@@ -379,6 +380,7 @@ fn is_wasm_bindgen_cast(name: &str) -> bool {
         || name == "__wbindgen_describe"
 }
 
+#[tracing::instrument(skip_all)]
 pub fn wbg_closures(module: &Module, graph: &DepGraph) -> MiniSet<FlatEntityRef> {
     let mut wbg_closures = std::collections::BTreeSet::new();
 
@@ -618,6 +620,7 @@ fn process_special_entities(
 }
 
 /// Compute the split modules content based on split points and dependency graph.
+#[tracing::instrument(skip_all)]
 pub fn compute_split_modules(
     info: &Module,
     dep_graph: &DepGraph,

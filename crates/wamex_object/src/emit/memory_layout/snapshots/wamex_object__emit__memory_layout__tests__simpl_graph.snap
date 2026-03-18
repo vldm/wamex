@@ -3,20 +3,21 @@ source: crates/wamex_object/src/emit/memory_layout/mod.rs
 expression: print_data_format
 ---
 <Module test>
+[.rodata] <padding> (size: 3)
 [.rodata:data0] .Lanon.40cffdd5158028b640e87266bd095959.0
-00000000  48 65 6C 6C 6F 2C 20 77  6F 72 6C 64 21           |Hello, world!|
+00000003  48 65 6C 6C 6F 2C 20 77  6F 72 6C 64 21           |Hello, world!|
 
 [.rodata:data1] .Lanon.40cffdd5158028b640e87266bd095959.1
-0000000D  30 2E 31 2E 30                                    |0.1.0|
+00000010  30 2E 31 2E 30                                    |0.1.0|
 
 [.rodata:data2] .Lanon.40cffdd5158028b640e87266bd095959.2
-00000012  63 6F 6E 73 74 61 6E 74                           |constant|
+00000015  63 6F 6E 73 74 61 6E 74                           |constant|
 
 [.rodata] <padding> (size: 2)
 [.rodata:data3] .Lswitch.table.indirect_fn
-0000001C  01 00 00 00 02 00 00 00  03 00 00 00              |············|
+0000001F  01 00 00 00 02 00 00 00  03 00 00 00              |············|
           └[1]───────┘└[2]───────┘ └[3]───────┘             
   REFS (this part)
-  [1] hello_world   range=0x001C..0x0020 (4)
-  [2] version   range=0x0020..0x0024 (4)
-  [3] constant   range=0x0024..0x0028 (4)
+  [1] hello_world   range=0x001F..0x0023 (4)
+  [2] version   range=0x0023..0x0027 (4)
+  [3] constant   range=0x0027..0x002B (4)

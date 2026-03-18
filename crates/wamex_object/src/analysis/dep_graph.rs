@@ -146,6 +146,8 @@ pub struct SharedEntry<Id> {
     pub exports: DepMiniSet,
     pub imports: DepMiniSet,
 }
+
+#[tracing::instrument(skip_all)]
 pub fn get_dependencies(info: &LoadedFile) -> anyhow::Result<DepGraph> {
     get_dependencies_with_filter(info, |_| true)
 }

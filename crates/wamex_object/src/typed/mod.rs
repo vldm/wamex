@@ -75,7 +75,8 @@ impl FileLoader {
     }
 
     #[allow(dead_code, reason = "used for tests")]
-    pub(crate) fn load_from_bytes(&mut self, data: Box<[u8]>) -> Result<FileId> {
+
+    pub fn load_from_bytes(&mut self, data: Box<[u8]>) -> Result<FileId> {
         let file =
             FileWithData::try_attach_to_cart(data, |data| LoadedFile::from_wasm_bytes(data))?;
         let id = self.files_readers.push(file);

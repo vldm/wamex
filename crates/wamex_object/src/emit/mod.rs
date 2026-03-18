@@ -41,6 +41,7 @@ pub mod modify;
 pub mod relocation;
 
 impl<'src> Module<'src> {
+    #[tracing::instrument(skip_all)]
     pub fn generate(&self, output_module: &mut wasm_encoder::Module) -> Result<ModuleLayout> {
         // self.generate_dylink0_section(output_module)?;
 
@@ -412,6 +413,7 @@ impl<'src> Module<'src> {
     /// - Shift their offset to be relative to entity body start.
     ///
     /// Returns `FileRelocs` with relocs related to symbol start.
+    #[tracing::instrument(skip_all)]
     pub fn copy_and_resolve_relocs(
         &mut self,
         module_info: &OutputEntitiesResolver,
@@ -600,6 +602,26 @@ struct SplitModule<'src> {
     got_entries: GotEntries,
 }
 
+// extension to EnteredSpan to allow replacing it corerctly.
+// If we use naive:
+// `action_span = tracing::info_span!("new_span").entered();`
+// or `let _= mem::replace(&mut action_span, tracing::info_span!("new_span").entered());`
+// then old span is closed after entering into new span,
+// and therefore will be marked as
+
+macro_rules! replace_span {
+    ($action_span:expr, $new_span:expr) => {{
+        // first cleanup close self.
+        drop(std::mem::replace(
+            $action_span,
+            tracing::Span::none().entered(),
+        ));
+        // then enter and replace.
+        drop(std::mem::replace($action_span, $new_span.entered()));
+    }};
+}
+
+#[tracing::instrument(skip_all)]
 fn create_split_module<'src>(
     input_files: &FileLoader,
     input_file: FileId,
@@ -609,6 +631,7 @@ fn create_split_module<'src>(
     static_symbols: &BTreeSet<FlatEntityRef>,
     is_main: bool,
 ) -> Result<SplitModule<'src>> {
+    let mut action_span = tracing::info_span!("Copy entities").entered();
     let src_file = input_files.get_file(input_file);
     let mut module: Module<'src, Building> = Module::new();
 
@@ -806,6 +829,7 @@ fn create_split_module<'src>(
         }
     }
 
+    replace_span!(&mut action_span, tracing::info_span!("add_extra_entities"));
     log::debug!("Building got deps imports");
     let mut got_entries = BTreeMap::new();
     for (i, _) in output_info.dependencies.iter() {
@@ -867,12 +891,17 @@ fn create_split_module<'src>(
         }),
     });
 
+    replace_span!(&mut action_span, tracing::info_span!("lock_module"));
     log::warn!("module after copying entities: {:#?}", module);
     // after index finalization, we can make some additional transformation
     let mut module = module.into_locked();
 
     // Convert temp ids to stable
 
+    replace_span!(
+        &mut action_span,
+        tracing::info_span!("convert_ids_to_stable")
+    );
     // Fill mapping for all used entities.
     for (src, entity) in used_queue {
         file_info.add_entity_mapping(src, entity.to_stable(&module));
@@ -908,6 +937,7 @@ fn create_split_module<'src>(
         },
     );
 
+    replace_span!(&mut action_span, tracing::info_span!("resolve_relocs"));
     // resolve got entries in code modifier, and fill start function body
     // do it before copy_and_resolve_relocs to ensure that all relocs are copied into file_relocs.
     let data_modifier_artifacts_mapped = DataAbsToGot::convert_to_stable_refs_and_resolve(
@@ -920,6 +950,8 @@ fn create_split_module<'src>(
     }
     // Now copy and resolve relocs.
     let relocs = module.copy_and_resolve_relocs(&file_info, input_files)?;
+
+    replace_span!(&mut action_span, tracing::info_span!("extend info"));
     // collect indirect table (used by relocs)
     module.extend_indirect_table_from_relocs(&relocs);
     // Fill segment spec (by clonning from source)
@@ -937,6 +969,8 @@ fn create_split_module<'src>(
 
 /// Emit output modules, from split program info.
 ///
+///
+#[tracing::instrument(skip_all)]
 pub fn emit_modules(
     input_files: &FileLoader,
     program_info: &SplitProgramInfo,
@@ -985,6 +1019,7 @@ pub fn emit_modules(
     }
     log::info!("Applying relocs for modules");
 
+    let _action_span = tracing::info_span!("applying_relocs").entered();
     for file in output_modules.keys() {
         let mut imported_data = GappedMap::new();
         let (ident, split_module, _) = &output_modules[file];
@@ -1052,6 +1087,7 @@ pub fn emit_modules(
     // 4. append linker sections.
     // 5. write fine using callback.
 
+    let _action_span = tracing::info_span!("writing_modules").entered();
     for (_, (ident, _, bytes, ..)) in &output_modules {
         log::info!("Emitting module {ident}");
         {
@@ -1061,13 +1097,46 @@ pub fn emit_modules(
         }
         emit_fn(ident, bytes)?;
     }
+    drop(_action_span);
     Ok(())
+}
+
+#[doc(hidden)]
+pub fn split_routine_generic_test(src: &[u8]) {
+    let mut file_loader = FileLoader::new();
+    let input_file = file_loader
+        .load_from_bytes(src.to_vec().into_boxed_slice())
+        .unwrap();
+    let input = file_loader.get_file(input_file);
+
+    let dep_graph = crate::analysis::get_dependencies(input).unwrap();
+    let split_points = crate::analysis::find_split_points(
+        &input.module,
+        crate::analysis::SplitPointExtractor::Legacy,
+    )
+    .unwrap();
+
+    let wbg_descriptors = crate::analysis::wbg_closures(&input.module, &dep_graph);
+    let split = crate::analysis::compute_split_modules(
+        &input.module,
+        &dep_graph,
+        &split_points,
+        &wbg_descriptors,
+        true,
+    )
+    .unwrap();
+
+    emit_modules(&file_loader, &split, |ident, bytes| {
+        log::debug!("Emitted module {ident} with size {}", bytes.len());
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        emit::{SplitModule, create_split_module},
+        emit::{SplitModule, create_split_module, split_routine_generic_test},
         typed::{FileLoader, common_index::EntitiesSnapshot},
     };
 
@@ -1140,48 +1209,17 @@ mod tests {
         todo!()
     }
 
-    fn split_routine_generic(src: &[u8]) {
-        let mut file_loader = FileLoader::new();
-        let input_file = file_loader
-            .load_from_bytes(src.to_vec().into_boxed_slice())
-            .unwrap();
-        let input = file_loader.get_file(input_file);
-
-        let dep_graph = crate::analysis::get_dependencies(input).unwrap();
-        let split_points = crate::analysis::find_split_points(
-            &input.module,
-            crate::analysis::SplitPointExtractor::Legacy,
-        )
-        .unwrap();
-
-        let wbg_descriptors = crate::analysis::wbg_closures(&input.module, &dep_graph);
-        let split = crate::analysis::compute_split_modules(
-            &input.module,
-            &dep_graph,
-            &split_points,
-            &wbg_descriptors,
-            true,
-        )
-        .unwrap();
-
-        super::emit_modules(&file_loader, &split, |ident, bytes| {
-            println!("Emitted module {ident} with size {}", bytes.len());
-            Ok(())
-        })
-        .unwrap();
-    }
-
     #[test]
     fn split_routine_example() {
         env_logger::try_init().ok();
         let src = crate::testfiles::EXAMPLE_WASM;
-        split_routine_generic(src);
+        split_routine_generic_test(src);
     }
 
     #[test]
     fn split_routine_simple() {
         env_logger::try_init().ok();
         let src = crate::testfiles::SIMPLE_GRAPH;
-        split_routine_generic(src);
+        split_routine_generic_test(src);
     }
 }
