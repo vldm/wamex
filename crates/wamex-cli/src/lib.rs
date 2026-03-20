@@ -1,29 +1,17 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use wamex_object::Module;
-
-use crate::emit::CommonEmitInfo;
-
-pub mod analysis;
-pub use wamex_object::{emit, read};
-
-mod helpers {
-    pub use wamex_object::helpers::*;
-}
-mod index {
-    pub use wamex_object::{index::*, read::typed::FunctionRef, symbols::SymbolId};
-}
-
-mod diff;
-mod incremental;
-
+// mod diff;
+// mod incremental;
 pub use anyhow::Result;
-pub use incremental::{
-    IncrementalSplitResult, IncrementalSplitState, ModuleDeps, ModuleUpdate, SplitResult,
-};
-pub use read::ObjectReader;
-pub use wamex_object::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+pub use wamex_object::ObjectReader;
+// pub use incremental::{
+//     IncrementalSplitResult, IncrementalSplitState, ModuleDeps, ModuleUpdate, SplitResult,
+// };
+pub use wamex_object::analysis::{ModuleIdentifier, SplitModuleIdentifier, SplitProgramInfo};
+use wamex_object::typed::{FileLoader, Module};
+// pub mod analysis;
+pub use wamex_object::{analysis, emit};
 pub use wamex_types::{BumpVersion, ModuleId};
 
 #[derive(Debug, Parser)]
@@ -56,6 +44,7 @@ pub struct Split {
 
     /// Specify the split point extraction strategy.
     #[arg(value_enum, default_value_t = SplitPointExtractor::Wamex)]
+    #[arg(long = "extractor")]
     pub split_point_extractor: SplitPointExtractor,
 }
 
@@ -125,26 +114,22 @@ pub fn main(args: Cli) -> Result<()> {
     Ok(())
 }
 pub fn roundtrip(args: Roundtrip) -> Result<()> {
-    let input_wasm = std::fs::read(&args.input)?;
-    let module = ObjectReader::parse(&input_wasm)?;
-    let info = Module::from_raw_module(module)?;
-    let dep_graph = analysis::dep_graph::get_dependencies(&info)?;
+    let mut loader = FileLoader::new();
+    let src_id = loader.load_file(&&args.input)?;
+
+    let info = loader.get_file(src_id);
+    let dep_graph = analysis::get_dependencies(&info)?;
 
     let split_program_info =
-        analysis::split_point::compute_split_modules(&info, &dep_graph, &[], &Default::default())?;
+        analysis::compute_split_modules(&info.module, &dep_graph, &[], &Default::default(), false)?;
 
     assert!(
         split_program_info.output_modules.len() == 1,
         "Roundtrip should produce single module",
     );
     crate::emit::emit_modules(
-        &info,
-        false,
+        &loader,
         &split_program_info,
-        &Default::default(),
-        false,
-        None,
-        Default::default(),
         |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
             std::fs::write(&args.output, data)?;
             Ok(())
@@ -155,7 +140,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
 }
 pub fn split(args: Split) -> Result<()> {
     let input_wasm = std::fs::read(&args.input)?;
-    let _ = split_inner(
+    split_inner(
         &input_wasm,
         args.verbose,
         args.precise_modification,
@@ -175,83 +160,108 @@ pub fn split(args: Split) -> Result<()> {
 }
 
 #[doc(hidden)]
-// Full split routine, but without file I/O reading
-// Returns a map of dependency for modules in format (ModuleId -> Vec<ModuleId>)
+// Full split routine, but without file I/O reading.
 pub fn split_inner(
     input_wasm: &[u8],
     verbose: bool,
     precise_modification: bool,
     split_point_extractor: SplitPointExtractor,
     mut emit_module_fn: impl FnMut(ModuleId, &[u8]) -> Result<()>,
-) -> Result<ModuleDeps> {
-    let mut state = IncrementalSplitState::new();
-    let split_result = state.split_incremental(
-        input_wasm,
-        verbose,
-        precise_modification,
-        split_point_extractor,
-        |identifier: ModuleId, data: &[u8]| -> Result<()> { emit_module_fn(identifier, data) },
+) -> Result<()> {
+    let _ = precise_modification;
+
+    let mut loader = FileLoader::new();
+    let src_id = loader.load_from_bytes(input_wasm.to_vec().into_boxed_slice())?;
+
+    let info = loader.get_file(src_id);
+    let dep_graph = analysis::get_dependencies(info)?;
+    let split_points = analysis::find_split_points(
+        &info.module,
+        match split_point_extractor {
+            SplitPointExtractor::Legacy => analysis::SplitPointExtractor::Legacy,
+            SplitPointExtractor::Wamex => analysis::SplitPointExtractor::Wamex,
+        },
     )?;
-    Ok(split_result.deps)
+    let wbg_descriptors = analysis::wbg_closures(&info.module, &dep_graph);
+    let split_program_info = analysis::compute_split_modules(
+        &info.module,
+        &dep_graph,
+        &split_points,
+        &wbg_descriptors,
+        true, // merge shared to main
+    )?;
+
+    if verbose {
+        println!("Split points: {split_points:#?}");
+        println!("Split program info: {split_program_info:#?}");
+        println!("Dependency graph: {dep_graph:#?}");
+    }
+
+    crate::emit::emit_modules(&loader, &split_program_info, |identifier, data| {
+        emit_module_fn(ModuleId::new(&identifier.to_string()), data)
+    })?;
+
+    Ok(())
 }
 
 fn incremental_split(args: Split) -> Result<()> {
-    println!("Starting incremental split loop...");
-    let mut state = IncrementalSplitState::new();
+    todo!()
+    // println!("Starting incremental split loop...");
+    // let mut state = IncrementalSplitState::new();
 
-    loop {
-        let input_wasm = std::fs::read(&args.input)?;
-        let split_result = state.split_incremental(
-            &input_wasm,
-            args.verbose,
-            args.precise_modification,
-            args.split_point_extractor,
-            |identifier: ModuleId, data: &[u8]| -> Result<()> {
-                let output_filename = format!("{}.wasm", identifier.module_full_name());
-                if !args.dry_run {
-                    std::fs::create_dir_all(&args.output)?;
-                    std::fs::write(args.output.join(output_filename), data)?;
-                } else {
-                    log::info!("Skipping writing module {output_filename} (dry run)");
-                }
-                Ok(())
-            },
-        )?;
+    // loop {
+    //     let input_wasm = std::fs::read(&args.input)?;
+    //     let split_result = state.split_incremental(
+    //         &input_wasm,
+    //         args.verbose,
+    //         args.precise_modification,
+    //         args.split_point_extractor,
+    //         |identifier: ModuleId, data: &[u8]| -> Result<()> {
+    //             let output_filename = format!("{}.wasm", identifier.module_full_name());
+    //             if !args.dry_run {
+    //                 std::fs::create_dir_all(&args.output)?;
+    //                 std::fs::write(args.output.join(output_filename), data)?;
+    //             } else {
+    //                 log::info!("Skipping writing module {output_filename} (dry run)");
+    //             }
+    //             Ok(())
+    //         },
+    //     )?;
 
-        match split_result.incremental_result {
-            IncrementalSplitResult::Unchanged => {
-                println!("No changes detected, all modules are up to date.");
-            }
-            IncrementalSplitResult::UpdatedModules(modules) => {
-                println!(
-                    "Updated modules: {}",
-                    modules
-                        .iter()
-                        .map(|m| m.module_id.module_full_name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            }
-            IncrementalSplitResult::FullResplit => {
-                println!("Full resplit performed, all modules were regenerated.");
-            }
-        }
-        println!("Current module dependencies:");
-        for (module, deps) in split_result.deps.iter() {
-            println!(
-                "  {} -> [{}]",
-                module.module_full_name(),
-                deps.iter()
-                    .map(|d| d.module_full_name())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
+    //     match split_result.incremental_result {
+    //         IncrementalSplitResult::Unchanged => {
+    //             println!("No changes detected, all modules are up to date.");
+    //         }
+    //         IncrementalSplitResult::UpdatedModules(modules) => {
+    //             println!(
+    //                 "Updated modules: {}",
+    //                 modules
+    //                     .iter()
+    //                     .map(|m| m.module_id.module_full_name())
+    //                     .collect::<Vec<_>>()
+    //                     .join(", ")
+    //             );
+    //         }
+    //         IncrementalSplitResult::FullResplit => {
+    //             println!("Full resplit performed, all modules were regenerated.");
+    //         }
+    //     }
+    //     println!("Current module dependencies:");
+    //     for (module, deps) in split_result.deps.iter() {
+    //         println!(
+    //             "  {} -> [{}]",
+    //             module.module_full_name(),
+    //             deps.iter()
+    //                 .map(|d| d.module_full_name())
+    //                 .collect::<Vec<_>>()
+    //                 .join(", ")
+    //         );
+    //     }
 
-        println!("Press Enter to re-split, or Ctrl+C to exit.");
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-    }
+    //     println!("Press Enter to re-split, or Ctrl+C to exit.");
+    //     let mut input = String::new();
+    //     std::io::stdin().read_line(&mut input)?;
+    // }
 }
 
 pub fn diff(args: Diff) -> Result<()> {
@@ -259,26 +269,24 @@ pub fn diff(args: Diff) -> Result<()> {
     let right = std::fs::read(&args.right)?;
     let left_module = ObjectReader::parse(&left)?;
     let right_module = ObjectReader::parse(&right)?;
-    let left_module_info = Module::from_raw_module(left_module)?;
-    let right_module_info = Module::from_raw_module(right_module)?;
+    let left_module_info = Module::from_raw_module(&left_module)?;
+    let right_module_info = Module::from_raw_module(&right_module)?;
 
-    let diff = diff::Compare::new(&left_module_info, &right_module_info, args.structural);
-    diff.print_diff()?;
+    todo!();
+    // let diff = diff::Compare::new(&left_module_info, &right_module_info, args.structural);
+    // diff.print_diff()?;
 
     Ok(())
 }
 
 pub fn debug(args: Debug) -> Result<()> {
     let input = std::fs::read(&args.input)?;
-    let module = ObjectReader::parse(&input)?;
-    let info = Module::from_raw_module(module)?;
+    let raw = ObjectReader::parse(&input)?;
+    let (module, _) = Module::from_raw_module(&raw)?;
 
-    let program_info = SplitProgramInfo::default();
-    // verbose flag will print debug info as side effect.
-    // TODO: make it more functional.
-    let _ci = CommonEmitInfo::new(&info, true, &program_info)?;
-
-    info.symbols.print_debug();
+    // module.symbols.print_debug();
+    // TODO: 1. print layout of the module.
+    todo!();
     Ok(())
 }
 

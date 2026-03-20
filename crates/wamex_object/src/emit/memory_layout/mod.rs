@@ -65,13 +65,20 @@ impl<'src> SegmentLayout<'src> {
             .defined_iter()
             .chunk_by(|(_, v)| v.entity_type.segment_id);
 
-        let symbols_iter = chunks
-            .into_iter()
-            .zip(module.mem_spec.data_segments.iter())
-            .map(|((grp_sid, grp), (sid, info))| {
-                debug_assert_eq!(grp_sid, sid, "Data symbols should be grouped by segment id");
-                (sid, info, grp)
-            });
+        // Persist source layout structure.
+        let mut chunks = chunks.into_iter();
+        let symbols_iter = module.mem_spec.data_segments.iter().map(|(sid, info)| {
+            if let Some((grip_sid, grp)) = chunks.next() {
+                debug_assert_eq!(
+                    grip_sid, sid,
+                    "Data symbols should be grouped by segment id"
+                );
+                (sid, info, Some(grp))
+            } else {
+                // No symbols for this segment, but we still need to emit it.
+                (sid, info, None)
+            }
+        });
 
         for (segment_id, info, grp) in symbols_iter {
             log::debug!(
@@ -91,7 +98,7 @@ impl<'src> SegmentLayout<'src> {
             segment_offset += Self::segment_header(location)?.len() as u32 + 5; // 5 bytes for len of data
 
             let mut data_parts: Vec<ChunkRepr<'src>> = Vec::new();
-            for (symbol_index, symbol) in grp {
+            for (symbol_index, symbol) in grp.into_iter().flatten() {
                 let field_alignment = 1 << symbol.entity_type.pow2align;
                 // add padding for alignment
                 if let Some((padding_symbol, name)) =

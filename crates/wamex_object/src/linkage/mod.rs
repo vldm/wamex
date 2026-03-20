@@ -98,6 +98,8 @@ impl<'src> LinkageInfo<'src> {
                 reason = "it's more clear when insert in separate line"
             )]
             if let Some(name) = name {
+                let _g = tracing::trace_span!("adding symbol to resolution table", name = %name)
+                    .entered();
                 if let Some(prev) = name_to_entity.insert(name.into(), idx) {
                     error!(
                         "Duplicate symbol name: {}, previous: {:?}, current = {:?}, flags = {flags:#x}",
@@ -112,6 +114,7 @@ impl<'src> LinkageInfo<'src> {
             id = id.next();
         }
 
+        let _g = tracing::debug_span!("Sorting defined data symbols").entered();
         defined_data_symbols.sort_by_key(|(_, d)| (d.segment_id, d.range.start));
         Self {
             file_symbol_db: FileSymbolDb { symbols },
@@ -119,6 +122,7 @@ impl<'src> LinkageInfo<'src> {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn collect_ordered_relocs(
         input: &ObjectReader,
     ) -> impl Iterator<Item = AnyRelocationEntry> {
@@ -161,6 +165,7 @@ impl<'src> LinkageInfo<'src> {
     /// Returns regions of code and data symbols in the original module:
     /// - for each functions body
     /// - for each data chunks
+    #[tracing::instrument(skip_all)]
     pub fn build_regions(input: &Module) -> file_db::Regions {
         let mut code_owners = Vec::with_capacity(input.functions.defined.len());
         let mut data_owners = Vec::with_capacity(input.data.defined.len());

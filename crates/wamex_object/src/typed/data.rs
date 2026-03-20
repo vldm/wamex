@@ -366,6 +366,7 @@ impl<'a> RawDataChunk<'a> {
     }
 }
 
+#[derive(Debug)]
 enum FilterEvent {
     RemoveBound {
         bound_to_symbol: SymbolId,
@@ -384,10 +385,11 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
     /// and normalize indexes based on order
     /// - call `filter_event` for each update.
     fn filter_bounds_with_cleanup(
+        mut next_id: DataSymbolRef,
         this: PrimaryMap<DataSymbolRef, Self>,
         mut filter_event: impl FnMut(FilterEvent),
-    ) -> PrimaryMap<DataSymbolRef, RawDataChunk<'a>> {
-        let mut result = PrimaryMap::new();
+    ) -> Vec<RawDataChunk<'a>> {
+        let mut result = Vec::new();
         let mut last_regular_data = (
             &[] as &[u8],
             SymbolId::reserved_value(),
@@ -396,7 +398,10 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
         for (_, chunk) in this.into_iter() {
             match chunk.data {
                 SymbolRelation::Regular { bytes, symbol_id } => {
-                    let new = result.push(DataChunk {
+                    let new = next_id;
+                    next_id = next_id.next();
+
+                    result.push(DataChunk {
                         data: bytes,
                         pow2align: chunk.pow2align,
                         original_offset: chunk.original_offset,
@@ -430,10 +435,11 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
     /// and normalize indexes based on order
     /// - updating symbol table accordingly.
     pub fn canonicalize_data_symbols(
+        next_id: DataSymbolRef,
         this: PrimaryMap<DataSymbolRef, Self>,
         table: &mut FileSymbolDb,
-    ) -> PrimaryMap<DataSymbolRef, RawDataChunk<'a>> {
-        Self::filter_bounds_with_cleanup(this, |event| match event {
+    ) -> impl Iterator<Item = RawDataChunk<'a>> {
+        Self::filter_bounds_with_cleanup(next_id, this, |event| match event {
             FilterEvent::RemoveBound {
                 bound_to_symbol,
                 bound_to_data,
@@ -457,6 +463,7 @@ impl<'a> DataChunk<'a, SymbolRelation<'a>> {
                 entry.entity = new_ref.into();
             }
         })
+        .into_iter()
     }
 }
 

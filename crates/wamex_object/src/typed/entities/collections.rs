@@ -182,15 +182,15 @@ where
 
     /// Pushes new imported entity and returns its compound index.
     /// This is differ from `push_defined`, since later index is "shifted" by imports count.
-    pub fn push_import(&mut self, import: impl Into<Import>) -> Temp<Ref> {
-        self.imports.push(import.into());
+    pub fn push_import(&mut self, import: Import) -> Temp<Ref> {
+        self.imports.push(import);
         Temp::from_import(self.imports.len() - 1)
     }
 
     /// Pushes new defined entity and returns its "defined" index.
     /// This defined index can be converted to compound by calling `get_compound_index`.
-    pub fn push_defined(&mut self, defined: impl Into<Defined>) -> Temp<Ref> {
-        self.defined.push(defined.into());
+    pub fn push_defined(&mut self, defined: Defined) -> Temp<Ref> {
+        self.defined.push(defined);
         Temp::from_defined(self.defined.len() - 1)
     }
     /// Returns the next defined index that will be assigned to the next defined entity.

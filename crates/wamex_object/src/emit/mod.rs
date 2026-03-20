@@ -977,6 +977,8 @@ pub fn emit_modules(
     // path: PathBuf,
     mut emit_fn: impl FnMut(&SplitModuleIdentifier, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    let mut action_span = tracing::info_span!("calculate modules").entered();
+
     // todo: add support of multiple input files.
     let main_file = input_files.first_file_id().unwrap();
     let src = &input_files.get_file(main_file).module;
@@ -1019,7 +1021,7 @@ pub fn emit_modules(
     }
     log::info!("Applying relocs for modules");
 
-    let _action_span = tracing::info_span!("applying_relocs").entered();
+    replace_span!(&mut action_span, tracing::info_span!("applying_relocs"));
     for file in output_modules.keys() {
         let mut imported_data = GappedMap::new();
         let (ident, split_module, _) = &output_modules[file];
@@ -1087,7 +1089,7 @@ pub fn emit_modules(
     // 4. append linker sections.
     // 5. write fine using callback.
 
-    let _action_span = tracing::info_span!("writing_modules").entered();
+    replace_span!(&mut action_span, tracing::info_span!("writing_modules"));
     for (_, (ident, _, bytes, ..)) in &output_modules {
         log::info!("Emitting module {ident}");
         {
@@ -1097,12 +1099,13 @@ pub fn emit_modules(
         }
         emit_fn(ident, bytes)?;
     }
-    drop(_action_span);
     Ok(())
 }
 
 #[doc(hidden)]
-pub fn split_routine_generic_test(src: &[u8]) {
+pub fn split_routine_generic_test(
+    src: &[u8],
+) -> anyhow::Result<Vec<(SplitModuleIdentifier, Vec<u8>)>> {
     let mut file_loader = FileLoader::new();
     let input_file = file_loader
         .load_from_bytes(src.to_vec().into_boxed_slice())
@@ -1126,20 +1129,31 @@ pub fn split_routine_generic_test(src: &[u8]) {
     )
     .unwrap();
 
+    let mut result = vec![];
     emit_modules(&file_loader, &split, |ident, bytes| {
         log::debug!("Emitted module {ident} with size {}", bytes.len());
+        result.push((ident.clone(), bytes.to_vec()));
         Ok(())
     })
     .unwrap();
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        emit::{SplitModule, create_split_module, split_routine_generic_test},
-        typed::{FileLoader, common_index::EntitiesSnapshot},
-    };
+    use smallvec::smallvec;
+    use wasmparser::FuncType;
 
+    use super::*;
+    use crate::{
+        raw::DataSegmentId,
+        typed::{
+            DefinedDataChunk, EntityBody, ExportNames, FileLoader, ImportedFunction, LoadedFile,
+            Module, WithoutBody,
+            common_index::EntitiesSnapshot,
+            data::{DataChunkType, DataSegmentInfo, SegmentPlacement},
+        },
+    };
     #[test]
     fn emit_loaded_split_roundtrip() {
         env_logger::try_init().ok();
@@ -1213,13 +1227,81 @@ mod tests {
     fn split_routine_example() {
         env_logger::try_init().ok();
         let src = crate::testfiles::EXAMPLE_WASM;
-        split_routine_generic_test(src);
+        split_routine_generic_test(src).unwrap();
     }
 
     #[test]
     fn split_routine_simple() {
         env_logger::try_init().ok();
         let src = crate::testfiles::SIMPLE_GRAPH;
-        split_routine_generic_test(src);
+        split_routine_generic_test(src).unwrap();
+    }
+
+    #[test]
+    fn split_routine_example_roundtrip() {
+        env_logger::try_init().ok();
+        let src = crate::testfiles::EXAMPLE_WASM;
+        let emitted = split_routine_generic_test(src).unwrap();
+        assert_eq!(emitted.len(), 3);
+        for (ident, bytes) in emitted {
+            log::info!("Emitted module {ident} with size {}", bytes.len());
+            let loaded = LoadedFile::from_wasm_bytes(&bytes).unwrap();
+            log::debug!("Loaded module {ident}: {:#?}", loaded.module);
+        }
+    }
+
+    #[test]
+    fn create_from_scratch() {
+        let mut module = Module::new();
+
+        let imported = module.functions.push_import(ImportedFunction {
+            module: "env".into(),
+            name: "bar".into(),
+            renamed_as: None,
+            export_as: ExportNames::default(),
+            entity_type: FuncType::new(None, None),
+        });
+        module.extra_state.start_functions.push(imported);
+        module.create_empty_indirect_fn_table();
+        module.memories.push_defined(WithoutBody {
+            entity_type: crate::raw::MemoryType {
+                memory64: false,
+                shared: false,
+                initial: 1,
+                maximum: None,
+                page_size_log2: None,
+            },
+            export_as: ExportNames::default(),
+            name: Some("__base_memory".into()),
+        });
+
+        module.mem_spec.data_segments.push(DataSegmentInfo {
+            name: "data".into(),
+            location: SegmentPlacement::ContinuesMemory,
+            pow2align: 0,
+        });
+        module.data.push_defined(DefinedDataChunk {
+            body: EntityBody::New {
+                new_bytes: vec![1, 2, 3].into(),
+                new_relocs: smallvec![],
+            },
+            name: Some("data".into()),
+            entity_type: DataChunkType {
+                segment_id: DataSegmentId::from_u32(0),
+                pow2align: 0,
+            },
+            export_as: ExportNames::default(),
+        });
+
+        let module = module.into_locked();
+        let mut output = wasm_encoder::Module::new();
+        module.generate(&mut output).unwrap();
+        let bytes = output.finish();
+
+        let loaded = LoadedFile::from_wasm_bytes(&bytes).unwrap();
+        assert_eq!(loaded.module.functions.len(), 2);
+        assert_eq!(loaded.module.tables.len(), 1);
+        assert_eq!(loaded.module.memories.len(), 1);
+        assert_eq!(loaded.module.data.len(), 1);
     }
 }

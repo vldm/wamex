@@ -78,6 +78,7 @@ impl FileRelocs {
     /// code_owners and data_owners should contain regions in original file that belongs to each symbol.
     ///
     /// Build relocs map based on position in file of entities.
+    #[tracing::instrument(skip_all)]
     pub fn build_relocs_static(
         file_relocs: impl IntoIterator<Item = AnyRelocationEntry>,
         file_db: &FileSymbolDb,

@@ -68,14 +68,10 @@ impl FileLoader {
     }
     pub fn load_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<FileId> {
         let data = std::fs::read(path)?.into_boxed_slice();
-        let file =
-            FileWithData::try_attach_to_cart(data, |data| LoadedFile::from_wasm_bytes(data))?;
-        let id = self.files_readers.push(file);
-        Ok(id)
+        Self::load_from_bytes(self, data)
     }
 
-    #[allow(dead_code, reason = "used for tests")]
-
+    #[tracing::instrument(skip_all)]
     pub fn load_from_bytes(&mut self, data: Box<[u8]>) -> Result<FileId> {
         let file =
             FileWithData::try_attach_to_cart(data, |data| LoadedFile::from_wasm_bytes(data))?;
@@ -111,6 +107,7 @@ impl<'src> LoadedFile<'src> {
 
         Self::from_raw_module(reader)
     }
+    #[tracing::instrument(skip_all)]
     pub fn from_raw_module(reader: raw::ObjectReader<'src>) -> Result<Self> {
         let (module, file_symbol_db) = Module::from_raw_module(&reader)?;
         let file_relocs = LinkageInfo::collect_ordered_relocs(&reader);
@@ -159,6 +156,7 @@ pub struct Module<'src, BuilderState = Locked> {
 }
 
 impl<'src> Module<'src> {
+    #[tracing::instrument(skip_all, name = "Creating typed module")]
     pub fn from_raw_module(
         reader: &raw::ObjectReader<'src>,
     ) -> Result<(Self, file_db::FileSymbolDb)> {
@@ -261,12 +259,20 @@ impl<'src> Module<'src> {
             }
         }
 
-        let (_table_name, table_id) = Self::init_indirect_fn_table(&tables);
-        let (_memory_name, memory_id) = Self::init_base_memory(&memories);
+        let (_table_name, table_id) = Self::try_init_indirect_fn_table(&tables).unwrap_or_else(|| {
+                panic!("No named __indirect_function_table was found, and there is not one table in the module.")
+            });
+        let (_memory_name, memory_id) =
+            Self::try_init_base_memory(&memories).unwrap_or_else(|| {
+                panic!(
+                    "No named __base_memory was found, and there is not one memory in the module."
+                );
+            });
 
         let indirect_function_table =
             elements::IndirectFunctionTable::from_reader(reader, table_id, true)?;
 
+        let g = tracing::info_span!("processing_extra_linkage").entered();
         // TODO: add undefined data symbols as well.
         let LinkageInfo {
             mut file_symbol_db,
@@ -277,9 +283,11 @@ impl<'src> Module<'src> {
             .chunk_by(|o, a| o.1.segment_id == a.1.segment_id)
             .peekable();
 
+        drop(g);
         // todo!("check that after filtering symbols in file_symbol_db we also have shifts");
 
         let data = {
+            let _g = tracing::info_span!("Slicing data segments").entered();
             // todo: make it configurable
             let slice_chunks = true;
 
@@ -348,11 +356,16 @@ impl<'src> Module<'src> {
                         .map(|&(symbol_id, ref symbol_info)| (symbol_id, symbol_info))
                         .collect::<Vec<_>>();
 
+                    // TODO: support of imported data symbols..
+                    let next_id = sliced_chunks.next_defined_key().to_stable(0);
                     let sliced = segment_chunk.slice_segment(defined_data_symbols);
                     // LLVM provides data symbols in random order, sometimes one symbol can be a part of another symbol.
-                    let filtered =
-                        data::DataChunk::canonicalize_data_symbols(sliced, &mut file_symbol_db);
-                    for (_, chunk) in filtered {
+                    let filtered = data::DataChunk::canonicalize_data_symbols(
+                        next_id,
+                        sliced,
+                        &mut file_symbol_db,
+                    );
+                    for chunk in filtered {
                         sliced_chunks.push_defined(DefinedDataChunk::from(chunk));
                     }
 
@@ -384,34 +397,38 @@ impl<'src> Module<'src> {
         Ok((this, file_symbol_db))
     }
 
-    fn init_indirect_fn_table(tables: &entities::Tables<'src>) -> (Cow<'src, str>, TableRef) {
+    fn try_init_indirect_fn_table(
+        tables: &entities::Tables<'src>,
+    ) -> Option<(Cow<'src, str>, TableRef)> {
         tables
             .iter()
             .filter_map(|(id, def)| def.name().cloned().map(|name| (name, id)))
             .find(|(name, _)| *name == "__indirect_function_table")
-            .unwrap_or_else(|| {
-                assert!(
-                    tables.len() == 1,
-                    "No named __indirect_function_table was found, and there is not one table in the module."
-                );
-                (
-                    "__indirect_function_table".into(),
-                    tables.iter().next().unwrap().0,
-                )
+            .or_else(|| {
+                if tables.len() == 1 {
+                    Some((
+                        "__indirect_function_table".into(),
+                        tables.iter().next().unwrap().0,
+                    ))
+                } else {
+                    None
+                }
             })
     }
 
-    fn init_base_memory(memories: &entities::Memories<'src>) -> (Cow<'src, str>, MemoryRef) {
+    fn try_init_base_memory(
+        memories: &entities::Memories<'src>,
+    ) -> Option<(Cow<'src, str>, MemoryRef)> {
         memories
             .iter()
             .filter_map(|(id, def)| def.name().cloned().map(|name| (name, id)))
             .find(|(name, _)| *name == "__base_memory")
-            .unwrap_or_else(|| {
-                assert!(
-                    memories.len() == 1,
-                    "No named __base_memory was found, and there is not one memory in the module."
-                );
-                ("__base_memory".into(), memories.iter().next().unwrap().0)
+            .or_else(|| {
+                if memories.len() == 1 {
+                    Some(("__base_memory".into(), memories.iter().next().unwrap().0))
+                } else {
+                    None
+                }
             })
     }
 
@@ -603,17 +620,20 @@ impl<'src> ModuleBuilder<'src> {
                 self.indirect_function_table.table_id
             );
         }
-        self.tables.push_defined(&raw::Table {
-            ty: TableType {
-                table64: false,
-                shared: false,
-                initial: 0,
-                maximum: None,
-                element_type: wasmparser::RefType::FUNCREF,
-            },
-            // initialized using element segments later aka <indirect_function_table>
-            init: wasmparser::TableInit::RefNull,
-        })
+        self.tables.push_defined(
+            (&raw::Table {
+                ty: TableType {
+                    table64: false,
+                    shared: false,
+                    initial: 0,
+                    maximum: None,
+                    element_type: wasmparser::RefType::FUNCREF,
+                },
+                // initialized using element segments later aka <indirect_function_table>
+                init: wasmparser::TableInit::RefNull,
+            })
+                .into(),
+        )
     }
     /// Defines the default memory for the module.
     ///
@@ -651,15 +671,20 @@ impl<'src> ModuleBuilder<'src> {
     ///
     pub fn into_locked(mut self) -> Module<'src, Locked> {
         let tables = self.tables.into_finished();
+
         let mut indirect_function_table = self.indirect_function_table;
         if indirect_function_table.table_id.is_reserved_value() {
-            let (_table_name, table_id) = Module::<'src, Locked>::init_indirect_fn_table(&tables);
+            let table_id = Module::<'src, Locked>::try_init_indirect_fn_table(&tables)
+                .map(|(_name, id)| id)
+                .unwrap_or_default();
             indirect_function_table.table_id = table_id;
         }
         let memories = self.memories.into_finished();
         let mut mem_spec = self.mem_spec;
         if mem_spec.mem_id.is_reserved_value() {
-            let (_memory_name, memory_id) = Module::<'src, Locked>::init_base_memory(&memories);
+            let memory_id = Module::<'src, Locked>::try_init_base_memory(&memories)
+                .map(|(_name, id)| id)
+                .unwrap_or_default();
             mem_spec.mem_id = memory_id;
         }
 
@@ -712,12 +737,14 @@ impl<'src> ModuleBuilder<'src> {
 
 #[cfg(test)]
 mod tests {
+    use smallvec::smallvec;
     use wasmparser::FuncType;
 
     use super::{LoadedFile, Module};
     use crate::{
         index::GappedMap,
-        typed::{ExportNames, ImportedFunction},
+        raw::DataSegmentId,
+        typed::{DefinedDataChunk, EntityBody, ExportNames, ImportedFunction, data::DataChunkType},
     };
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
@@ -776,10 +803,24 @@ mod tests {
             export_as: ExportNames::default(),
             entity_type: FuncType::new(None, None), // void type
         });
+
+        module.data.push_defined(DefinedDataChunk {
+            body: EntityBody::New {
+                new_bytes: vec![1, 2, 3].into(),
+                new_relocs: smallvec![],
+            },
+            name: Some("data".into()),
+            entity_type: DataChunkType {
+                segment_id: DataSegmentId::from_u32(0),
+                pow2align: 0,
+            },
+            export_as: ExportNames::default(),
+        });
+
         let module = module.into_locked();
 
         assert_eq!(module.functions.len(), 1);
 
-        todo!("Add data and defined function/global");
+        assert_eq!(module.data.len(), 1);
     }
 }
