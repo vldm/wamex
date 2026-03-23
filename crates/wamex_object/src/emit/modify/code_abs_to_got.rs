@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Result, bail, ensure};
-use cranelift_entity::{EntityRef, packed_option::ReservedValue};
+use cranelift_entity::EntityRef;
 use wasmparser::{GlobalType, Operator};
 
 use super::{
@@ -60,42 +60,31 @@ pub fn global_init_tmp(val_type: wasmparser::ValType) -> SVec<u8, 32> {
     SVec::from(buffer)
 }
 
-#[derive(Debug, Clone)]
-pub struct GotInfo<T = GlobalRef> {
-    pub memory_base: T,
-    pub table_base: T,
-}
-
-impl ReservedValue for GotInfo {
-    fn reserved_value() -> Self {
-        Self {
-            memory_base: GlobalRef::reserved_value(),
-            table_base: GlobalRef::reserved_value(),
-        }
-    }
-    fn is_reserved_value(&self) -> bool {
-        self.memory_base.is_reserved_value() && self.table_base.is_reserved_value()
-    }
-}
-
-#[derive(Debug)]
-pub struct CodeAbsToGot<'a> {
+#[derive(derive_more::Debug)]
+pub struct CodeAbsToGot<'a, F>
+where
+    F: Fn(FlatEntityRef) -> bool,
+{
     // Temporary globals for constant extraction
     pub global_tmps: BTreeMap<StoreType, GlobalRef>,
     // Symbols (in input space) that need to be always treated as static (not converted to GOT-relative)
-    pub always_static_symbols: &'a BTreeSet<FlatEntityRef>,
+    #[debug("is_static_symbol: <function>")]
+    pub is_static_symbol: F,
     pub input_snapshot: &'a EntitiesSnapshot,
 }
 
-impl<'a> CodeAbsToGot<'a> {
+impl<'a, F> CodeAbsToGot<'a, F>
+where
+    F: Fn(FlatEntityRef) -> bool,
+{
     pub fn new(
-        always_static_symbols: &'a BTreeSet<FlatEntityRef>,
+        is_static_symbol: F,
         input_snapshot: &'a EntitiesSnapshot,
         builder: &mut crate::typed::ModuleBuilder<'_>,
     ) -> Self {
         let mut instance = Self {
             global_tmps: BTreeMap::new(),
-            always_static_symbols,
+            is_static_symbol,
             input_snapshot,
         };
         instance.setup(builder).unwrap();
@@ -105,7 +94,7 @@ impl<'a> CodeAbsToGot<'a> {
         let sym = self.input_snapshot.pack_ref(*sym);
         // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
         // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
-        !self.always_static_symbols.contains(&sym)
+        !(self.is_static_symbol)(sym)
     }
 
     /// Module related configuration.
@@ -145,7 +134,10 @@ impl<'a> CodeAbsToGot<'a> {
     }
 }
 
-impl<'src> HandleFixups<'src> for CodeAbsToGot<'_> {
+impl<'src, F> HandleFixups<'src> for CodeAbsToGot<'_, F>
+where
+    F: Fn(FlatEntityRef) -> bool,
+{
     type ExtraData = ();
     type EntityRef = FunctionRef;
     fn create_entry(
@@ -170,7 +162,10 @@ impl<'src> HandleFixups<'src> for CodeAbsToGot<'_> {
     }
 }
 
-impl<'src> CodeAbsToGot<'_> {
+impl<'src, F> CodeAbsToGot<'_, F>
+where
+    F: Fn(FlatEntityRef) -> bool,
+{
     fn new_entry(
         &self,
         mut buffer: Cursor<'src>,

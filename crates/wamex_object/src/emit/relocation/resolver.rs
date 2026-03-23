@@ -1,8 +1,10 @@
 
 use std::collections::HashMap;
 
+use cranelift_entity::PrimaryMap;
+
 use crate::{
-    emit::relocation::EntityLocation,
+    emit::{plan, relocation::EntityLocation},
     typed::{EntitiesMultiMap, common_index::EntityKind},
 };
 
@@ -14,6 +16,7 @@ pub struct OutputEntitiesResolver {
     src_map: EntitiesMultiMap<EntityLocation>,
     // Map from output entity to src entities.
     remapped_entity: HashMap<EntityLocation, EntityKind>,
+    
 }
 
 impl OutputEntitiesResolver {
@@ -28,6 +31,7 @@ impl OutputEntitiesResolver {
         self.src_map.insert(output, src);
         self.remapped_entity.insert(src, output);
     }
+
 
     /// Return src entity reference for given output entity, if exist.
     ///

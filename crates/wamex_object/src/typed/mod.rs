@@ -25,7 +25,7 @@ use crate::{
         reloc::{EntityAddressMode, EntityRelocationEntry},
     },
     raw::{self, ImportId},
-    typed::entities::common_index::EntityKind,
+    typed::{common_index::EntitiesSnapshot, entities::common_index::EntityKind},
 };
 
 pub mod data;
@@ -85,6 +85,11 @@ impl FileLoader {
 
     pub fn get_file(&self, file_id: FileId) -> &LoadedFile<'_> {
         self.files_readers.get(file_id).unwrap().get()
+    }
+
+    pub fn get_snapshot(&self) -> EntitiesSnapshot {
+        todo!()
+        // self.files_readers.iter().map(|(id, file)| (id, file.get())).collect()
     }
 }
 

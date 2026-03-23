@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use anyhow::{Result, bail};
 use smallvec::SmallVec;
-use wasmparser::FuncType;
+use wasmparser::{Data, FuncType};
 
 use super::{Cursor, EntityRelocationEntry, HandleFixups, Rewrite};
 use crate::{
@@ -41,47 +41,24 @@ pub struct DataSymbolInit<S = Temp<DataSymbolRef>, RelocSymbol = EntityLocation>
     pub is_got_based: bool,
 }
 
-pub struct DataAbsToGot<'a> {
+#[derive(derive_more::Debug)]
+pub struct DataAbsToGot<'a, F>
+where
+    F: Fn(FlatEntityRef) -> bool,
+{
     // Symbols (in input space) that need to be always treated as static (not converted to GOT-relative)
-    pub always_static_symbols: &'a BTreeSet<FlatEntityRef>,
+    #[debug("is_static_symbol: <function>")]
+    pub is_static_symbol: F,
     pub input_snapshot: &'a EntitiesSnapshot,
     pub start_fn: Temp<FunctionRef>,
 }
 
-impl<'a> DataAbsToGot<'a> {
-    pub fn new(
-        always_static_symbols: &'a BTreeSet<FlatEntityRef>,
-        input_snapshot: &'a EntitiesSnapshot,
-        module: &mut crate::typed::ModuleBuilder,
-    ) -> Self {
-        let start_fn = module.functions.push_defined(DefinedFunction {
-            entity_type: FuncType::new([], []),
-            body: EntityBody::New {
-                new_relocs: SmallVec::new(),
-                new_bytes: SmallVec::new(),
-            },
-            name: Some("__wamex_reloc_init".into()),
-            export_as: ExportNames::default(),
-        });
-        module.extra_state.start_functions.push(start_fn);
-
-        Self {
-            always_static_symbols,
-            input_snapshot,
-            start_fn,
-        }
-    }
-    pub fn is_dyn_symbol(&self, sym: &EntityKind) -> bool {
-        let sym = self.input_snapshot.pack_ref(*sym);
-        // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
-        // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
-        !self.always_static_symbols.contains(&sym)
-    }
-
+// Extra impl block to place method into DataAbsToGot namespace.
+impl <'a, > DataAbsToGot<'a, fn(FlatEntityRef) -> bool> {
+    
     /// Convert temp ids to stable and resolve input symbol_ids to output ones.
     pub fn convert_to_stable_refs_and_resolve(
         module: &mut crate::typed::Module,
-
         module_info: &OutputEntitiesResolver,
         temps: Vec<DataSymbolInit>,
     ) -> Vec<FinalDataSymbolInit> {
@@ -99,6 +76,39 @@ impl<'a> DataAbsToGot<'a> {
                 }
             })
             .collect()
+    }
+}
+impl<'a, F> DataAbsToGot<'a, F>
+where
+    F: Fn(FlatEntityRef) -> bool,
+{
+    pub fn new(
+        is_static_symbol: F,
+        input_snapshot: &'a EntitiesSnapshot,
+        module: &mut crate::typed::ModuleBuilder,
+    ) -> Self {
+        let start_fn = module.functions.push_defined(DefinedFunction {
+            entity_type: FuncType::new([], []),
+            body: EntityBody::New {
+                new_relocs: SmallVec::new(),
+                new_bytes: SmallVec::new(),
+            },
+            name: Some("__wamex_reloc_init".into()),
+            export_as: ExportNames::default(),
+        });
+        module.extra_state.start_functions.push(start_fn);
+
+        Self {
+            is_static_symbol,
+            input_snapshot,
+            start_fn,
+        }
+    }
+    pub fn is_dyn_symbol(&self, sym: &EntityKind) -> bool {
+        let sym = self.input_snapshot.pack_ref(*sym);
+        // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
+        // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
+        !(self.is_static_symbol)(sym)
     }
 
     pub fn fill_start_fn(
@@ -207,7 +217,10 @@ impl<'a> DataAbsToGot<'a> {
     }
 }
 
-impl<'src> HandleFixups<'src> for DataAbsToGot<'_> {
+impl<'src, F> HandleFixups<'src> for DataAbsToGot<'_, F>
+where
+    F: Fn(FlatEntityRef) -> bool,
+{
     type ExtraData = DataSymbolInit;
     type EntityRef = DataSymbolRef;
     fn create_entry(
@@ -234,7 +247,10 @@ impl<'src> HandleFixups<'src> for DataAbsToGot<'_> {
         Ok(None)
     }
 }
-impl DataAbsToGot<'_> {
+impl<'src, F> DataAbsToGot<'_, F>
+where
+    F: Fn(FlatEntityRef) -> bool,
+{
     fn new_entry(&self, _buffer: Cursor<'_>, entry: EntityRelocationEntry) -> Result<Rewrite> {
         debug_assert_eq!(entry.encoding, Encoding::Fixed);
         debug_assert_eq!(entry.relocation_range().len(), 4);

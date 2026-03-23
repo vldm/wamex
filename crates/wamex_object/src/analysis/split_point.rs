@@ -4,16 +4,14 @@ use std::{
 };
 
 use anyhow::Context;
-use cranelift_entity::SecondaryMap;
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 use wamex_types::map_vec::MiniSet;
 
 use super::dep_graph::{DepGraph, DepMiniSet, DepSet, NamedGraph, find_reachable_deps};
 use crate::{
-    analysis::dep_graph::SharedEntry,
-    typed::{
-        FunctionRef, Module,
-        common_index::{EntitiesSnapshot, FlatEntityRef},
-    },
+    analysis::dep_graph::SharedEntry, emit::plan::{AddressingMode, CopyEntity, EmitContext, GotInfo, ImportSpec, OutputModuleCopyPlan, PlannedGotInfo}, typed::{
+        FileId, FileLoader, FunctionRef, Module, common_index::{EntitiesSnapshot, FlatEntityRef}
+    }
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -285,6 +283,69 @@ impl SplitModuleIdentifier {
 pub struct SplitProgramInfo {
     pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
     pub symbol_output_module: SecondaryMap<FlatEntityRef, usize>,
+}
+
+impl SplitProgramInfo {
+    pub fn into_emit_context<'src> (&self, input_files:&'src FileLoader) -> EmitContext<'src> {
+        let outputs = self
+            .output_modules
+            .iter()
+            .map(|(id, info)| {
+                let entities = info
+                    .defined_symbols
+                    .iter()
+                    .map(|sym| (*sym, if info.exports.contains(sym) { CopyEntity::WithExport { export_name: "TODO_NAME".to_string() } } else { CopyEntity::AsIs }))
+                    .collect();
+
+                let mut imports = PrimaryMap::new();
+
+                let addressing = if id.is_main() {
+                    AddressingMode::Static
+                } else {
+                    let our_got = GotInfo {
+                        memory_base: imports.push(ImportSpec::memory_base("")),
+                        table_base: imports.push(ImportSpec::table_base(""))
+                    };
+                    let deps = info.dependencies.keys().map(|id| 
+                    {
+                        let idx = self.output_modules.iter().position(|(module_id, _)| module_id == id).expect("Module from dependencies should be in output modules");
+                        let file_id = FileId::from_u32(idx as u32);
+                        let got_info = GotInfo {
+                            memory_base: imports.push(ImportSpec::memory_base(&id.to_string())),
+                            table_base: imports.push(ImportSpec::table_base(&id.to_string()))
+                        };
+                        (file_id, got_info)
+                    }).collect();
+                    
+                    let planned_deps = PlannedGotInfo {
+                        our_got,
+                        deps
+                    };
+                    AddressingMode::GotRelative (
+                        planned_deps
+                    )
+                };
+
+                (
+                    id.to_string(),
+                    OutputModuleCopyPlan {
+                        entities,
+                        imports,
+                        addressing,
+                    },
+                )
+            })
+            .collect();
+
+        EmitContext::new_plan(
+            input_files,
+            outputs,
+            self.symbol_output_module.iter()
+                .map(|(sym, module_idx)| (sym, FileId::new(*module_idx)))
+                .collect(),
+        )
+        
+    }
 }
 
 pub(crate) fn parser<'a>(name: &'a str, prefix: &str, postfix: &str) -> Option<(&'a str, &'a str)> {

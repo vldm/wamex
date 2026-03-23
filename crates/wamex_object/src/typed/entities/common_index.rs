@@ -264,6 +264,16 @@ impl TempEntityKind {
         }
     }
 }
+impl ReservedValue for TempEntityKind {
+    fn reserved_value() -> Self {
+        // SAFETY: index usage can't cause memory unsafety.
+        TempEntityKind::Tag(unsafe {Temp::from_raw(TagRef::reserved_value().as_bits())})
+    }
+
+    fn is_reserved_value(&self) -> bool {
+        matches!(self, TempEntityKind::Function(t) if TagRef::from_bits(t.as_bits()).is_reserved_value())
+    }
+}
 
 #[cfg(test)]
 mod tests {

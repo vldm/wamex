@@ -400,6 +400,9 @@ impl<Idx: TempIndex> Temp<Idx> {
             std::marker::PhantomData,
         )
     }
+    pub unsafe fn from_raw(value: u32) -> Self {
+        Self(value, std::marker::PhantomData)
+    }
     pub fn as_bits(&self) -> u32 {
         self.0
     }

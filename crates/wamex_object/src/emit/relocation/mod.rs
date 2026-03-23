@@ -47,12 +47,12 @@ pub mod resolver;
 
 use std::ops::Range;
 
-use cranelift_entity::{SecondaryMap, packed_option::ReservedValue};
+use cranelift_entity::{PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 
 use crate::{
     emit::{
         memory_layout::{self, DataSymbolOffset, DataSymbolsOffsets},
-        modify::code_abs_to_got::GotInfo,
+        plan::GotInfo,
     },
     index::GappedMap,
     linkage::{
@@ -116,7 +116,7 @@ pub struct RelocationState<'any, 'src> {
     current_got: Option<GotInfo>,
     imported_data: GappedMap<DataSymbolRef, ImportedDataDep>,
     // Needed for building ImportedData + Offset relocs
-    all_modules_layout: &'any SecondaryMap<FileId, ModuleLayout>,
+    all_modules_layout: &'any PrimaryMap<FileId, ModuleLayout>,
 }
 
 impl<'any, 'src> RelocationState<'any, 'src> {
@@ -125,7 +125,7 @@ impl<'any, 'src> RelocationState<'any, 'src> {
         current_module_layout: &'any ModuleLayout,
         current_got: Option<GotInfo>,
         imported_data: GappedMap<DataSymbolRef, ImportedDataDep>,
-        all_modules_layout: &'any SecondaryMap<FileId, ModuleLayout>,
+        all_modules_layout: &'any PrimaryMap<FileId, ModuleLayout>,
     ) -> Self {
         Self {
             current_module,

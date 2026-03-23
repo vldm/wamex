@@ -106,10 +106,10 @@ pub trait HandleFixups<'src> {
     ) -> Result<Option<(Rewrite, Self::ExtraData)>>;
 }
 
+/// Process original relocation entries of an entity, and create needed fixups based on them.
 pub fn create_fixup_for_entity<'src, H: HandleFixups<'src>>(
     entity: &mut EntityBodyCopy<'src>,
     entity_ref: Temp<H::EntityRef>,
-
     input_file: FileId,
     entity_relocs: &[EntityRelocationEntry],
     handler: &H,

@@ -1,7 +1,11 @@
 /target
 /pkg
 /split_tmp
+
 AGENTS.md
 CLAUDE.md
+# temp files
 plan.txt
 test.txt
+# insta snapshot files
+**/*.snap.new
