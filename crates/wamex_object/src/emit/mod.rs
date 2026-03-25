@@ -33,7 +33,7 @@ use crate::{
         TableRef, TempEntityKind,
         data::DataSymbolRef,
         elements::ElementItemId,
-        snapshot::{EntitiesSnapshot, FlatEntityRef},
+        snapshot::FlatEntityRef,
     },
 };
 
@@ -509,9 +509,10 @@ impl<'src> Module<'src> {
                 return None; // TODO: support type relocs
             }
             let file_entity_ref = src_ref.other_entity(input);
+
             let entity = module_info
                 .get_output_entity(&file_entity_ref)
-                .expect("reloc symbol not found in output file");
+                .expect("reference to undefined entity");
             Some(entity)
         };
         let mut shift_map = ShiftMap::default();
@@ -644,17 +645,17 @@ pub fn split_routine_generic_test(src: &[u8]) -> anyhow::Result<Vec<(OutputId, V
 #[cfg(test)]
 mod tests {
     use smallvec::smallvec;
+    use tempdir::TempDir;
     use wasmparser::FuncType;
 
     use super::*;
     use crate::{
-        emit::plan::{OutputModule, OutputModuleCopyPlan},
+        emit::plan::OutputModule,
         raw::DataSegmentId,
         typed::{
             DefinedDataChunk, EntityBody, ExportNames, FileLoader, ImportedFunction, LoadedFile,
             Module, WithoutBody,
             data::{DataChunkType, DataSegmentInfo, SegmentPlacement},
-            snapshot::EntitiesSnapshot,
         },
     };
 
@@ -694,18 +695,17 @@ mod tests {
 
         // extract plan of first module
         let (_, (_, plan)) = ctx.output_plans.into_iter().next().unwrap();
+        let snapshot = file_loader.get_snapshot();
         let OutputModule { module: output, .. } = plan
-            .copy_entities(&file_loader, &EntitiesSnapshot::new(&input.module), |_| {
-                true
-            })
+            .copy_entities(&file_loader, &snapshot, |_| true)
             .unwrap();
 
         let mut buf = wasm_encoder::Module::new();
         output.generate(&mut buf).unwrap();
         let res: Vec<u8> = buf.finish();
-        let out_file =
-            env!("CARGO_MANIFEST_DIR").to_string() + "/test-output/simple_graph_emit.wasm";
-
+        let tmp_out = TempDir::new("emit").unwrap();
+        let out_file =tmp_out.path().join("simple_graph_emit.wasm");
+            
         std::fs::write(out_file, &res).unwrap();
 
         let raw = crate::raw::ObjectReader::parse(&res).unwrap();
@@ -723,14 +723,14 @@ mod tests {
     }
 
     #[test]
-    fn split_routine_example() {
+    fn split_routine_example_emit() {
         env_logger::try_init().ok();
         let src = crate::testfiles::EXAMPLE_WASM;
         split_routine_generic_test(src).unwrap();
     }
 
     #[test]
-    fn split_routine_simple() {
+    fn split_routine_simple_emit() {
         env_logger::try_init().ok();
         let src = crate::testfiles::SIMPLE_GRAPH;
         split_routine_generic_test(src).unwrap();
@@ -798,7 +798,7 @@ mod tests {
         let bytes = output.finish();
 
         let loaded = LoadedFile::from_wasm_bytes(&bytes).unwrap();
-        assert_eq!(loaded.module.functions.len(), 2);
+        assert_eq!(loaded.module.functions.len(), 1);
         assert_eq!(loaded.module.tables.len(), 1);
         assert_eq!(loaded.module.memories.len(), 1);
         assert_eq!(loaded.module.data.len(), 1);

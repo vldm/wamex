@@ -84,9 +84,12 @@ impl FileLoader {
         self.files_readers.get(file_id).unwrap().get()
     }
 
-    pub fn get_snapshot(&self) -> snapshot::EntitiesSnapshot {
-        todo!()
-        // self.files_readers.iter().map(|(id, file)| (id, file.get())).collect()
+    pub fn get_snapshot(&self) -> snapshot::MultiSnapshot {
+        snapshot::MultiSnapshot::new(self.files_readers.iter().map(|(_, file)| {
+            let file = file.get();
+            snapshot::EntitiesSnapshot::new_without_types(&file.module)
+                .with_num_type_refs(file.wasm_reader.types.len() as u32)
+        }))
     }
 }
 
@@ -461,6 +464,28 @@ impl<'src> Module<'src> {
 
         debug_name.unwrap_or_else(|| format!("{entity}").into())
     }
+    /// Get entity type
+    pub fn get_type(&self, entity: EntityKind) -> Option<EntityType> {
+        Some(match entity {
+            EntityKind::Function(func_id) => {
+                EntityType::Function(self.functions.get_entity(func_id).get_type().clone())
+            }
+            EntityKind::Global(global_id) => {
+                EntityType::Global(self.globals.get_entity(global_id).get_type().clone())
+            }
+            EntityKind::Table(table_id) => {
+                EntityType::Table(self.tables.get_entity(table_id).get_type().clone())
+            }
+            EntityKind::Memory(mem_id) => {
+                EntityType::Memory(self.memories.get_entity(mem_id).get_type().clone())
+            }
+            EntityKind::Tag(tag_id) => {
+                EntityType::Tag(self.tags.get_entity(tag_id).get_type().clone())
+            }
+            EntityKind::DataSymbol(_) => EntityType::DataSymbol(()),
+            EntityKind::Type(_) => return None, // types don't have types
+        })
+    }
     /// Calculate estimated size of entity.
     pub fn get_body_len(&self, entity: EntityKind) -> usize {
         match entity {
@@ -699,17 +724,19 @@ impl<'src> ModuleBuilder<'src> {
             .map(|temp| temp.to_stable(fn_imports))
             .collect::<Vec<_>>();
 
-        let start_body = Self::generate_start_function(&start_fns);
-        let defined_id = self.functions.push_defined(start_body);
+        let start_function = (start_fns.len() > 1).then(|| {
+            let start_body = Self::generate_start_function(&start_fns);
+            self.functions
+                .push_defined(start_body)
+                .to_stable(fn_imports)
+        });
 
         Module {
             tables,
             memories,
             mem_spec,
             indirect_function_table,
-            extra_state: Locked {
-                start_function: Some(defined_id.to_stable(fn_imports)),
-            },
+            extra_state: Locked { start_function },
             functions: self.functions.into_finished(),
             globals: self.globals.into_finished(),
             tags: self.tags.into_finished(),
@@ -821,6 +848,7 @@ mod tests {
 
         let module = module.into_locked();
 
+        dbg!(&module.functions);
         assert_eq!(module.functions.len(), 1);
 
         assert_eq!(module.data.len(), 1);

@@ -6,7 +6,7 @@ use crate::{
     helpers::RangeExt,
     index::Temp,
     linkage::reloc::{EntityAddressMode, EntityRelocationEntry},
-    typed::{EntityBodyCopy, EntityKind, FileId},
+    typed::{EntityBodyCopy, EntityKind, FileId, snapshot::EntitiesSnapshot},
 };
 
 pub mod code_abs_to_got;
@@ -101,7 +101,7 @@ pub trait HandleFixups<'src> {
         entity: Temp<Self::EntityRef>,
         buffer: Cursor<'src>,
         // Usefull when we need to manually resolve relocs
-        input_file: FileId,
+        input_file: (FileId, &EntitiesSnapshot),
         entry: EntityRelocationEntry,
     ) -> Result<Option<(Rewrite, Self::ExtraData)>>;
 }
@@ -110,7 +110,7 @@ pub trait HandleFixups<'src> {
 pub fn create_fixup_for_entity<'src, H: HandleFixups<'src>>(
     entity: &mut EntityBodyCopy<'src>,
     entity_ref: Temp<H::EntityRef>,
-    input_file: FileId,
+    input_file: (FileId, &EntitiesSnapshot),
     entity_relocs: &[EntityRelocationEntry],
     handler: &H,
 ) -> Result<Vec<H::ExtraData>> {

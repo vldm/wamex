@@ -213,13 +213,14 @@ impl<'src, V: Clone> From<&V> for WithoutBody<'src, V> {
 }
 
 /// Represents a EntityBody that created from body within input file, and optionally applied patches to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub struct EntityBodyCopy<'src> {
     /// Range in the original module's binary where the body of this entity is located.
     pub original_range: Range<usize>,
     /// Original body of the entity, copied from the original module.
     /// This is used as a base for later patching and relocs application.
     /// Relocations are stored separately, to reduce size of the EntityDefinition.
+    #[debug("bytes: {}", hex::encode(bytes))]
     pub bytes: &'src [u8],
     /// Patches to apply to the original body.
     pub fixups: Vec<Rewrite>,
@@ -231,7 +232,7 @@ pub struct EntityBodyCopy<'src> {
 /// For functions it's locals + instructions;
 /// For globals/tables it's the initializers;
 /// For memories/tags - no body.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, derive_more::Debug, PartialEq, Eq)]
 pub enum EntityBody<'src> {
     /// Copy of original entity with optional patches.
     Copied(EntityBodyCopy<'src>),
@@ -244,6 +245,7 @@ pub enum EntityBody<'src> {
         /// This kind of body, cannot use entities from input module (like in EntityBody::Copied),
         /// because we doesn't store FileId for them.
         new_relocs: SVec<EntityRelocationEntry, 2>,
+        #[debug("bytes: {}", hex::encode(new_bytes))]
         new_bytes: SVec<u8, 32>,
     },
 }

@@ -42,19 +42,18 @@ pub struct DataSymbolInit<S = Temp<DataSymbolRef>, RelocSymbol = EntityLocation>
 }
 
 #[derive(derive_more::Debug)]
-pub struct DataAbsToGot<'a, F>
+pub struct DataAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
     // Symbols (in input space) that need to be always treated as static (not converted to GOT-relative)
     #[debug("is_static_symbol: <function>")]
     pub is_static_symbol: F,
-    pub input_snapshot: &'a EntitiesSnapshot,
     pub start_fn: Temp<FunctionRef>,
 }
 
 // Extra impl block to place method into DataAbsToGot namespace.
-impl<'a> DataAbsToGot<'a, fn(FlatEntityRef) -> bool> {
+impl DataAbsToGot<fn(FlatEntityRef) -> bool> {
     /// Convert temp ids to stable and resolve input symbol_ids to output ones.
     pub fn convert_to_stable_refs_and_resolve(
         module: &mut crate::typed::Module,
@@ -77,13 +76,12 @@ impl<'a> DataAbsToGot<'a, fn(FlatEntityRef) -> bool> {
             .collect()
     }
 }
-impl<'a, F> DataAbsToGot<'a, F>
+impl<F> DataAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
     pub fn new(
         is_static_symbol: F,
-        input_snapshot: &'a EntitiesSnapshot,
         module: &mut crate::typed::ModuleBuilder,
     ) -> Self {
         let start_fn = module.functions.push_defined(DefinedFunction {
@@ -99,12 +97,11 @@ where
 
         Self {
             is_static_symbol,
-            input_snapshot,
             start_fn,
         }
     }
-    pub fn is_dyn_symbol(&self, sym: &EntityKind) -> bool {
-        let sym = self.input_snapshot.pack_ref(*sym);
+    pub fn is_dyn_symbol(&self, input_snapshot: & EntitiesSnapshot, sym: &EntityKind) -> bool {
+        let sym = input_snapshot.pack_ref(*sym);
         // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
         // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
         !(self.is_static_symbol)(sym)
@@ -216,7 +213,7 @@ where
     }
 }
 
-impl<'src, F> HandleFixups<'src> for DataAbsToGot<'_, F>
+impl<'src, F> HandleFixups<'src> for DataAbsToGot< F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
@@ -226,7 +223,7 @@ where
         &self,
         entity_ref: Temp<Self::EntityRef>,
         buffer: Cursor<'src>,
-        input_file: FileId,
+        (input_file, input_snapshot): (FileId, &EntitiesSnapshot),
         entry: EntityRelocationEntry,
     ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
         match entry.symbol_id {
@@ -236,7 +233,7 @@ where
                 let extra = DataSymbolInit {
                     storage: entity_ref,
                     relocated_symbol: EntityLocation::from_parts(input_file, entry.symbol_id),
-                    is_got_based: self.is_dyn_symbol(&entry.symbol_id),
+                    is_got_based: self.is_dyn_symbol(input_snapshot, &entry.symbol_id),
                 };
                 return Ok(Some((self.new_entry(buffer, entry)?, extra)));
             }
@@ -246,7 +243,7 @@ where
         Ok(None)
     }
 }
-impl<'src, F> DataAbsToGot<'_, F>
+impl<'src, F> DataAbsToGot< F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {

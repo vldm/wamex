@@ -11,7 +11,7 @@ use super::dep_graph::{DepGraph, DepMiniSet, DepSet, NamedGraph, find_reachable_
 use crate::{
     analysis::dep_graph::SharedEntry,
     emit::plan::{
-        AddressingMode, CopyEntity, EmitContext, GotInfo, ImportSpec, OutputModuleCopyPlan,
+        AddressingMode, CopySpec, EmitContext, GotInfo, ImportSpec, OutputModuleCopyPlan,
         PlannedGotInfo,
     },
     typed::{
@@ -293,6 +293,7 @@ pub struct SplitProgramInfo {
 
 impl SplitProgramInfo {
     pub fn into_emit_context<'src>(&self, input_files: &'src FileLoader) -> EmitContext<'src> {
+        let snapshot = input_files.get_snapshot();
         let outputs = self
             .output_modules
             .iter()
@@ -304,17 +305,27 @@ impl SplitProgramInfo {
                         (
                             *sym,
                             if info.exports.contains(sym) {
-                                CopyEntity::WithExport {
+                                CopySpec::WithExport {
                                     export_name: "TODO_NAME".to_string(),
                                 }
                             } else {
-                                CopyEntity::AsIs
+                                CopySpec::AsIs
                             },
                         )
                     })
                     .collect();
 
+                // Add imports with original names
                 let mut imports = PrimaryMap::new();
+                for imported in &info.imports {
+                    let loc = snapshot.unpack_ref(*imported);
+                    let module = &input_files.get_file(loc.file_id).module;
+                    let name = module.get_name(loc.entity).to_string();
+                    let Some(ty) = module.get_type(loc.entity) else {
+                        continue;
+                    };
+                    imports.push(ImportSpec::wamex_import(name, ty, *imported));
+                }
 
                 let addressing = if id.is_main() {
                     AddressingMode::Static
@@ -464,7 +475,7 @@ fn is_wasm_bindgen_cast(name: &str) -> bool {
 pub fn wbg_closures(module: &Module, graph: &DepGraph) -> MiniSet<FlatEntityRef> {
     let mut wbg_closures = std::collections::BTreeSet::new();
 
-    let snapshot = EntitiesSnapshot::new(module);
+    let snapshot = EntitiesSnapshot::new_without_types(module);
 
     let mut wbg_all = std::collections::BTreeSet::new();
     for (id, import) in module.functions.imports_iter() {
@@ -710,7 +721,7 @@ pub fn compute_split_modules(
 ) -> anyhow::Result<SplitProgramInfo> {
     let split_points_by_module = merge_split_points_by_name(split_points);
 
-    let snapshot = EntitiesSnapshot::new(info);
+    let snapshot = EntitiesSnapshot::new_without_types(info);
     let roots = main_roots(info, &snapshot, split_points, wbg_descriptors);
 
     let main_deps = find_reachable_deps(dep_graph, &roots);

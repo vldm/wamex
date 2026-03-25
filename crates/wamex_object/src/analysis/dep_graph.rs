@@ -57,7 +57,7 @@ impl DepGraph {
     pub fn for_module(module: &Module<'_>) -> Self {
         Self {
             nodes: GappedMap::new(),
-            snapshot: EntitiesSnapshot::new(module),
+            snapshot: EntitiesSnapshot::new_without_types(module),
         }
     }
 

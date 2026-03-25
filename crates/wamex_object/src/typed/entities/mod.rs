@@ -82,6 +82,24 @@ impl TempIndex for DataSymbolRef {
     }
 }
 
+
+/// The entity type for imports and exports of a module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntityType {
+    /// The entity is a function.
+    Function(wasmparser::FuncType),
+    /// The entity is a table.
+    Table(wasmparser::TableType),
+    /// The entity is a memory.
+    Memory(wasmparser::MemoryType),
+    /// The entity is a global.
+    Global(wasmparser::GlobalType),
+    /// The entity is a tag.
+    Tag(wasmparser::TagType),
+    /// The data symbol
+    DataSymbol(()),
+}
+
 /// A tagged reference to an entity in a WebAssembly module.
 /// Can be converted to `FlatEntityRef` in order to get a unified index.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, From, Display)]
@@ -182,3 +200,4 @@ impl ReservedValue for TempEntityKind {
         matches!(self, TempEntityKind::Function(t) if TagRef::from_bits(t.as_bits()).is_reserved_value())
     }
 }
+

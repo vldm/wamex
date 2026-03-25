@@ -6,21 +6,17 @@
 
 mod definition;
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
-use definition::EntityType;
+use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
+
 pub use definition::{
-    AddressingMode, CopyEntity, ImportSpec, NewImportRef, OutputId, OutputModuleCopyPlan,
+    AddressingMode, CopySpec, ImportSpec, NewImportRef, OutputId, OutputModuleCopyPlan,
     PlannedGotInfo,
 };
-use wasmparser::GlobalType;
-
+use itertools::{ChunkBy, Itertools};
 use crate::{
-    analysis::{OutputModuleInfo, SplitProgramInfo},
+    analysis::SplitProgramInfo,
     emit::{
-        self,
         modify::{self, code_abs_to_got::CodeAbsToGot, data_abs_to_got::DataAbsToGot},
         relocation::{
             EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
@@ -30,10 +26,7 @@ use crate::{
     index::GappedMap,
     linkage::file_db::FileRelocs,
     typed::{
-        Building, DefinedEntity, EntityBody, EntityKind, ExportNames, FileId, FileLoader,
-        GlobalRef, ImportOrDefined, ImportedEntity, LoadedFile, Module, TempEntityKind,
-        data::DataSymbolRef,
-        snapshot::{EntitiesSnapshot, FlatEntityRef},
+        Building, DefinedEntity, EntityBody, EntityKind, EntityType, ExportNames, FileId, FileLoader, GlobalRef, ImportOrDefined, ImportedEntity, LoadedFile, Module, TempEntityKind, data::{DataSymbolRef, MemSpec}, snapshot::{FlatEntityRef, MultiSnapshot}
     },
 };
 #[derive(Debug, Clone)]
@@ -79,6 +72,7 @@ impl<Ref: Clone + Default + ReservedValue> ReservedValue for DyLinkDeps<Ref> {
     }
 }
 
+#[derive(Debug)]
 pub struct OutputModule<'src> {
     pub module: Module<'src>,
     pub resolver: OutputEntitiesResolver,
@@ -110,28 +104,19 @@ macro_rules! replace_span {
     }};
 }
 
-fn unpack_multi_ref(snapshot: &'_ EntitiesSnapshot, entity: FlatEntityRef) -> (FileId, EntityKind) {
-    todo!()
-}
-
-fn entity_iter<'src, U>(
-    input_files: &'src FileLoader,
-    snapshot: &'_ EntitiesSnapshot,
-    entities: impl IntoIterator<Item = (FlatEntityRef, U)>,
-) -> impl Iterator<Item = (FileId, &'src LoadedFile<'src>, EntityKind, U)> {
-    entities.into_iter().map(move |(entity, extra)| {
-        let (file_id, entity_kind) = unpack_multi_ref(snapshot, entity);
-        let loaded_file = input_files.get_file(file_id);
-        (file_id, loaded_file, entity_kind, extra)
-    })
-}
 
 impl OutputModuleCopyPlan {
+    pub fn collect_mem_spec<'src>(
+        input_files: &'src FileLoader) -> MemSpec<'src>
+    {
+        // TODO: implement merging of mem spec from multiple modules.
+        input_files.get_file(FileId::from_u32(0)).module.mem_spec.clone()
+    }
     /// Execute the plan and copy entities from input to output modules.
     pub fn copy_entities<'src, F>(
         &self,
         input_files: &'src FileLoader,
-        snapshot: &'_ EntitiesSnapshot,
+        snapshot: &'_ MultiSnapshot,
         is_static_symbol: F,
     ) -> Result<OutputModule<'src>>
     where
@@ -139,6 +124,7 @@ impl OutputModuleCopyPlan {
     {
         let is_static = matches!(self.addressing, AddressingMode::Static);
 
+        let mem_spec = Self::collect_mem_spec(input_files);
         log::info!(
             "Applying plan for output module with {} entities and {} imports",
             self.entities.len(),
@@ -148,124 +134,132 @@ impl OutputModuleCopyPlan {
         let mut module: Module<'src, Building> = Module::new();
 
         let code_modifier = (!is_static)
-            .then(|| CodeAbsToGot::new(is_static_symbol.clone(), &snapshot, &mut module));
+            .then(|| CodeAbsToGot::new(is_static_symbol.clone(), &mut module));
         let data_modifier =
-            (!is_static).then(|| DataAbsToGot::new(is_static_symbol, &snapshot, &mut module));
+            (!is_static).then(|| DataAbsToGot::new(is_static_symbol,  &mut module));
 
         let mut data_modifier_artifacts = Vec::new();
 
         // map of entities from input file to entities in output module.
         let mut file_info = OutputEntitiesResolver::new();
 
-        let mut used_queue: Vec<(EntityLocation, TempEntityKind)> = Vec::new();
+        let mut ref_map: Vec<(EntityLocation, TempEntityKind)> = Vec::new();
 
         // Copy defined symbols to the output module.
         // TODO: Clear exports if not set?
-        let copy_entities = entity_iter(
-            input_files,
-            &snapshot,
-            self.entities.iter().map(|(e, c)| (*e, c)),
-        );
-        for (file_id, file, entity, copy) in copy_entities {
-            match entity {
-                EntityKind::Function(f) => {
-                    let new = match file.module.functions.get_entity(f) {
-                        ImportOrDefined::Import(i) => module.functions.push_import(i.clone()),
-                        ImportOrDefined::Defined(d) => {
-                            let new_body = if let Some(modifier) = &code_modifier {
-                                // todo: RemoveReloc target use EntityBody directly
-                                let EntityBody::Copied(b) = &d.body else {
-                                    panic!(
-                                        "Trying to modify already modified function {f} has body {:#?}",
-                                        d.body
-                                    );
-                                };
-                                assert!(b.fixups.is_empty());
-                                let relocs =
-                                    file.relocs.get_entity_relocs(f.into()).unwrap_or_default();
-                                let mut modified_body = b.clone();
-                                let entity_ref = module.functions.next_defined_key();
-                                modify::create_fixup_for_entity(
-                                    &mut modified_body,
-                                    entity_ref,
-                                    file_id,
-                                    relocs,
-                                    modifier,
-                                )?;
+        let copy_entities = self.entities.iter().map(move |(entity, extra)| {
+                let EntityLocation { file_id, entity } = snapshot.unpack_ref(*entity);
+                let loaded_file = input_files.get_file(file_id);
+                (file_id, loaded_file, entity, extra)
+        })
+        .chunk_by(|(file_id, _, _, _)| *file_id);
+        
+        // entity_iter(input_files, snapshot, .map(|(e, c)| (*e, c)));
+        for (file_id, group) in copy_entities.into_iter() {
+            let snapshot = snapshot.file_snapshot(file_id);
 
-                                DefinedEntity {
-                                    body: modified_body.into(),
-                                    // type/names/exports remain the same.
-                                    ..d.clone()
-                                }
-                            } else {
-                                d.clone()
-                            };
-                            module.functions.push_defined(new_body)
-                        }
-                    };
-                    used_queue.push((EntityLocation::from_parts(file_id, f.into()), new.into()));
-                }
-                EntityKind::Global(g) => {
-                    let global = file.module.globals.get_entity(g);
-                    let new = module.globals.push_entity(global.cloned());
-                    used_queue.push((EntityLocation::from_parts(file_id, g.into()), new.into()));
-                }
-                EntityKind::Memory(m) => {
-                    let memory = file.module.memories.get_entity(m);
-                    let new = module.memories.push_entity(memory.cloned());
-                    used_queue.push((EntityLocation::from_parts(file_id, m.into()), new.into()));
-                }
-                EntityKind::Table(t) => {
-                    let table = file.module.tables.get_entity(t);
-                    let new = module.tables.push_entity(table.cloned());
-                    used_queue.push((EntityLocation::from_parts(file_id, t.into()), new.into()));
-                }
-                EntityKind::Tag(t) => {
-                    let tag = file.module.tags.get_entity(t);
-                    let new = module.tags.push_entity(tag.cloned());
-                    used_queue.push((EntityLocation::from_parts(file_id, t.into()), new.into()));
-                }
-                EntityKind::DataSymbol(srcd) => {
-                    let new = match file.module.data.get_entity(srcd) {
-                        ImportOrDefined::Import(i) => module.data.push_import(i.clone()),
-                        ImportOrDefined::Defined(d) => {
-                            let new_body = if let Some(modifier) = &data_modifier {
-                                let EntityBody::Copied(b) = &d.body else {
-                                    panic!(
-                                        "Trying to modify already modified data {srcd} has body {:#?}",
-                                        d.body
-                                    );
-                                };
-                                assert!(b.fixups.is_empty());
-                                let relocs = file
-                                    .relocs
-                                    .get_entity_relocs(srcd.into())
-                                    .unwrap_or_default();
-                                let mut modified_body = b.clone();
-                                let entity_ref = module.data.next_defined_key();
-                                data_modifier_artifacts.extend(modify::create_fixup_for_entity(
-                                    &mut modified_body,
-                                    entity_ref,
-                                    file_id,
-                                    relocs,
-                                    modifier,
-                                )?);
+            // TODO: Macro that will add export fields to entity from copy.
+            for (_, file, entity, copy) in group {
+                match entity {
+                    EntityKind::Function(f) => {
+                        let new = match file.module.functions.get_entity(f) {
+                            ImportOrDefined::Import(i) => module.functions.push_import(i.clone()),
+                            ImportOrDefined::Defined(d) => {
+                                let new_body = if let Some(modifier) = &code_modifier {
+                                    // todo: RemoveReloc target use EntityBody directly
+                                    let EntityBody::Copied(b) = &d.body else {
+                                        panic!(
+                                            "Trying to modify already modified function {f} has body {:#?}",
+                                            d.body
+                                        );
+                                    };
+                                    assert!(b.fixups.is_empty());
+                                    let relocs =
+                                        file.relocs.get_entity_relocs(f.into()).unwrap_or_default();
+                                    let mut modified_body = b.clone();
+                                    let entity_ref = module.functions.next_defined_key();
+                                    modify::create_fixup_for_entity(
+                                        &mut modified_body,
+                                        entity_ref,
+                                    (file_id, snapshot),
+                                        relocs,
+                                        modifier,
+                                    )?;
 
-                                DefinedEntity {
-                                    body: modified_body.into(),
-                                    // type/names/exports remain the same.
-                                    ..d.clone()
-                                }
-                            } else {
-                                d.clone()
-                            };
-                            module.data.push_defined(new_body)
-                        }
-                    };
-                    used_queue.push((EntityLocation::from_parts(file_id, srcd.into()), new.into()));
+                                    DefinedEntity {
+                                        body: modified_body.into(),
+                                        // type/names/exports remain the same.
+                                        ..d.clone()
+                                    }
+                                } else {
+                                    d.clone()
+                                };
+                                module.functions.push_defined(new_body)
+                            }
+                        };
+                        ref_map.push((EntityLocation::from_parts(file_id, f.into()), new.into()));
+                    }
+                    EntityKind::Global(g) => {
+                        let global = file.module.globals.get_entity(g);
+                        let new = module.globals.push_entity(global.cloned());
+                        ref_map.push((EntityLocation::from_parts(file_id, g.into()), new.into()));
+                    }
+                    EntityKind::Memory(m) => {
+                        let memory = file.module.memories.get_entity(m);
+                        let new = module.memories.push_entity(memory.cloned());
+                        ref_map.push((EntityLocation::from_parts(file_id, m.into()), new.into()));
+                    }
+                    EntityKind::Table(t) => {
+                        let table = file.module.tables.get_entity(t);
+                        let new = module.tables.push_entity(table.cloned());
+                        ref_map.push((EntityLocation::from_parts(file_id, t.into()), new.into()));
+                    }
+                    EntityKind::Tag(t) => {
+                        let tag = file.module.tags.get_entity(t);
+                        let new = module.tags.push_entity(tag.cloned());
+                        ref_map.push((EntityLocation::from_parts(file_id, t.into()), new.into()));
+                    }
+                    EntityKind::DataSymbol(srcd) => {
+                        let new = match file.module.data.get_entity(srcd) {
+                            ImportOrDefined::Import(i) => module.data.push_import(i.clone()),
+                            ImportOrDefined::Defined(d) => {
+                                let new_body = if let Some(modifier) = &data_modifier {
+                                    let EntityBody::Copied(b) = &d.body else {
+                                        panic!(
+                                            "Trying to modify already modified data {srcd} has body {:#?}",
+                                            d.body
+                                        );
+                                    };
+                                    assert!(b.fixups.is_empty());
+                                    let relocs = file
+                                        .relocs
+                                        .get_entity_relocs(srcd.into())
+                                        .unwrap_or_default();
+                                    let mut modified_body = b.clone();
+                                    let entity_ref = module.data.next_defined_key();
+                                    data_modifier_artifacts.extend(modify::create_fixup_for_entity(
+                                        &mut modified_body,
+                                        entity_ref,
+                                        (file_id, snapshot),
+                                        relocs,
+                                        modifier,
+                                    )?);
+
+                                    DefinedEntity {
+                                        body: modified_body.into(),
+                                        // type/names/exports remain the same.
+                                        ..d.clone()
+                                    }
+                                } else {
+                                    d.clone()
+                                };
+                                module.data.push_defined(new_body)
+                            }
+                        };
+                        ref_map.push((EntityLocation::from_parts(file_id, srcd.into()), new.into()));
+                    }
+                    EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
                 }
-                EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
             }
         }
 
@@ -281,6 +275,10 @@ impl OutputModuleCopyPlan {
                         export_as: ExportNames::default(),
                         renamed_as: None,
                     });
+                    if let Some(entity) = import.original_entity {
+                        let location = snapshot.unpack_ref(entity);
+                        ref_map.push((location, new_ref.into()));
+                    }
                     new_imports.insert(r, new_ref.into());
                 }};
             }
@@ -321,7 +319,7 @@ impl OutputModuleCopyPlan {
             tracing::info_span!("convert_ids_to_stable")
         );
         // Fill mapping for all used entities.
-        for (src, entity) in used_queue {
+        for (src, entity) in ref_map {
             file_info.add_entity_mapping(src, entity.to_stable(&module));
         }
 
@@ -378,6 +376,8 @@ impl OutputModuleCopyPlan {
         // collect indirect table (used by relocs)
         module.extend_indirect_table_from_relocs(&relocs);
 
+
+        module.mem_spec = mem_spec;
         Ok(OutputModule {
             module,
             resolver: file_info,
@@ -387,13 +387,18 @@ impl OutputModuleCopyPlan {
     }
 }
 
+#[derive(derive_more::Debug)]
+#[debug("{}", hex::encode(_0))]
+struct Writer (Vec<u8>);
 ///
 /// The top-level plan for an entire emit job.
 /// It containts basic information about all entities that need to be copied into output modules.
 ///
+#[derive(derive_more::Debug)]
 pub struct EmitContext<'a> {
+    #[debug("input_files: <FileLoader>")]
     pub input_files: &'a FileLoader,
-    pub snapshot: EntitiesSnapshot,
+    pub snapshot: MultiSnapshot,
     // 1. Build copy plan for each module.
     pub output_plans: PrimaryMap<FileId, (OutputId, OutputModuleCopyPlan)>,
     // 1. where to search entity if dynamic linking is used
@@ -401,7 +406,7 @@ pub struct EmitContext<'a> {
     // 2. Build modules from copy plans.
     pub output_modules: PrimaryMap<FileId, OutputModule<'a>>,
     // 3. build writer and layout for each module.
-    pub writers: PrimaryMap<FileId, Vec<u8>>,
+    pub writers: PrimaryMap<FileId, Writer>,
     pub layouts: PrimaryMap<FileId, ModuleLayout>,
 }
 impl<'src> EmitContext<'src> {
@@ -431,7 +436,7 @@ impl<'src> EmitContext<'src> {
         let mut outputs = PrimaryMap::new();
 
         for (_file_id, (_name, plan)) in &self.output_plans {
-            let output = plan.copy_entities(input_files, &snapshot, is_static.clone())?;
+            let output = plan.copy_entities(input_files, snapshot, is_static.clone())?;
             outputs.push(output);
         }
         self.output_modules = outputs;
@@ -449,7 +454,7 @@ impl<'src> EmitContext<'src> {
             );
             let mut writer = wasm_encoder::Module::new();
             let layout = output.module.generate(&mut writer)?;
-            let writer = writer.finish();
+            let writer = Writer(writer.finish());
             writers.push(writer);
             layouts.push(layout);
         }
@@ -483,7 +488,7 @@ impl<'src> EmitContext<'src> {
                 &self.layouts,
             );
 
-            reloc_state.shift_offsets_and_apply_relocs(writer, &mut split_module.relocs);
+            reloc_state.shift_offsets_and_apply_relocs(&mut writer.0, &mut split_module.relocs);
         }
         Ok(())
     }
@@ -501,9 +506,9 @@ impl<'src> EmitContext<'src> {
                 log::error!("Writing module {ident}_fxd to file for debug");
                 let output_path =
                     AsRef::<std::path::Path>::as_ref("/tmp").join(format!("{}_fxd.wasm", ident));
-                std::fs::write(&output_path, bytes).unwrap();
+                std::fs::write(&output_path, &bytes.0).unwrap();
             }
-            emit_fn(ident, bytes)?;
+            emit_fn(ident, &bytes.0)?;
         }
         Ok(())
     }
@@ -549,7 +554,7 @@ impl<'src> EmitContext<'src> {
                 .get_entity_src(orig_d.into())
                 .expect("imported data symbol must have source entity");
 
-            let flat_ref = self.snapshot.pack_ref(src.entity);
+            let flat_ref = self.snapshot.pack_ref(src);
             // find output module that defines this symbol, and get symbol offset in output module.
             let dep_file = *self
                 .dylinkg_exports_map

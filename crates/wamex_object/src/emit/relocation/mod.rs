@@ -66,7 +66,8 @@ use crate::{
 };
 
 /// Composite reference to an entity in some file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(derive_more::Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[debug("({}, {})", file_id, entity)]
 pub struct EntityLocation<Entity = EntityKind> {
     pub file_id: FileId,
     pub entity: Entity,
@@ -184,7 +185,9 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                     }
                 }
                 EntityKind::DataSymbol(data_symbol) => {
-                    let data_offset = self.current_module_layout.data_mapping[data_symbol]
+                    let data_offset = self
+                        .current_module_layout
+                        .data_mapping[data_symbol]
                         .expect("Relocation refers to data symbol outside of module layout")
                         .data_section_offset;
                     for reloc in relocs {

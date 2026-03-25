@@ -10,3 +10,4 @@ plan.txt
 test.txt
 # insta snapshot files
 **/*.snap.new
+test-output/*

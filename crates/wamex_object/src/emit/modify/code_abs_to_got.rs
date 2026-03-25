@@ -61,7 +61,7 @@ pub fn global_init_tmp(val_type: wasmparser::ValType) -> SVec<u8, 32> {
 }
 
 #[derive(derive_more::Debug)]
-pub struct CodeAbsToGot<'a, F>
+pub struct CodeAbsToGot< F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
@@ -70,28 +70,25 @@ where
     // Symbols (in input space) that need to be always treated as static (not converted to GOT-relative)
     #[debug("is_static_symbol: <function>")]
     pub is_static_symbol: F,
-    pub input_snapshot: &'a EntitiesSnapshot,
 }
 
-impl<'a, F> CodeAbsToGot<'a, F>
+impl<F> CodeAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
     pub fn new(
         is_static_symbol: F,
-        input_snapshot: &'a EntitiesSnapshot,
         builder: &mut crate::typed::ModuleBuilder<'_>,
     ) -> Self {
         let mut instance = Self {
             global_tmps: BTreeMap::new(),
             is_static_symbol,
-            input_snapshot,
         };
         instance.setup(builder).unwrap();
         instance
     }
-    pub fn is_dyn_symbol(&self, sym: &EntityKind) -> bool {
-        let sym = self.input_snapshot.pack_ref(*sym);
+    pub fn is_dyn_symbol(&self, input_snapshot: & EntitiesSnapshot, sym: &EntityKind) -> bool {
+        let sym = input_snapshot.pack_ref(*sym);
         // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
         // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
         !(self.is_static_symbol)(sym)
@@ -134,7 +131,7 @@ where
     }
 }
 
-impl<'src, F> HandleFixups<'src> for CodeAbsToGot<'_, F>
+impl<'src, F> HandleFixups<'src> for CodeAbsToGot< F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
@@ -144,13 +141,13 @@ where
         &self,
         _entity_ref: Temp<Self::EntityRef>,
         buffer: Cursor<'src>,
-        _input_file: FileId,
+        (_, input_snapshot): (FileId, &EntitiesSnapshot),
         entry: EntityRelocationEntry,
     ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
         match entry.symbol_id {
             EntityKind::DataSymbol(_) | EntityKind::Function(_)
                 if entry.symbol_op == EntityAddressMode::RuntimeAddr
-                    && self.is_dyn_symbol(&entry.symbol_id) =>
+                    && self.is_dyn_symbol(input_snapshot, &entry.symbol_id) =>
             {
                 Self::check_whitelisted_code_relocation(&entry)?;
                 return self.new_entry(buffer, entry);
@@ -162,7 +159,7 @@ where
     }
 }
 
-impl<'src, F> CodeAbsToGot<'_, F>
+impl<'src, F> CodeAbsToGot< F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {

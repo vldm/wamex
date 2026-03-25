@@ -128,7 +128,7 @@ pub fn format_split_program_info(
     use std::fmt::Write;
 
     let mut output = String::new();
-    let snapshot = EntitiesSnapshot::new(info);
+    let snapshot = EntitiesSnapshot::new_without_types(info);
 
     let format_symbol = |id: FlatEntityRef| -> String {
         let name = crate::helpers::demangle_full(&info.get_name(snapshot.unpack_ref(id)));

@@ -5,7 +5,7 @@ use wasmparser::{FuncType, GlobalType, MemoryType, TableType, TagType};
 
 use crate::{
     raw::FuncTypeId,
-    typed::{FileId, FileLoader, ImportedEntity, snapshot::FlatEntityRef},
+    typed::{EntityType, FileId, FileLoader, ImportedEntity, snapshot::FlatEntityRef},
 };
 
 impl_entity_index! {
@@ -17,7 +17,7 @@ impl_entity_index! {
 pub struct OutputModuleCopyPlan {
     /// Entities that copied as is from original module (can be imported or defined).
     /// Can have additional export names.
-    pub entities: BTreeMap<FlatEntityRef, CopyEntity>,
+    pub entities: BTreeMap<FlatEntityRef, CopySpec>,
     /// New created imports.
     pub imports: PrimaryMap<NewImportRef, ImportSpec>,
     /// Addressing mode for the module.
@@ -29,6 +29,9 @@ pub struct ImportSpec {
     pub module: String,
     pub name: String,
     pub ty: EntityType,
+    // The reference to original entity in input module.
+    // Used to create process relocations existing in copied entities.
+    pub original_entity: Option<FlatEntityRef>,
 }
 impl ImportSpec {
     pub const WAMEX_DEFAULT_MODULE: &'static str = "__wamex";
@@ -41,6 +44,7 @@ impl ImportSpec {
                 mutable: false,
                 shared: false,
             }),
+            original_entity: None,
         }
     }
     pub fn table_base(extern_prefix: &str) -> Self {
@@ -52,29 +56,22 @@ impl ImportSpec {
                 mutable: false,
                 shared: false,
             }),
+            original_entity: None,
+        }
+    }
+    pub fn wamex_import(name: String, ty: EntityType, entity: FlatEntityRef) -> Self {
+        Self {
+            module: Self::WAMEX_DEFAULT_MODULE.to_string(),
+            name,
+            ty,
+            original_entity: Some(entity),
         }
     }
 }
 
-/// The entity type for imports and exports of a module.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EntityType {
-    /// The entity is a function.
-    Function(FuncType),
-    /// The entity is a table.
-    Table(TableType),
-    /// The entity is a memory.
-    Memory(MemoryType),
-    /// The entity is a global.
-    Global(GlobalType),
-    /// The entity is a tag.
-    Tag(TagType),
-    /// The data symbol
-    DataSymbol(()),
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CopyEntity {
+pub enum CopySpec {
     AsIs,
     WithExport { export_name: String },
 }

@@ -5,7 +5,7 @@ use cranelift_entity::EntityRef;
 
 use crate::{
     emit::{
-        plan::{OutputModulePlan, AddressingMode, TransformPolicy},
+        plan::{AddressingMode, OutputModulePlan},
         relocation::resolver::OutputEntitiesResolver,
         modify::{
             code_abs_to_got::{CodeAbsToGot, GotInfo},
@@ -14,7 +14,8 @@ use crate::{
     },
     linkage::file_db::FileRelocs,
     typed::{
-        Building, FileId, FileLoader, Module, common_index::EntitiesSnapshot,
+        Building, FileLoader, Module,
+        snapshot::MultiSnapshot,
     },
 };
 
@@ -31,7 +32,7 @@ impl EntityCollector {
     pub fn collect<'src>(
         plan: &OutputModulePlan,
         files: &'src FileLoader,
-        snapshot: &EntitiesSnapshot,
+        snapshot: &MultiSnapshot,
     ) -> Result<CollectedModule<'src>> {
         // TODO: Move the actual copying loop from `create_split_module` here.
         // For now, this is a skeleton for the new architecture.
@@ -44,7 +45,7 @@ impl EntityCollector {
             AddressingMode::Static => {
                 // Direct linking mode
             }
-            AddressingMode::GotRelative(got_config) => {
+            AddressingMode::GotRelative(_got_config) => {
                 // Apply CodeAbsToGot and DataAbsToGot
             }
         }
