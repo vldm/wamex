@@ -33,9 +33,9 @@ use crate::{
     raw::FuncTypeId,
     typed::{
         Building, DefinedDataChunk, DefinedEntity, DefinedFunction, DefinedGlobal, DefinedMemory,
-        DefinedTable, DefinedTag, ExportNames, ImportedDataChunk, ImportedEntity, ImportedFunction,
-        ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, Locked, WithExtraInfo,
-        WithoutBody, common_index::EntityKind, data::DataSymbolRef,
+        DefinedTable, DefinedTag, EntityKind, ExportNames, ImportedDataChunk, ImportedEntity,
+        ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, Locked,
+        WithExtraInfo, WithoutBody, data::DataSymbolRef,
     },
 };
 

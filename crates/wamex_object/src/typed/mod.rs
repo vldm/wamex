@@ -25,12 +25,13 @@ use crate::{
         reloc::{EntityAddressMode, EntityRelocationEntry},
     },
     raw::{self, ImportId},
-    typed::{common_index::EntitiesSnapshot, entities::common_index::EntityKind},
 };
 
 pub mod data;
 pub mod elements;
 mod entities;
+pub mod snapshot;
+
 impl_entity_index! {
     #[display = "file"]
     pub struct FileId;
@@ -79,15 +80,11 @@ impl FileLoader {
         Ok(id)
     }
 
-    pub(crate) fn first_file_id(&self) -> Option<FileId> {
-        self.files_readers.iter().next().map(|(id, _)| id)
-    }
-
     pub fn get_file(&self, file_id: FileId) -> &LoadedFile<'_> {
         self.files_readers.get(file_id).unwrap().get()
     }
 
-    pub fn get_snapshot(&self) -> EntitiesSnapshot {
+    pub fn get_snapshot(&self) -> snapshot::EntitiesSnapshot {
         todo!()
         // self.files_readers.iter().map(|(id, file)| (id, file.get())).collect()
     }

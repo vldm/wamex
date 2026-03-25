@@ -10,17 +10,32 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
-pub use definition::{OutputId, AddressingMode, CopyEntity, ImportSpec, OutputModuleCopyPlan, NewImportRef, PlannedGotInfo};
+use definition::EntityType;
+pub use definition::{
+    AddressingMode, CopyEntity, ImportSpec, NewImportRef, OutputId, OutputModuleCopyPlan,
+    PlannedGotInfo,
+};
 use wasmparser::GlobalType;
 
 use crate::{
-    analysis::{OutputModuleInfo, SplitProgramInfo}, emit::{
-        self, modify::{self, code_abs_to_got::CodeAbsToGot, data_abs_to_got::DataAbsToGot}, relocation::{EntityLocation, ImportedDataDep, ModuleLayout, RelocationState, resolver::OutputEntitiesResolver}
-    }, index::GappedMap, linkage::file_db::FileRelocs, typed::{
-        Building, DefinedEntity, EntityBody, ExportNames, FileId, FileLoader, GlobalRef, ImportOrDefined, ImportedEntity, LoadedFile, Module, common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef, TempEntityKind}, data::DataSymbolRef
-    }
+    analysis::{OutputModuleInfo, SplitProgramInfo},
+    emit::{
+        self,
+        modify::{self, code_abs_to_got::CodeAbsToGot, data_abs_to_got::DataAbsToGot},
+        relocation::{
+            EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
+            resolver::OutputEntitiesResolver,
+        },
+    },
+    index::GappedMap,
+    linkage::file_db::FileRelocs,
+    typed::{
+        Building, DefinedEntity, EntityBody, EntityKind, ExportNames, FileId, FileLoader,
+        GlobalRef, ImportOrDefined, ImportedEntity, LoadedFile, Module, TempEntityKind,
+        data::DataSymbolRef,
+        snapshot::{EntitiesSnapshot, FlatEntityRef},
+    },
 };
-use definition::EntityType;
 #[derive(Debug, Clone)]
 pub struct GotInfo<T = GlobalRef> {
     pub memory_base: T,
@@ -42,9 +57,9 @@ where
     }
 }
 
-/// 
+///
 /// Extra information needed for perfom dynamic linking.
-/// 
+///
 #[derive(Debug, Clone)]
 pub struct DyLinkDeps<Ref: Clone + Default + ReservedValue = GlobalRef> {
     pub our_got: GotInfo<Ref>,
@@ -79,7 +94,7 @@ pub struct OutputModule<'src> {
 // and therefore new_span will have old_span as parent.
 //
 //
-// Implementing this as extension trait is also imposible, because new_span expression should be evaluated after 
+// Implementing this as extension trait is also imposible, because new_span expression should be evaluated after
 // old_span is closed.
 //
 #[macro_export]
@@ -102,9 +117,8 @@ fn unpack_multi_ref(snapshot: &'_ EntitiesSnapshot, entity: FlatEntityRef) -> (F
 fn entity_iter<'src, U>(
     input_files: &'src FileLoader,
     snapshot: &'_ EntitiesSnapshot,
-    entities: impl IntoIterator<Item = (FlatEntityRef, U)>)
-     -> impl Iterator<Item = (FileId, &'src LoadedFile<'src>, EntityKind, U)> 
-{
+    entities: impl IntoIterator<Item = (FlatEntityRef, U)>,
+) -> impl Iterator<Item = (FileId, &'src LoadedFile<'src>, EntityKind, U)> {
     entities.into_iter().map(move |(entity, extra)| {
         let (file_id, entity_kind) = unpack_multi_ref(snapshot, entity);
         let loaded_file = input_files.get_file(file_id);
@@ -114,24 +128,30 @@ fn entity_iter<'src, U>(
 
 impl OutputModuleCopyPlan {
     /// Execute the plan and copy entities from input to output modules.
-    pub fn copy_entities<'src, F>(&self, 
+    pub fn copy_entities<'src, F>(
+        &self,
         input_files: &'src FileLoader,
         snapshot: &'_ EntitiesSnapshot,
         is_static_symbol: F,
-    ) -> Result<OutputModule<'src>> 
- where
-    F: Fn(FlatEntityRef) -> bool + Clone,       
-        {
+    ) -> Result<OutputModule<'src>>
+    where
+        F: Fn(FlatEntityRef) -> bool + Clone,
+    {
         let is_static = matches!(self.addressing, AddressingMode::Static);
-        
-        log::info!("Applying plan for output module with {} entities and {} imports", self.entities.len(), self.imports.len());
+
+        log::info!(
+            "Applying plan for output module with {} entities and {} imports",
+            self.entities.len(),
+            self.imports.len()
+        );
         let mut action_span = tracing::info_span!("Copy entities").entered();
         let mut module: Module<'src, Building> = Module::new();
 
-        
-        let code_modifier = (!is_static).then(|| CodeAbsToGot::new(is_static_symbol.clone(), &snapshot, &mut module));
-        let data_modifier = (!is_static).then(|| DataAbsToGot::new(is_static_symbol, &snapshot, &mut module));
-        
+        let code_modifier = (!is_static)
+            .then(|| CodeAbsToGot::new(is_static_symbol.clone(), &snapshot, &mut module));
+        let data_modifier =
+            (!is_static).then(|| DataAbsToGot::new(is_static_symbol, &snapshot, &mut module));
+
         let mut data_modifier_artifacts = Vec::new();
 
         // map of entities from input file to entities in output module.
@@ -141,7 +161,11 @@ impl OutputModuleCopyPlan {
 
         // Copy defined symbols to the output module.
         // TODO: Clear exports if not set?
-        let copy_entities = entity_iter(input_files, &snapshot, self.entities.iter().map(|(e, c)| (*e, c)));
+        let copy_entities = entity_iter(
+            input_files,
+            &snapshot,
+            self.entities.iter().map(|(e, c)| (*e, c)),
+        );
         for (file_id, file, entity, copy) in copy_entities {
             match entity {
                 EntityKind::Function(f) => {
@@ -157,10 +181,8 @@ impl OutputModuleCopyPlan {
                                     );
                                 };
                                 assert!(b.fixups.is_empty());
-                                let relocs = file
-                                    .relocs
-                                    .get_entity_relocs(f.into())
-                                    .unwrap_or_default();
+                                let relocs =
+                                    file.relocs.get_entity_relocs(f.into()).unwrap_or_default();
                                 let mut modified_body = b.clone();
                                 let entity_ref = module.functions.next_defined_key();
                                 modify::create_fixup_for_entity(
@@ -241,10 +263,7 @@ impl OutputModuleCopyPlan {
                             module.data.push_defined(new_body)
                         }
                     };
-                    used_queue.push((
-                        EntityLocation::from_parts(file_id, srcd.into()),
-                        new.into(),
-                    ));
+                    used_queue.push((EntityLocation::from_parts(file_id, srcd.into()), new.into()));
                 }
                 EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
             }
@@ -291,7 +310,6 @@ impl OutputModuleCopyPlan {
             }
         }
 
-
         replace_span!(&mut action_span, tracing::info_span!("lock_module"));
         log::warn!("module after copying entities: {:#?}", module);
         // after index finalization, we can make some additional transformation
@@ -306,7 +324,6 @@ impl OutputModuleCopyPlan {
         for (src, entity) in used_queue {
             file_info.add_entity_mapping(src, entity.to_stable(&module));
         }
-
 
         let dyn_info = match &self.addressing {
             AddressingMode::Static => None,
@@ -327,10 +344,14 @@ impl OutputModuleCopyPlan {
                         }
                     };
                 }
-                let deps = g.deps.iter().map(|(file, got)| {
-                    let got = conv!(got);
-                    (file, got)
-                }).collect();
+                let deps = g
+                    .deps
+                    .iter()
+                    .map(|(file, got)| {
+                        let got = conv!(got);
+                        (file, got)
+                    })
+                    .collect();
 
                 Some(DyLinkDeps {
                     our_got: conv!(g.our_got),
@@ -366,10 +387,10 @@ impl OutputModuleCopyPlan {
     }
 }
 
-/// 
+///
 /// The top-level plan for an entire emit job.
 /// It containts basic information about all entities that need to be copied into output modules.
-/// 
+///
 pub struct EmitContext<'a> {
     pub input_files: &'a FileLoader,
     pub snapshot: EntitiesSnapshot,
@@ -385,10 +406,10 @@ pub struct EmitContext<'a> {
 }
 impl<'src> EmitContext<'src> {
     pub fn new_plan(
-        input_files: &'src FileLoader, 
+        input_files: &'src FileLoader,
         output_plans: PrimaryMap<FileId, (OutputId, OutputModuleCopyPlan)>,
-        exported_symbols: GappedMap<FlatEntityRef, FileId>
-) -> Self {
+        exported_symbols: GappedMap<FlatEntityRef, FileId>,
+    ) -> Self {
         Self {
             input_files,
             snapshot: input_files.get_snapshot(),
@@ -400,7 +421,7 @@ impl<'src> EmitContext<'src> {
         }
     }
     #[tracing::instrument(skip_all, name = "Copy entities")]
-    pub fn copy_entities<F>(&mut self, is_static: F,) -> Result<()>
+    pub fn copy_entities<F>(&mut self, is_static: F) -> Result<()>
     where
         F: Fn(FlatEntityRef) -> bool + Clone,
     {
@@ -409,9 +430,8 @@ impl<'src> EmitContext<'src> {
 
         let mut outputs = PrimaryMap::new();
 
-        for (_file_id, (_name, plan )) in &self.output_plans {
-            let output = plan.copy_entities(input_files, 
-                &snapshot, is_static.clone())?;
+        for (_file_id, (_name, plan)) in &self.output_plans {
+            let output = plan.copy_entities(input_files, &snapshot, is_static.clone())?;
             outputs.push(output);
         }
         self.output_modules = outputs;
@@ -423,13 +443,16 @@ impl<'src> EmitContext<'src> {
         let mut writers = PrimaryMap::new();
         let mut layouts = PrimaryMap::new();
         for (file, output) in &self.output_modules {
-            log::info!("Generating module {ident}", ident = self.output_plans[file].0);
+            log::info!(
+                "Generating module {ident}",
+                ident = self.output_plans[file].0
+            );
             let mut writer = wasm_encoder::Module::new();
             let layout = output.module.generate(&mut writer)?;
             let writer = writer.finish();
             writers.push(writer);
             layouts.push(layout);
-        }        
+        }
         self.writers = writers;
         self.layouts = layouts;
         Ok(())
@@ -444,11 +467,8 @@ impl<'src> EmitContext<'src> {
             let (ident, ..) = &self.output_plans[file];
             let output_module = &self.output_modules[file];
 
-            let imported_data = self.collect_dylink_data_deps(
-                ident,
-                output_module,
-            );
-            
+            let imported_data = self.collect_dylink_data_deps(ident, output_module);
+
             let split_module = &mut self.output_modules[file];
             let writer = &mut self.writers[file];
 
@@ -469,14 +489,18 @@ impl<'src> EmitContext<'src> {
     }
 
     #[tracing::instrument(skip_all, name = "Write modules")]
-    fn write_modules(&self, mut emit_fn: impl FnMut(&OutputId, &[u8]) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    fn write_modules(
+        &self,
+        mut emit_fn: impl FnMut(&OutputId, &[u8]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         for (file, (ident, ..)) in &self.output_plans {
             log::info!("Emitting module {ident}");
             let bytes = &self.writers[file];
             // debug
             {
                 log::error!("Writing module {ident}_fxd to file for debug");
-                let output_path = AsRef::<std::path::Path>::as_ref("/tmp").join(format!("{}_fxd.wasm", ident));
+                let output_path =
+                    AsRef::<std::path::Path>::as_ref("/tmp").join(format!("{}_fxd.wasm", ident));
                 std::fs::write(&output_path, bytes).unwrap();
             }
             emit_fn(ident, bytes)?;
@@ -513,9 +537,8 @@ impl<'src> EmitContext<'src> {
 
     fn collect_dylink_data_deps(
         &self,
-        ident: &OutputId, 
+        ident: &OutputId,
         output_module: &OutputModule,
-
     ) -> GappedMap<DataSymbolRef, ImportedDataDep> {
         let mut imported_data = GappedMap::new();
         // 2. calculate memoffsets for imported data symbols.
@@ -528,7 +551,10 @@ impl<'src> EmitContext<'src> {
 
             let flat_ref = self.snapshot.pack_ref(src.entity);
             // find output module that defines this symbol, and get symbol offset in output module.
-            let dep_file = *self.dylinkg_exports_map.get(flat_ref).expect("imported symbol should be exported by some module");
+            let dep_file = *self
+                .dylinkg_exports_map
+                .get(flat_ref)
+                .expect("imported symbol should be exported by some module");
 
             let (dep_id, ..) = &self.output_plans[dep_file];
             let dep_split_module = &self.output_modules[dep_file];
@@ -564,5 +590,4 @@ impl<'src> EmitContext<'src> {
         }
         imported_data
     }
-   
 }

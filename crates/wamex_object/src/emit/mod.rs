@@ -12,20 +12,28 @@ use wasmparser::{FuncType, GlobalType};
 use crate::{
     analysis::{OutputModuleInfo, SplitModuleIdentifier, SplitProgramInfo},
     emit::{
-        memory_layout::{DataSymbolsOffsets, SegmentLayout}, modify::{
+        memory_layout::{DataSymbolsOffsets, SegmentLayout},
+        modify::{
             OutputEntityRef, code_abs_to_got::CodeAbsToGot, data_abs_to_got::DataAbsToGot,
             wasm_emitter,
-        }, plan::{EmitContext, OutputId, OutputModule}, relocation::{
+        },
+        plan::{EmitContext, OutputId, OutputModule},
+        relocation::{
             EntityLocation, FunctionInfo, ImportedDataDep, ModuleLayout, RelocationState,
             resolver::OutputEntitiesResolver,
-        }
+        },
     },
     helpers::{ShiftMap, ShiftPoint},
     index::{GappedMap, TempIndex},
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
     raw::FuncTypeId,
     typed::{
-        Building, DefinedEntity, DefinedFunction, EntityBody, EntityBodyCopy, ExportNames, FileId, FileLoader, FunctionRef, ImportOrDefined, ImportedEntity, Module, TableRef, common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef, TempEntityKind}, data::DataSymbolRef, elements::ElementItemId
+        Building, DefinedEntity, DefinedFunction, EntityBody, EntityBodyCopy, EntityKind,
+        ExportNames, FileId, FileLoader, FunctionRef, ImportOrDefined, ImportedEntity, Module,
+        TableRef, TempEntityKind,
+        data::DataSymbolRef,
+        elements::ElementItemId,
+        snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
 };
 
@@ -599,9 +607,7 @@ pub fn emit_modules(
 }
 
 #[doc(hidden)]
-pub fn split_routine_generic_test(
-    src: &[u8],
-) -> anyhow::Result<Vec<(OutputId, Vec<u8>)>> {
+pub fn split_routine_generic_test(src: &[u8]) -> anyhow::Result<Vec<(OutputId, Vec<u8>)>> {
     let mut file_loader = FileLoader::new();
     let input_file = file_loader
         .load_from_bytes(src.to_vec().into_boxed_slice())
@@ -647,12 +653,10 @@ mod tests {
         typed::{
             DefinedDataChunk, EntityBody, ExportNames, FileLoader, ImportedFunction, LoadedFile,
             Module, WithoutBody,
-            common_index::EntitiesSnapshot,
             data::{DataChunkType, DataSegmentInfo, SegmentPlacement},
+            snapshot::EntitiesSnapshot,
         },
     };
-
-
 
     // Use split routine without extraction as a smoke test.
     // In the result we should get one module with all entities as in input module.
@@ -690,14 +694,11 @@ mod tests {
 
         // extract plan of first module
         let (_, (_, plan)) = ctx.output_plans.into_iter().next().unwrap();
-        let OutputModule {
-            module: output,
-            ..
-        } =
-        plan.copy_entities(&file_loader, &EntitiesSnapshot::new(&input.module), 
-        |_|true
-        ).unwrap();
-        
+        let OutputModule { module: output, .. } = plan
+            .copy_entities(&file_loader, &EntitiesSnapshot::new(&input.module), |_| {
+                true
+            })
+            .unwrap();
 
         let mut buf = wasm_encoder::Module::new();
         output.generate(&mut buf).unwrap();

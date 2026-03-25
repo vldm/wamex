@@ -6,7 +6,7 @@ use crate::{
     helpers::RangeExt,
     index::Temp,
     linkage::reloc::{EntityAddressMode, EntityRelocationEntry},
-    typed::{EntityBodyCopy, FileId, common_index::EntityKind},
+    typed::{EntityBodyCopy, EntityKind, FileId},
 };
 
 pub mod code_abs_to_got;

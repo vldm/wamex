@@ -6,8 +6,8 @@ use std::{
 use crate::{
     index::{GappedMap, ReservedValue},
     typed::{
-        LoadedFile, Module,
-        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+        EntityKind, LoadedFile, Module,
+        snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
 };
 
@@ -287,7 +287,7 @@ impl<Id> NamedGraph<Id> {
                 // imports
                 module.imports.extend(top_shared_deps.clone());
                 // exports
-                shared_exports.extend_and_resort(top_shared_deps.into_iter());
+                shared_exports.extend_and_resort(top_shared_deps);
                 module_names.push(module.module.clone());
             }
             result.push(SharedEntry {
@@ -338,10 +338,7 @@ mod tests {
     use super::{DepGraph, DepSet};
     use crate::{
         analysis::{debug::print_deps_inner, dep_graph::DepMiniSet, testing},
-        typed::{
-            LoadedFile, Module,
-            common_index::{EntityKind, FlatEntityRef},
-        },
+        typed::{EntityKind, LoadedFile, Module, snapshot::FlatEntityRef},
     };
 
     trait DepListExt {

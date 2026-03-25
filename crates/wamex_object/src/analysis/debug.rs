@@ -5,8 +5,8 @@
 use crate::{
     analysis::dep_graph::{DepGraph, DepSet},
     typed::{
-        Module,
-        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+        EntityKind, Module,
+        snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
 };
 

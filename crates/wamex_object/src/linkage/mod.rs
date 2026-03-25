@@ -18,8 +18,7 @@ use crate::{
     ObjectReader,
     linkage::{file_db::SymbolOffset, reloc::AnyRelocationEntry},
     typed::{
-        FunctionRef, GlobalRef, Module, SymbolId, TableRef, TagRef,
-        common_index::EntityKind,
+        EntityKind, FunctionRef, GlobalRef, Module, SymbolId, TableRef, TagRef,
         data::{DataDefined, DataSymbolRef},
     },
 };

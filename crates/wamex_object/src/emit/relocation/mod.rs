@@ -60,8 +60,8 @@ use crate::{
         reloc::{Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth},
     },
     typed::{
-        FileId, FunctionRef, GlobalRef, ImportOrDefined, Module, common_index::EntityKind,
-        data::DataSymbolRef, elements::ElementItemId,
+        EntityKind, FileId, FunctionRef, GlobalRef, ImportOrDefined, Module, data::DataSymbolRef,
+        elements::ElementItemId,
     },
 };
 

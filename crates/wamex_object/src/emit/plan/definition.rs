@@ -1,12 +1,14 @@
-
 use std::collections::BTreeMap;
 
 use cranelift_entity::{PrimaryMap, SecondaryMap};
-use wasmparser::{FuncType, GlobalType, MemoryType, TableType, TagType, };
+use wasmparser::{FuncType, GlobalType, MemoryType, TableType, TagType};
 
-use crate::{raw::FuncTypeId, typed::{FileId, FileLoader, ImportedEntity, common_index::FlatEntityRef}};
+use crate::{
+    raw::FuncTypeId,
+    typed::{FileId, FileLoader, ImportedEntity, snapshot::FlatEntityRef},
+};
 
-impl_entity_index!{
+impl_entity_index! {
     #[display = "new_import"]
     pub struct NewImportRef;
 }
@@ -34,20 +36,28 @@ impl ImportSpec {
         Self {
             module: extern_prefix.to_string(),
             name: format!("_{}_memory_base", extern_prefix),
-            ty: EntityType::Global(GlobalType { content_type: wasmparser::ValType::I32, mutable: false, shared: false }),
+            ty: EntityType::Global(GlobalType {
+                content_type: wasmparser::ValType::I32,
+                mutable: false,
+                shared: false,
+            }),
         }
     }
     pub fn table_base(extern_prefix: &str) -> Self {
         Self {
             module: extern_prefix.to_string(),
             name: format!("_{}_table_base", extern_prefix),
-            ty: EntityType::Global(GlobalType { content_type: wasmparser::ValType::I32, mutable: false, shared: false }),
+            ty: EntityType::Global(GlobalType {
+                content_type: wasmparser::ValType::I32,
+                mutable: false,
+                shared: false,
+            }),
         }
     }
 }
 
 /// The entity type for imports and exports of a module.
-#[derive(Debug, Clone,  PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntityType {
     /// The entity is a function.
     Function(FuncType),
@@ -65,10 +75,8 @@ pub enum EntityType {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CopyEntity {
-    AsIs ,
-    WithExport {
-        export_name: String,
-    },
+    AsIs,
+    WithExport { export_name: String },
 }
 
 pub type PlannedGotInfo = super::DyLinkDeps<NewImportRef>;
@@ -79,6 +87,3 @@ pub enum AddressingMode {
 }
 
 pub type OutputId = String;
-
-
-

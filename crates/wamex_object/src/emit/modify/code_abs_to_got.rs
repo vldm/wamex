@@ -23,9 +23,9 @@ use crate::{
         Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
     },
     typed::{
-        DefinedGlobal, EntityBody, ExportNames, FileId, FunctionRef, GlobalRef,
-        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+        DefinedGlobal, EntityBody, EntityKind, ExportNames, FileId, FunctionRef, GlobalRef,
         data::SpecificLocation,
+        snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
 };
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]

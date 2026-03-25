@@ -20,7 +20,7 @@ use nom::{
     combinator::map_res,
 };
 
-use crate::typed::common_index::FlatEntityRef;
+use crate::typed::snapshot::FlatEntityRef;
 
 fn parse_symbol_id(input: &str) -> IResult<&str, FlatEntityRef> {
     let (input, val) = map_res(take_while(|c: char| c.is_ascii_digit()), |s: &str| {
@@ -165,7 +165,7 @@ pub mod tests {
 
     use std::collections::HashMap;
 
-    use crate::typed::common_index::FlatEntityRef;
+    use crate::typed::snapshot::FlatEntityRef;
 
     pub fn symbol(id: u32) -> super::FlatEntityRef {
         FlatEntityRef::from_u32(id)

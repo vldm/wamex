@@ -19,9 +19,9 @@ use crate::{
     index::Temp,
     linkage::reloc::{Encoding, Relative, RelocationWidth},
     typed::{
-        DefinedFunction, EntityBody, ExportNames, FileId, FunctionRef,
-        common_index::{EntitiesSnapshot, EntityKind, FlatEntityRef},
+        DefinedFunction, EntityBody, EntityKind, ExportNames, FileId, FunctionRef, TempEntityKind,
         data::DataSymbolRef,
+        snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
 };
 
@@ -54,8 +54,7 @@ where
 }
 
 // Extra impl block to place method into DataAbsToGot namespace.
-impl <'a, > DataAbsToGot<'a, fn(FlatEntityRef) -> bool> {
-    
+impl<'a> DataAbsToGot<'a, fn(FlatEntityRef) -> bool> {
     /// Convert temp ids to stable and resolve input symbol_ids to output ones.
     pub fn convert_to_stable_refs_and_resolve(
         module: &mut crate::typed::Module,

@@ -10,7 +10,7 @@ use crate::{
         AnyRelocationEntry, Encoding, EntityAddressMode, EntityRelocationEntry, Relative,
         RelocationEntry, RelocationWidth, SymbolType,
     },
-    typed::{FnTypeRef, FunctionRef, SymbolId, common_index::EntityKind, data::DataSymbolRef},
+    typed::{EntityKind, FnTypeRef, FunctionRef, SymbolId, data::DataSymbolRef},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -415,7 +415,7 @@ impl FileSymbolDb {
 #[cfg(test)]
 mod tests {
     use super::{FileRelocs, RelocRange};
-    use crate::{index::GappedMap, typed::common_index::EntityKind};
+    use crate::{index::GappedMap, typed::EntityKind};
 
     fn rebuild_relocs(relocs: &FileRelocs) -> FileRelocs {
         let mut new_array = Vec::new();

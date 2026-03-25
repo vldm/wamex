@@ -33,7 +33,7 @@ use std::{fmt::Debug, hash::Hash};
 use crate::{
     helpers::RangeExt,
     index::SectionId,
-    typed::{FnTypeRef, FunctionRef, SymbolId, common_index::EntityKind},
+    typed::{EntityKind, FnTypeRef, FunctionRef, SymbolId},
 };
 
 /// Index of symbol in `Symbols` table that store information about relocated symbol.

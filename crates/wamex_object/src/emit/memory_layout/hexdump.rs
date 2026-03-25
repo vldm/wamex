@@ -5,7 +5,7 @@ use cranelift_entity::packed_option::ReservedValue;
 use crate::{
     helpers::RangeExt,
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
-    typed::{EntityBody, Module, common_index::EntityKind, data::DataSymbolRef},
+    typed::{EntityBody, EntityKind, Module, data::DataSymbolRef},
 };
 
 pub struct DataPart {

@@ -26,7 +26,7 @@
 
 use std::borrow::Cow;
 
-use crate::typed::{FileId, common_index::EntityKind};
+use crate::typed::{EntityKind, FileId};
 
 #[derive(Clone, Copy, Debug)]
 enum SymbolBinding {
