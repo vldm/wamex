@@ -395,6 +395,12 @@ impl<Import, Defined> ImportOrDefined<Import, Defined> {
             _ => None,
         }
     }
+    pub fn as_mut(&mut self) -> ImportOrDefined<&mut Import, &mut Defined> {
+        match self {
+            ImportOrDefined::Import(i) => ImportOrDefined::Import(i),
+            ImportOrDefined::Defined(d) => ImportOrDefined::Defined(d),
+        }
+    }
 }
 impl<Import, Defined> ImportOrDefined<&Import, &Defined> {
     pub fn cloned(&self) -> ImportOrDefined<Import, Defined>
@@ -475,6 +481,19 @@ where
         match self {
             ImportOrDefined::Import(import) => import.set_name(name),
             ImportOrDefined::Defined(defined) => defined.set_name(name),
+        }
+    }
+}
+
+impl<'src, Import, Defined> AsRef<ExportNames<'src>> for ImportOrDefined<&mut Import, &mut Defined>
+where
+    Import: WithExtraInfo<'src>,
+    Defined: WithExtraInfo<'src>,
+{
+    fn as_ref(&self) -> &ExportNames<'src> {
+        match self {
+            ImportOrDefined::Import(import) => import.export_as(),
+            ImportOrDefined::Defined(defined) => defined.export_as(),
         }
     }
 }

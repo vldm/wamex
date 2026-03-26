@@ -33,7 +33,7 @@ tempdir = "0.3"
 insta = "1.43"
 env_logger = "0.11.0"
 criterion = { version = "0.8", features = ["html_reports"] }
-profiler = { version = "0.1.0", path = "../../../profiler" }
+profiler = { version = "0.2.0", features = ["auto_sudo"], path = "../../../profiler" }
 
 
 [features]

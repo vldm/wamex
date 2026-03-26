@@ -400,6 +400,10 @@ impl<Idx: TempIndex> Temp<Idx> {
             std::marker::PhantomData,
         )
     }
+    ///
+    /// # Safety
+    /// Caller should ensure that value has valid import/defined entity,
+    /// before converting `to_stable`.
     pub unsafe fn from_raw(value: u32) -> Self {
         Self(value, std::marker::PhantomData)
     }

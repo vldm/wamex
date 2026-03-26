@@ -433,6 +433,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "core_affinity"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a034b3a7b624016c6e13f5df875747cc25f884156aad2abd12b6c46797971342"
+dependencies = [
+ "libc",
+ "num_cpus",
+ "winapi",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1040,6 +1051,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kperf-sys"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f5542f3977e1a2a823006d7e0bb4803cd0b658af95fc34b69ea84fdfd53e42f"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "lazy_static"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1145,6 +1165,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_cpus"
+version = "1.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
+dependencies = [
+ "hermit-abi",
+ "libc",
+]
+
+[[package]]
 name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1211,6 +1241,26 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
+
+[[package]]
+name = "perf-event"
+version = "0.4.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2529f39584dbaa980f4959510c963ae95f119c127c046012c2834365f694438"
+dependencies = [
+ "bitflags",
+ "libc",
+ "perf-event-open-sys",
+]
+
+[[package]]
+name = "perf-event-open-sys"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5f8d1487a4ffa23c80a1c355dd27235f9b66fb71ba0f261eb417e4fe8451347"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "pest"
@@ -1331,11 +1381,16 @@ dependencies = [
 
 [[package]]
 name = "profiler"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
+ "core_affinity",
+ "kperf-sys",
+ "perf-event",
  "profiler_macros",
  "serde",
  "serde_json",
+ "sudo",
+ "thiserror 1.0.69",
  "thread_local",
  "tracing",
  "tracing-subscriber",
@@ -1343,7 +1398,7 @@ dependencies = [
 
 [[package]]
 name = "profiler_macros"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1667,6 +1722,16 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "sudo"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88bd84d4c082e18e37fef52c0088e4407dabcef19d23a607fb4b5ee03b7d5b83"
+dependencies = [
+ "libc",
+ "log",
+]
 
 [[package]]
 name = "syn"

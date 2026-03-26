@@ -1,12 +1,9 @@
 use std::collections::BTreeMap;
 
-use cranelift_entity::{PrimaryMap, SecondaryMap};
-use wasmparser::{FuncType, GlobalType, MemoryType, TableType, TagType};
+use cranelift_entity::PrimaryMap;
+use wasmparser::GlobalType;
 
-use crate::{
-    raw::FuncTypeId,
-    typed::{EntityType, FileId, FileLoader, ImportedEntity, snapshot::FlatEntityRef},
-};
+use crate::typed::{EntityType, snapshot::FlatEntityRef};
 
 impl_entity_index! {
     #[display = "new_import"]
@@ -69,11 +66,19 @@ impl ImportSpec {
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CopySpec {
     AsIs,
     WithExport { export_name: String },
+}
+
+impl CopySpec {
+    pub fn export_as(&self) -> Option<&str> {
+        match self {
+            CopySpec::AsIs => None,
+            CopySpec::WithExport { export_name } => Some(export_name.as_str()),
+        }
+    }
 }
 
 pub type PlannedGotInfo = super::DyLinkDeps<NewImportRef>;

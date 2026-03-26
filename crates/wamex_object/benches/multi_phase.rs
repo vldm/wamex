@@ -1,6 +1,10 @@
 use std::{fs, path::PathBuf};
 
-use profiler::{Metrics, bench::Bencher, metrics::perf_event};
+use profiler::{
+    Metrics,
+    bench::Bencher,
+    metrics::{SystemEvent, SystemPerfMetric},
+};
 
 #[global_allocator]
 static ALLOCATOR: profiler::metrics::mem::ProfileAllocator =
@@ -9,36 +13,26 @@ static ALLOCATOR: profiler::metrics::mem::ProfileAllocator =
 /// Defines custom metrics for the benchmark.
 #[derive(Metrics)]
 struct MyMetrics {
-    /// CPU cycles spent in the span.
-    /// The first metric in the list will be used as the primary metric and adds report of %parent in the report.
-    #[new(perf_event::events::Hardware::CPU_CYCLES)]
-    pub cycles: profiler::PerfEventMetric,
+    #[new(SystemEvent::Cycles)]
+    pub cycles: SystemPerfMetric,
 
-    /// Time spent on CPU for specific thread.
-    /// On short intervals can report more than cpu-time/wall-time.
-    /// But gives a good estimate on real CPU time spent in kernel/user mode.
-    #[new(perf_event::events::Software::TASK_CLOCK)]
     #[config(show_spread = false, show_baseline = false)]
-    pub task_clock: profiler::metrics::PerfEventMetric,
+    pub wall_time: profiler::metrics::InstantProvider,
 
-    #[new(perf_event::events::Hardware::INSTRUCTIONS)]
+    #[new(SystemEvent::Instructions)]
     #[config(show_spread = false)]
-    pub instructions: profiler::metrics::PerfEventMetric,
+    pub instructions: SystemPerfMetric,
 
     #[raw_end_fn(MyMetrics::calculate_ipc)]
     #[config(show_spread = false, show_baseline = false)]
     pub ipc: u64,
 
-    ///
-    /// Metrics can be marked as #[hidden], so they will be collected but not used in report.
-    ///
     #[hidden]
     #[new(&ALLOCATOR)]
     pub memprofiler: profiler::metrics::mem::ProfilerMetrics,
 
-    /// #[raw_end_fn] can be used to define custom metrics from existing ones.
     #[raw_end_fn(MyMetrics::calculate_peak)]
-    #[config(show_spread = false, show_baseline = false)]
+    #[config(show_spread = false, show_baseline = false, aggregation = profiler::metrics::MetricAggregation::Max)]
     pub mem_peak: usize,
 }
 
@@ -67,12 +61,12 @@ fn load_lazy_routes_wasm() -> Vec<u8> {
     fs::read(src).expect("Failed to load test-data/lazy_routes.wasm")
 }
 
-fn emit_modules(bench: &mut Bencher) {
+fn full(bench: &mut Bencher) {
     bench.run_custom(|mut s| {
         let file = load_lazy_routes_wasm();
         s.finish_setup();
-        wamex_object::emit::split_routine_generic_test(&file);
+        let _ = wamex_object::emit::split_routine_generic_test(&file);
     });
 }
 
-profiler::bench_main!(MyMetrics => emit_modules);
+profiler::bench_main!(MyMetrics => full);

@@ -6,10 +6,7 @@ use std::{
     path::PathBuf,
 };
 
-use criterion::{
-    Criterion, Throughput, criterion_group, criterion_main,
-    measurement::{Measurement, ValueFormatter},
-};
+use criterion::{Criterion, criterion_group, criterion_main};
 use wamex_object::{
     ObjectReader, analysis,
     emit::emit_modules,
@@ -25,19 +22,19 @@ fn load_lazy_routes_wasm() -> Vec<u8> {
     fs::read(src).expect("Failed to load test-data/lazy_routes.wasm")
 }
 
-fn load_lazy_routes_diff_wasm(changed: bool) -> Vec<u8> {
-    let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
-    src.push("../");
-    src.push("wamex-cli");
-    src.push("test-data");
-    src.push("lazy-small-change");
-    if !changed {
-        src.push("lazy_routes.wasm");
-    } else {
-        src.push("lazy_routes_changed.wasm");
-    }
-    fs::read(src).expect("Failed to load load_lazy_routes_diff_wasm")
-}
+// fn load_lazy_routes_diff_wasm(changed: bool) -> Vec<u8> {
+//     let mut src: PathBuf = std::env::var("CARGO_MANIFEST_DIR").unwrap().into();
+//     src.push("../");
+//     src.push("wamex-cli");
+//     src.push("test-data");
+//     src.push("lazy-small-change");
+//     if !changed {
+//         src.push("lazy_routes.wasm");
+//     } else {
+//         src.push("lazy_routes_changed.wasm");
+//     }
+//     fs::read(src).expect("Failed to load load_lazy_routes_diff_wasm")
+// }
 
 fn benchmark_parse_module(c: &mut Criterion) {
     c.bench_function("parse_lazy_routes", |b| {

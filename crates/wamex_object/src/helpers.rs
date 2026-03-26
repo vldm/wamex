@@ -207,7 +207,7 @@ where
             })
             .collect::<Vec<_>>();
 
-        sorted_points.sort_by(|a, b| a.at.cmp(&b.at));
+        sorted_points.sort_by_key(|a| a.at);
 
         // update shifts with accumulator
         let mut last_offset = None;

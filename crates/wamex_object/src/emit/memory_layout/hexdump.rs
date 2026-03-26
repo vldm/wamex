@@ -126,22 +126,20 @@ pub fn render_part(mut out: impl Write, part_base: usize, part: DataPart, color:
 
                 if start_on_this_chunk {
                     let j0 = seg.start - line.start;
-                    let cell_start = j0 * hex_cell + if j0 >= extra_gap_after { 1 } else { 0 };
-                    let mut pos = cell_start + 1;
+                    let cell_start = j0 * hex_cell + if j0 >= extra_gap_after { 1 } else { 0 } + 1;
 
                     let label = if span == 1 {
                         format!("{}", local_idx + 1)
                     } else {
                         format!("[{}]", local_idx + 1)
                     };
-                    for ch in label.chars() {
+                    for (ch, pos) in label.chars().zip(cell_start..) {
                         if pos >= ann.len() {
                             break;
                         }
                         if ann[pos] == '─' {
                             ann[pos] = ch;
                         }
-                        pos += 1;
                     }
                 }
             }

@@ -2,11 +2,7 @@
 //!
 //! Uses relocation entries to find place in code and symbols that need to make relocatable.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::Write,
-    ops::Range,
-};
+use std::{collections::BTreeMap, io::Write, ops::Range};
 
 use anyhow::{Result, bail, ensure};
 use cranelift_entity::EntityRef;
@@ -61,7 +57,7 @@ pub fn global_init_tmp(val_type: wasmparser::ValType) -> SVec<u8, 32> {
 }
 
 #[derive(derive_more::Debug)]
-pub struct CodeAbsToGot< F>
+pub struct CodeAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
@@ -76,10 +72,7 @@ impl<F> CodeAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
-    pub fn new(
-        is_static_symbol: F,
-        builder: &mut crate::typed::ModuleBuilder<'_>,
-    ) -> Self {
+    pub fn new(is_static_symbol: F, builder: &mut crate::typed::ModuleBuilder<'_>) -> Self {
         let mut instance = Self {
             global_tmps: BTreeMap::new(),
             is_static_symbol,
@@ -87,7 +80,7 @@ where
         instance.setup(builder).unwrap();
         instance
     }
-    pub fn is_dyn_symbol(&self, input_snapshot: & EntitiesSnapshot, sym: &EntityKind) -> bool {
+    pub fn is_dyn_symbol(&self, input_snapshot: &EntitiesSnapshot, sym: &EntityKind) -> bool {
         let sym = input_snapshot.pack_ref(*sym);
         // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
         // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
@@ -131,7 +124,7 @@ where
     }
 }
 
-impl<'src, F> HandleFixups<'src> for CodeAbsToGot< F>
+impl<'src, F> HandleFixups<'src> for CodeAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
@@ -159,7 +152,7 @@ where
     }
 }
 
-impl<'src, F> CodeAbsToGot< F>
+impl<'src, F> CodeAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {

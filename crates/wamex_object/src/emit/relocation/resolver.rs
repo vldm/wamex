@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
-use cranelift_entity::PrimaryMap;
-
 use crate::{
-    emit::{plan, relocation::EntityLocation},
+    emit::relocation::EntityLocation,
     typed::{EntitiesMultiMap, EntityKind},
 };
 

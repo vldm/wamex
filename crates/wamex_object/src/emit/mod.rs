@@ -1,39 +1,28 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::HashMap,
     io::{self, Write},
-    path::Path,
 };
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
+use cranelift_entity::{EntityRef, SecondaryMap};
 use wasm_encoder::{Encode, FunctionSection};
-use wasmparser::{FuncType, GlobalType};
+use wasmparser::FuncType;
 
 use crate::{
-    analysis::{OutputModuleInfo, SplitModuleIdentifier, SplitProgramInfo},
+    analysis::SplitProgramInfo,
     emit::{
         memory_layout::{DataSymbolsOffsets, SegmentLayout},
-        modify::{
-            OutputEntityRef, code_abs_to_got::CodeAbsToGot, data_abs_to_got::DataAbsToGot,
-            wasm_emitter,
-        },
-        plan::{EmitContext, OutputId, OutputModule},
-        relocation::{
-            EntityLocation, FunctionInfo, ImportedDataDep, ModuleLayout, RelocationState,
-            resolver::OutputEntitiesResolver,
-        },
+        modify::{OutputEntityRef, wasm_emitter},
+        plan::OutputId,
+        relocation::{FunctionInfo, ModuleLayout, resolver::OutputEntitiesResolver},
     },
     helpers::{ShiftMap, ShiftPoint},
     index::{GappedMap, TempIndex},
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
     raw::FuncTypeId,
     typed::{
-        Building, DefinedEntity, DefinedFunction, EntityBody, EntityBodyCopy, EntityKind,
-        ExportNames, FileId, FileLoader, FunctionRef, ImportOrDefined, ImportedEntity, Module,
-        TableRef, TempEntityKind,
-        data::DataSymbolRef,
-        elements::ElementItemId,
-        snapshot::FlatEntityRef,
+        DefinedFunction, EntityBody, EntityBodyCopy, EntityKind, FileLoader, FunctionRef, Module,
+        TableRef, elements::ElementItemId,
     },
 };
 
@@ -604,7 +593,12 @@ pub fn emit_modules(
     program_info: &SplitProgramInfo,
     emit_fn: impl FnMut(&OutputId, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    EmitContext::emit_modules(input_files, program_info, emit_fn)
+    // 0. <split related logic> convert to ctx + get deps of main module
+    let mut emit_ctx = program_info.into_emit_context(input_files);
+    let main_deps = &program_info.output_modules[0].1.defined_symbols;
+    let is_static = |e| main_deps.contains(&e);
+
+    emit_ctx.emit_modules(is_static, emit_fn)
 }
 
 #[doc(hidden)]
@@ -650,7 +644,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        emit::plan::OutputModule,
+        emit::plan::{EmitContext, OutputModule},
         raw::DataSegmentId,
         typed::{
             DefinedDataChunk, EntityBody, ExportNames, FileLoader, ImportedFunction, LoadedFile,
@@ -704,8 +698,8 @@ mod tests {
         output.generate(&mut buf).unwrap();
         let res: Vec<u8> = buf.finish();
         let tmp_out = TempDir::new("emit").unwrap();
-        let out_file =tmp_out.path().join("simple_graph_emit.wasm");
-            
+        let out_file = tmp_out.path().join("simple_graph_emit.wasm");
+
         std::fs::write(out_file, &res).unwrap();
 
         let raw = crate::raw::ObjectReader::parse(&res).unwrap();

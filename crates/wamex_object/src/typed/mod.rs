@@ -467,20 +467,12 @@ impl<'src> Module<'src> {
     /// Get entity type
     pub fn get_type(&self, entity: EntityKind) -> Option<EntityType> {
         Some(match entity {
-            EntityKind::Function(func_id) => {
-                EntityType::Function(self.functions.get_entity(func_id).get_type().clone())
-            }
-            EntityKind::Global(global_id) => {
-                EntityType::Global(self.globals.get_entity(global_id).get_type().clone())
-            }
-            EntityKind::Table(table_id) => {
-                EntityType::Table(self.tables.get_entity(table_id).get_type().clone())
-            }
-            EntityKind::Memory(mem_id) => {
-                EntityType::Memory(self.memories.get_entity(mem_id).get_type().clone())
-            }
-            EntityKind::Tag(tag_id) => {
-                EntityType::Tag(self.tags.get_entity(tag_id).get_type().clone())
+            EntityKind::Global(g) => EntityType::Global(*self.globals.get_entity(g).get_type()),
+            EntityKind::Table(t) => EntityType::Table(*self.tables.get_entity(t).get_type()),
+            EntityKind::Memory(m) => EntityType::Memory(*self.memories.get_entity(m).get_type()),
+            EntityKind::Tag(t) => EntityType::Tag(*self.tags.get_entity(t).get_type()),
+            EntityKind::Function(f) => {
+                EntityType::Function(self.functions.get_entity(f).get_type().clone())
             }
             EntityKind::DataSymbol(_) => EntityType::DataSymbol(()),
             EntityKind::Type(_) => return None, // types don't have types

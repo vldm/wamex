@@ -3,11 +3,9 @@
 //! Internally replace dirrect symbol reference with dynamically initialized data symbol in _start function.
 //!
 
-use std::collections::BTreeSet;
-
 use anyhow::{Result, bail};
 use smallvec::SmallVec;
-use wasmparser::{Data, FuncType};
+use wasmparser::FuncType;
 
 use super::{Cursor, EntityRelocationEntry, HandleFixups, Rewrite};
 use crate::{
@@ -19,7 +17,7 @@ use crate::{
     index::Temp,
     linkage::reloc::{Encoding, Relative, RelocationWidth},
     typed::{
-        DefinedFunction, EntityBody, EntityKind, ExportNames, FileId, FunctionRef, TempEntityKind,
+        DefinedFunction, EntityBody, EntityKind, ExportNames, FileId, FunctionRef,
         data::DataSymbolRef,
         snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
@@ -80,10 +78,7 @@ impl<F> DataAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
-    pub fn new(
-        is_static_symbol: F,
-        module: &mut crate::typed::ModuleBuilder,
-    ) -> Self {
+    pub fn new(is_static_symbol: F, module: &mut crate::typed::ModuleBuilder) -> Self {
         let start_fn = module.functions.push_defined(DefinedFunction {
             entity_type: FuncType::new([], []),
             body: EntityBody::New {
@@ -100,7 +95,7 @@ where
             start_fn,
         }
     }
-    pub fn is_dyn_symbol(&self, input_snapshot: & EntitiesSnapshot, sym: &EntityKind) -> bool {
+    pub fn is_dyn_symbol(&self, input_snapshot: &EntitiesSnapshot, sym: &EntityKind) -> bool {
         let sym = input_snapshot.pack_ref(*sym);
         // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
         // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
@@ -213,7 +208,7 @@ where
     }
 }
 
-impl<'src, F> HandleFixups<'src> for DataAbsToGot< F>
+impl<'src, F> HandleFixups<'src> for DataAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
@@ -243,7 +238,7 @@ where
         Ok(None)
     }
 }
-impl<'src, F> DataAbsToGot< F>
+impl<F> DataAbsToGot<F>
 where
     F: Fn(FlatEntityRef) -> bool,
 {
