@@ -137,6 +137,7 @@ impl OutputModuleCopyPlan {
         let mut action_span = tracing::info_span!("Copy entities").entered();
         let mut module: Module<'src, Building> = Module::new();
 
+        // TODO: implement setup/finish methods for ModifyHandle and allow adding more than one.
         let code_modifier =
             (!is_static).then(|| CodeAbsToGot::new(is_static_symbol.clone(), &mut module));
         let data_modifier = (!is_static).then(|| DataAbsToGot::new(is_static_symbol, &mut module));
@@ -294,7 +295,6 @@ impl OutputModuleCopyPlan {
         }
 
         replace_span!(&mut action_span, tracing::info_span!("lock_module"));
-        log::warn!("module after copying entities: {:#?}", module);
         // after index finalization, we can make some additional transformation
         let mut module = module.into_locked();
 
@@ -385,7 +385,7 @@ pub struct EmitContext<'a> {
     pub snapshot: MultiSnapshot,
     // 1. Build copy plan for each module.
     pub output_plans: PrimaryMap<FileId, (OutputId, OutputModuleCopyPlan)>,
-    // 1. where to search entity if dynamic linking is used
+    // 1.2. where to search entity if dynamic linking is used
     pub dylinkg_exports_map: GappedMap<FlatEntityRef, FileId>,
     // 2. Build modules from copy plans.
     pub output_modules: PrimaryMap<FileId, OutputModule<'a>>,

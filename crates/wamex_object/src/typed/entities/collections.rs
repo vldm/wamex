@@ -547,7 +547,6 @@ mod assert_covariance {
 /// Abstract over key - use `EntityKind`.
 /// The implementation may vary, but instead of using `PrimaryMap<FlatEntityRef, Value>`
 /// this collection should allow using it when EntitiesSnapshot cannot be created.
-
 #[derive(Debug)]
 pub struct EntitiesMultiMap<V: ReservedValue + Clone> {
     functions: GappedMap<FunctionRef, V>,

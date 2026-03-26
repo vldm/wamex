@@ -92,6 +92,9 @@ pub trait HandleFixups<'src> {
     type EntityRef: Copy;
     type ExtraData;
 
+    fn setup(&mut self, _module: &mut crate::typed::ModuleBuilder<'src>) -> Result<()> {
+        Ok(())
+    }
     // TODO: Suport modification that need two or more relocs
     // e.g., for got-relative addressing
     /// Create a modification entry based on the original relocation entry and the current state of the code.
@@ -104,6 +107,10 @@ pub trait HandleFixups<'src> {
         input_file: (FileId, &EntitiesSnapshot),
         entry: EntityRelocationEntry,
     ) -> Result<Option<(Rewrite, Self::ExtraData)>>;
+
+    fn finish(&self, _agregated_data: Vec<Self::ExtraData>) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Process original relocation entries of an entity, and create needed fixups based on them.

@@ -201,10 +201,6 @@ where
         let mut tmp_vec = Vec::new();
         wasm_encoder::Encode::encode(&expr, &mut tmp_vec);
 
-        log::error!(
-            "const_expr: {const_expr:?}",
-            const_expr = hex::encode(&tmp_vec)
-        );
         self.push_bytes(&tmp_vec)?;
         Ok(())
     }
@@ -565,22 +561,11 @@ impl SectionAdapter {
         let encoder = Encoder::new(buf, 0);
         let section_list = SectionList::create_section(encoder, id)?;
         let mut section_list = section_list;
-        log::error!(
-            "section_list: {section_list:?}",
-            section_list = DebugHexEncoder(&section_list.encoder)
-        );
+
         func(&mut section_list)?;
 
-        log::error!(
-            "section_list: {section_list:?}",
-            section_list = DebugHexEncoder(&section_list.encoder)
-        );
         let encoder = section_list.finish()?;
 
-        log::error!(
-            "encoder after: {encoder:?}",
-            encoder = DebugHexEncoder(&encoder)
-        );
         Ok(SectionAdapter {
             bytes: encoder.into_inner().into_inner(),
         })
@@ -602,24 +587,22 @@ where
 
     let encoded = memory_layout::SegmentLayout::segment_header(location)?;
     encoder.push_bytes(&encoded)?;
-    log::error!("data segment header: {encoded:02x?}");
-    log::error!("data_stream: {data_stream:?}");
     data_stream.encode(encoder)?;
     Ok(())
 }
 
-struct DebugHexEncoder<'a, W>(&'a Encoder<W>);
+// struct DebugHexEncoder<'a, W>(&'a Encoder<W>);
 
-impl<W> Debug for DebugHexEncoder<'_, Cursor<W>>
-where
-    W: AsRef<[u8]>,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SectionList")
-            .field("encoder", &hex::encode(self.0.writer.get_ref().as_ref()))
-            .finish()
-    }
-}
+// impl<W> Debug for DebugHexEncoder<'_, Cursor<W>>
+// where
+//     W: AsRef<[u8]>,
+// {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         f.debug_struct("SectionList")
+//             .field("encoder", &hex::encode(self.0.writer.get_ref().as_ref()))
+//             .finish()
+//     }
+// }
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;

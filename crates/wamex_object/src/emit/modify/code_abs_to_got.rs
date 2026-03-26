@@ -188,7 +188,7 @@ where
             }
             instr
         };
-        log::error!(
+        log::trace!(
             "INSTRUCTION {:#?}, green_range: {:?}, reloc_range: {:?}",
             instruction,
             buffer.green_range(),

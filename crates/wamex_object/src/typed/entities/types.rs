@@ -95,10 +95,10 @@ impl<'src, Any> WithExtraInfo<'src> for ImportedEntity<'src, Any> {
         &mut self.export_as
     }
     fn name(&self) -> Option<&Cow<'src, str>> {
-        Some(&self.name)
+        self.renamed_as.as_ref().or(Some(&self.name))
     }
     fn set_name(&mut self, name: Cow<'src, str>) {
-        self.name = name;
+        self.renamed_as = Some(name);
     }
 }
 

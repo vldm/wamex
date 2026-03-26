@@ -115,10 +115,10 @@ pub fn main(args: Cli) -> Result<()> {
 }
 pub fn roundtrip(args: Roundtrip) -> Result<()> {
     let mut loader = FileLoader::new();
-    let src_id = loader.load_file(&&args.input)?;
+    let src_id = loader.load_file(&args.input)?;
 
     let info = loader.get_file(src_id);
-    let dep_graph = analysis::get_dependencies(&info)?;
+    let dep_graph = analysis::get_dependencies(info)?;
 
     let split_program_info =
         analysis::compute_split_modules(&info.module, &dep_graph, &[], &Default::default(), false)?;
@@ -130,7 +130,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
     crate::emit::emit_modules(
         &loader,
         &split_program_info,
-        |_: &SplitModuleIdentifier, data: &[u8]| -> Result<()> {
+        |_: &String, data: &[u8]| -> Result<()> {
             std::fs::write(&args.output, data)?;
             Ok(())
         },

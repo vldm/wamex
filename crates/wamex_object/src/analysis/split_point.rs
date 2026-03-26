@@ -293,6 +293,10 @@ pub struct SplitProgramInfo {
 
 impl SplitProgramInfo {
     pub fn into_emit_context<'src>(&self, input_files: &'src FileLoader) -> EmitContext<'src> {
+        todo!();
+        // todo: implement main routine - convert split point import fn to defined with indirect fn layout
+        // TODO: mark __stack_pointer and __indirect_function_table
+        // as exported
         let snapshot = input_files.get_snapshot();
         let outputs = self
             .output_modules
@@ -305,9 +309,10 @@ impl SplitProgramInfo {
                         (
                             *sym,
                             if info.exports.contains(sym) {
-                                CopySpec::WithExport {
-                                    export_name: "TODO_NAME".to_string(),
-                                }
+                                let loc = snapshot.unpack_ref(*sym);
+                                let module = &input_files.get_file(loc.file_id).module;
+                                let name = module.get_name(loc.entity).to_string();
+                                CopySpec::wamex_export(name)
                             } else {
                                 CopySpec::AsIs
                             },
@@ -674,6 +679,14 @@ fn process_special_entities(
         "indirect_function_table",
         snapshot.pack_ref(info.indirect_function_table.table_id),
     ));
+
+    // 3. add global if it is used by main module (e.g. for stack pointer)
+    let global = info
+        .find_global_id_by_name("__stack_pointer")
+        .map(|id| snapshot.pack_ref(id))
+        .expect("__stack_pointer global should be present in the module");
+
+    special_entities.push(("stack_pointer", global));
 
     // now for special entities - mark them as exported in main module, and add imports to modules that use them:
     for (name, entity) in special_entities {

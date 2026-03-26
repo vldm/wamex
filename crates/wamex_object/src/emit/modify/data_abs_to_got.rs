@@ -140,7 +140,6 @@ where
         new_bytes.clear();
         new_bytes.extend(func.into_raw_body());
         let len = new_bytes.len() as u32;
-        log::error!("Start function body len: {len}");
         let mut encoder = Encoder::new(new_bytes, len);
         for data_entry in &resolved_inits {
             Self::push_init(&mut encoder, new_relocs, data_entry, MEMORY_INDEX)?;

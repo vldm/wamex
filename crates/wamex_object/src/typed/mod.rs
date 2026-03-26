@@ -31,6 +31,9 @@ pub mod data;
 pub mod elements;
 mod entities;
 pub mod snapshot;
+const INDIRECT_TABLE_NAME: &str = "__indirect_function_table";
+
+const MEM_BASE_NAME: &str = "__memory_base";
 
 impl_entity_index! {
     #[display = "file"]
@@ -188,12 +191,11 @@ impl<'src> Module<'src> {
                 .names
                 .functions
                 .iter()
-                // TODO: remove
                 .map(|(id, name)| (id, (*name).into()))
                 .collect(),
             exports.0,
         );
-        let tables =
+        let mut tables =
             entities::Tables::new_raw(imports.1, reader.tables.values().map(Into::into).collect())
                 .into_finished()
                 .extend_with_info(
@@ -201,12 +203,11 @@ impl<'src> Module<'src> {
                         .names
                         .tables
                         .iter()
-                        // TODO: remove
                         .map(|(id, name)| (id, (*name).into()))
                         .collect(),
                     exports.1,
                 );
-        let memories = entities::Memories::new_raw(
+        let mut memories = entities::Memories::new_raw(
             imports.2,
             reader.memories.values().map(Into::into).collect(),
         )
@@ -264,15 +265,15 @@ impl<'src> Module<'src> {
             }
         }
 
-        let (_table_name, table_id) = Self::try_init_indirect_fn_table(&tables).unwrap_or_else(|| {
+        let (table_name, table_id) = Self::try_init_indirect_fn_table(&tables).unwrap_or_else(|| {
                 panic!("No named __indirect_function_table was found, and there is not one table in the module.")
             });
-        let (_memory_name, memory_id) =
-            Self::try_init_base_memory(&memories).unwrap_or_else(|| {
-                panic!(
-                    "No named __base_memory was found, and there is not one memory in the module."
-                );
-            });
+        tables.get_entity_mut(table_id).set_name(table_name);
+
+        let (memory_name, memory_id) = Self::try_init_base_memory(&memories).unwrap_or_else(|| {
+            panic!("No named __base_memory was found, and there is not one memory in the module.");
+        });
+        memories.get_entity_mut(memory_id).set_name(memory_name);
 
         let indirect_function_table =
             elements::IndirectFunctionTable::from_reader(reader, table_id, true)?;
@@ -408,13 +409,10 @@ impl<'src> Module<'src> {
         tables
             .iter()
             .filter_map(|(id, def)| def.name().cloned().map(|name| (name, id)))
-            .find(|(name, _)| *name == "__indirect_function_table")
+            .find(|(name, _)| *name == INDIRECT_TABLE_NAME)
             .or_else(|| {
                 if tables.len() == 1 {
-                    Some((
-                        "__indirect_function_table".into(),
-                        tables.iter().next().unwrap().0,
-                    ))
+                    Some((INDIRECT_TABLE_NAME.into(), tables.iter().next().unwrap().0))
                 } else {
                     None
                 }
@@ -427,10 +425,10 @@ impl<'src> Module<'src> {
         memories
             .iter()
             .filter_map(|(id, def)| def.name().cloned().map(|name| (name, id)))
-            .find(|(name, _)| *name == "__base_memory")
+            .find(|(name, _)| *name == MEM_BASE_NAME)
             .or_else(|| {
                 if memories.len() == 1 {
-                    Some(("__base_memory".into(), memories.iter().next().unwrap().0))
+                    Some((MEM_BASE_NAME.into(), memories.iter().next().unwrap().0))
                 } else {
                     None
                 }

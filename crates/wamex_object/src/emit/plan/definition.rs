@@ -73,6 +73,9 @@ pub enum CopySpec {
 }
 
 impl CopySpec {
+    pub fn wamex_export(export_name: String) -> Self {
+        Self::WithExport { export_name }
+    }
     pub fn export_as(&self) -> Option<&str> {
         match self {
             CopySpec::AsIs => None,
@@ -80,6 +83,10 @@ impl CopySpec {
         }
     }
 }
+
+// pub fn add_wamex_prefix(name: &str) -> String {
+//     format!("__wamex_{}", name)
+// }
 
 pub type PlannedGotInfo = super::DyLinkDeps<NewImportRef>;
 #[derive(Clone, Debug)]
