@@ -10,18 +10,19 @@ use wasmparser::{GlobalType, Operator};
 
 use super::{
     Cursor, HandleFixups, OutputEntityRef, OutputRelocationEntry, Rewrite,
+    blacklist::{Blacklist, IsSet},
     wasm_emitter::MemArgOffsets,
 };
 use crate::{
     SVec,
+    emit::plan::{AddressingMode, OutputModuleCopyPlan},
     index::Temp,
     linkage::reloc::{
         Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
     },
     typed::{
         DefinedGlobal, EntityBody, EntityKind, ExportNames, FileId, FunctionRef, GlobalRef,
-        data::SpecificLocation,
-        snapshot::{EntitiesSnapshot, FlatEntityRef},
+        data::SpecificLocation, snapshot::EntitiesSnapshot,
     },
 };
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -59,36 +60,27 @@ pub fn global_init_tmp(val_type: wasmparser::ValType) -> SVec<u8, 32> {
 #[derive(derive_more::Debug)]
 pub struct CodeAbsToGot<F>
 where
-    F: Fn(FlatEntityRef) -> bool,
+    Blacklist<F>: IsSet,
 {
     // Temporary globals for constant extraction
     pub global_tmps: BTreeMap<StoreType, GlobalRef>,
     // Symbols (in input space) that need to be always treated as static (not converted to GOT-relative)
-    #[debug("is_static_symbol: <function>")]
-    pub is_static_symbol: F,
+    pub static_symbols: Blacklist<F>,
 }
 
 impl<F> CodeAbsToGot<F>
 where
-    F: Fn(FlatEntityRef) -> bool,
+    Blacklist<F>: IsSet,
 {
-    pub fn new(is_static_symbol: F, builder: &mut crate::typed::ModuleBuilder<'_>) -> Self {
-        let mut instance = Self {
-            global_tmps: BTreeMap::new(),
-            is_static_symbol,
-        };
-        instance.setup(builder).unwrap();
-        instance
-    }
     pub fn is_dyn_symbol(&self, input_snapshot: &EntitiesSnapshot, sym: &EntityKind) -> bool {
         let sym = input_snapshot.pack_ref(*sym);
         // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
         // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
-        !(self.is_static_symbol)(sym)
+        !self.static_symbols.contains(sym)
     }
 
     /// Module related configuration.
-    fn setup(&mut self, builder: &mut crate::typed::ModuleBuilder<'_>) -> Result<()> {
+    fn setup_module(&mut self, builder: &mut crate::typed::ModuleBuilder<'_>) -> Result<()> {
         let memory_base = match builder.mem_spec.mem_start {
             SpecificLocation::GotBased { global, .. } => Some(global),
             _ => None,
@@ -126,10 +118,32 @@ where
 
 impl<'src, F> HandleFixups<'src> for CodeAbsToGot<F>
 where
-    F: Fn(FlatEntityRef) -> bool,
+    Blacklist<F>: IsSet,
 {
     type ExtraData = ();
+    type SetupData = Blacklist<F>;
     type EntityRef = FunctionRef;
+
+    fn setup(
+        shared: Self::SetupData,
+        plan: &OutputModuleCopyPlan,
+        module: &mut crate::typed::ModuleBuilder<'src>,
+    ) -> Result<Option<Self>>
+    where
+        Self: Sized,
+    {
+        if matches!(plan.addressing, AddressingMode::Static) {
+            // No need to create handler if we won't convert any symbol to got-based.
+            return Ok(None);
+        }
+        let mut instance = Self {
+            global_tmps: BTreeMap::new(),
+            static_symbols: shared,
+        };
+        instance.setup_module(module).unwrap();
+        Ok(Some(instance))
+    }
+
     fn create_entry(
         &self,
         _entity_ref: Temp<Self::EntityRef>,
@@ -154,7 +168,7 @@ where
 
 impl<'src, F> CodeAbsToGot<F>
 where
-    F: Fn(FlatEntityRef) -> bool,
+    Blacklist<F>: IsSet,
 {
     fn new_entry(
         &self,

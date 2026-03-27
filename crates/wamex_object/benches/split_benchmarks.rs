@@ -9,7 +9,7 @@ use std::{
 use criterion::{Criterion, criterion_group, criterion_main};
 use wamex_object::{
     ObjectReader, analysis,
-    emit::emit_modules,
+    emit::emit_split_modules,
     typed::{FileLoader, LoadedFile, Module},
 };
 
@@ -138,7 +138,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
         .unwrap();
 
         b.iter(|| {
-            emit_modules(
+            emit_split_modules(
                 black_box(&file_loader),
                 black_box(&split_program_info),
                 |_ident, _bytes| Ok(()),

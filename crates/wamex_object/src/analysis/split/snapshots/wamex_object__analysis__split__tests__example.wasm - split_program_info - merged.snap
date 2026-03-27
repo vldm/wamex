@@ -1,11 +1,11 @@
 ---
-source: crates/wamex_object/src/analysis/split_point.rs
+source: crates/wamex_object/src/analysis/split/mod.rs
 expression: split_info_output
 ---
 === Split Program Structure ===
 
 Module #0: main
-  Defined symbols: 823
+  Defined symbols: 845
     0 <__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static>
     1 <__wasm_split_00static_str00_import_776d8e51aac0782b17e57d45872c52d7_static_str>
     2 <wasm_bindgen::__wbindgen_string_new::hf591ae4d10501fb5>
@@ -35,6 +35,7 @@ Module #0: main
     26 <wasm_bindgen::__wbindgen_describe_closure::h7d02250f8844ec91>
     27 <wasm_split::ensure_loaded::{{closure}}::ha5d82907191a17ce>
     28 <std::sync::poison::mutex::Mutex<T>::lock::h21f886f1174a0319>
+    29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
     30 <core::ptr::drop_in_place<core::option::Option<alloc::vec::Vec<core::task::wake::Waker>>>::h43156b5ad0e71cfd>
     31 <alloc::raw_vec::RawVec<T,A>::grow_one::h0755801e3521229c>
     32 <core::ptr::drop_in_place<async_once_cell::Step>::h0362a8ee02cf7236>
@@ -72,14 +73,18 @@ Module #0: main
     64 <core::ops::function::FnOnce::call_once::h7fd976547ee79da5>
     65 <core::ptr::drop_in_place<wasm_bindgen_futures::future_to_promise<example::_::__wasm_bindgen_generated_print_lazy_loaded_string::{{closure}}>::{{closure}}::{{closure}}>::h2eb914b4914f937d>
     66 <core::fmt::Formatter::pad::hd19c0bc035513691>
+    69 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
     70 <print_lazy_loaded_string>
     71 <__wbindgen_describe_print_lazy_loaded_string>
     72 <dlmalloc::dlmalloc::Dlmalloc<A>::free::h65a3c82591778cf3>
     73 <core::panicking::panic::h7056c16eb2f7d5e2>
     74 <__rustc[79a240ffca3c5d2f]::__rust_realloc>
     75 <dlmalloc::dlmalloc::Dlmalloc<A>::memalign::h685c55c680405513>
+    76 <dlmalloc::dlmalloc::Dlmalloc<A>::unlink_chunk::hab175a273edf7115>
     77 <dlmalloc::dlmalloc::Dlmalloc<A>::dispose_chunk::h7ad12a696dbfcdb3>
     78 <alloc::raw_vec::finish_grow::h6095165c77420f23>
+    79 <alloc::raw_vec::capacity_overflow::h186860d558d1cdb1>
+    80 <core::panicking::panic_fmt::h95bef13e22b90182>
     81 <alloc::raw_vec::RawVecInner<A>::reserve::do_reserve_and_handle::hd3aa1d9f2af0f9c7>
     82 <core::fmt::write::hb85a3dd9b171f7ca>
     83 <core::result::unwrap_failed::h83f5069e4f517ac9>
@@ -103,6 +108,7 @@ Module #0: main
     101 <async_once_cell::with_lock::hf1ee30519e479ed2>
     102 <core::ptr::drop_in_place<async_once_cell::QuickInitGuard>::h505400b5c5bbd6a2>
     103 <<async_once_cell::QuickInitGuard as core::fmt::Debug>::fmt::h1035a711cfb7884a>
+    104 <__rustc[79a240ffca3c5d2f]::rust_begin_unwind>
     105 <core::fmt::Formatter::pad_integral::write_prefix::h2ab7eaf03dfcbbed>
     106 <core::panicking::assert_failed_inner::hbc821832ff9b282b>
     107 <<&T as core::fmt::Debug>::fmt::h72573d4c59e2292e>
@@ -659,8 +665,15 @@ Module #0: main
     658 <__wbindgen_describe___wbg_formatToParts_7984a871e3e7e0f0>
     659 <__wbindgen_describe___wbg_resolvedOptions_3d345d8b54a4d098>
     660 <__wbindgen_describe___wbg_supportedLocalesOf_6f10d64b530d3c4d>
+    661 <core::panic::PanicPayload::as_str::h389694c361f86e8b>
+    662 <std::panicking::rust_panic_with_hook::h040aa1598efd68d7>
+    663 <__rustc[79a240ffca3c5d2f]::rust_panic>
     664 <<&T as core::fmt::Debug>::fmt::h8667e4ebc2e9bb0f>
     665 <<std::thread::local::AccessError as core::fmt::Debug>::fmt::h61557c28914c1fe4>
+    666 <std::sys::backtrace::__rust_end_short_backtrace::h5e5c59d3dbd07730>
+    667 <std::panicking::begin_panic_handler::{{closure}}::h60949c76d832880a>
+    668 <<std::panicking::begin_panic_handler::StaticStrPayload as core::panic::PanicPayload>::as_str::hcbeda6b3a1c34a85>
+    669 <dlmalloc::dlmalloc::Dlmalloc<A>::insert_large_chunk::h99529485956a12a6>
     670 <<once_cell::unsync::Lazy<T,F> as core::ops::deref::Deref>::deref::h6644cb9f239593f5>
     671 <core::ptr::drop_in_place<core::result::Result<(),core::cell::Cell<wasm_bindgen::externref::Slab>>>::hc6123c2479069e5d>
     672 <__externref_table_alloc>
@@ -697,10 +710,11 @@ Module #0: main
     703 <wasm_bindgen_futures::task::singlethread::Task::into_raw_waker::raw_drop::h62df557cca4cd3fd>
     704 <__wasm_split_load_callback>
     705 <memcmp>
+    706 <__stack_pointer>
     707 <__data_end>
     708 <__heap_base>
-    709 <table0>
-    710 <memory>
+    709 <__indirect_function_table>
+    710 <__memory_base>
     711 <.Lanon.79b81406656296db68a0b7034c081fc6.43>
     712 <.Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.16>
     713 <.Lanon.51aa6f4db30a08e7412a135b574a635e.3>
@@ -731,6 +745,8 @@ Module #0: main
     742 <.Lanon.8353eafc0686ece12291357d89b43616.23>
     743 <.Lanon.79b81406656296db68a0b7034c081fc6.2>
     744 <.Lanon.79b81406656296db68a0b7034c081fc6.7>
+    745 <.Lanon.79b81406656296db68a0b7034c081fc6.8>
+    746 <.Lanon.79b81406656296db68a0b7034c081fc6.9>
     747 <.Lanon.79b81406656296db68a0b7034c081fc6.11>
     748 <.Lanon.79b81406656296db68a0b7034c081fc6.22>
     749 <.Lanon.79b81406656296db68a0b7034c081fc6.41>
@@ -816,8 +832,14 @@ Module #0: main
     829 <example::string_from_static::{{closure}}::__wasm_split_loader::{{closure}}::VAL::ha5845909e0ab183a>
     830 <js_sys::global::GLOBAL::{{closure}}::VAL::h7aff4bbc5d5000e6.0>
     831 <js_sys::global::GLOBAL::{{closure}}::VAL::h7aff4bbc5d5000e6.1>
+    832 <std::panicking::HOOK::h6335f857b7f93101.0>
+    833 <std::panicking::panic_count::GLOBAL_PANIC_COUNT::h8ac90f3d55706855>
+    834 <std::sys::alloc::wasm::DLMALLOC::h6f413374bf53daef>
+    835 <std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.0>
+    836 <std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.1>
     837 <wasm_bindgen::__rt::GLOBAL_EXNDATA::h0d1201b0e0d41664.0>
     838 <type0>
+    839 <type1>
     840 <type2>
     841 <type3>
     842 <type4>
@@ -829,29 +851,22 @@ Module #0: main
     848 <type10>
     849 <type11>
     850 <type12>
-  Imports: 10
+  Exports: 5
     29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
     69 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
-    76 <dlmalloc::dlmalloc::Dlmalloc<A>::unlink_chunk::hab175a273edf7115>
-    79 <alloc::raw_vec::capacity_overflow::h186860d558d1cdb1>
-    80 <core::panicking::panic_fmt::h95bef13e22b90182>
-    669 <dlmalloc::dlmalloc::Dlmalloc<A>::insert_large_chunk::h99529485956a12a6>
     706 <__stack_pointer>
-    709 <table0>
-    834 <std::sys::alloc::wasm::DLMALLOC::h6f413374bf53daef>
-    839 <type1>
-  Exports: 2
-    709 <table0>
-    710 <memory>
+    709 <__indirect_function_table>
+    710 <__memory_base>
 
 Module #1: static_str
   Defined symbols: 2
     67 <__wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str>
     735 <.Lanon.8353eafc0686ece12291357d89b43616.15>
-  Imports: 3
+  Imports: 4
     29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
-    709 <table0>
-    710 <memory>
+    706 <__stack_pointer>
+    709 <__indirect_function_table>
+    710 <__memory_base>
   Split points: 1
     "776d8e51aac0782b17e57d45872c52d7_static_str"
 
@@ -861,57 +876,11 @@ Module #2: string_from_static
     717 <.Lanon.8353eafc0686ece12291357d89b43616.8>
     730 <.Lanon.8353eafc0686ece12291357d89b43616.9>
     738 <.Lanon.8353eafc0686ece12291357d89b43616.18>
-  Imports: 4
+  Imports: 5
     29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
     69 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
-    709 <table0>
-    710 <memory>
+    706 <__stack_pointer>
+    709 <__indirect_function_table>
+    710 <__memory_base>
   Split points: 1
     "17997317cc392c52ed3bea15880aab65_string_from_static"
-
-Module #3: main_static_str_string_from_static
-  Defined symbols: 4
-    29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
-    76 <dlmalloc::dlmalloc::Dlmalloc<A>::unlink_chunk::hab175a273edf7115>
-    669 <dlmalloc::dlmalloc::Dlmalloc<A>::insert_large_chunk::h99529485956a12a6>
-    834 <std::sys::alloc::wasm::DLMALLOC::h6f413374bf53daef>
-  Imports: 2
-    709 <table0>
-    710 <memory>
-  Exports: 4
-    29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
-    76 <dlmalloc::dlmalloc::Dlmalloc<A>::unlink_chunk::hab175a273edf7115>
-    669 <dlmalloc::dlmalloc::Dlmalloc<A>::insert_large_chunk::h99529485956a12a6>
-    834 <std::sys::alloc::wasm::DLMALLOC::h6f413374bf53daef>
-
-Module #4: main_string_from_static
-  Defined symbols: 19
-    69 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
-    79 <alloc::raw_vec::capacity_overflow::h186860d558d1cdb1>
-    80 <core::panicking::panic_fmt::h95bef13e22b90182>
-    104 <__rustc[79a240ffca3c5d2f]::rust_begin_unwind>
-    661 <core::panic::PanicPayload::as_str::h389694c361f86e8b>
-    662 <std::panicking::rust_panic_with_hook::h040aa1598efd68d7>
-    663 <__rustc[79a240ffca3c5d2f]::rust_panic>
-    666 <std::sys::backtrace::__rust_end_short_backtrace::h5e5c59d3dbd07730>
-    667 <std::panicking::begin_panic_handler::{{closure}}::h60949c76d832880a>
-    668 <<std::panicking::begin_panic_handler::StaticStrPayload as core::panic::PanicPayload>::as_str::hcbeda6b3a1c34a85>
-    706 <__stack_pointer>
-    709 <table0>
-    745 <.Lanon.79b81406656296db68a0b7034c081fc6.8>
-    746 <.Lanon.79b81406656296db68a0b7034c081fc6.9>
-    832 <std::panicking::HOOK::h6335f857b7f93101.0>
-    833 <std::panicking::panic_count::GLOBAL_PANIC_COUNT::h8ac90f3d55706855>
-    835 <std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.0>
-    836 <std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.1>
-    839 <type1>
-  Imports: 2
-    709 <table0>
-    710 <memory>
-  Exports: 6
-    69 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>
-    79 <alloc::raw_vec::capacity_overflow::h186860d558d1cdb1>
-    80 <core::panicking::panic_fmt::h95bef13e22b90182>
-    706 <__stack_pointer>
-    709 <table0>
-    839 <type1>

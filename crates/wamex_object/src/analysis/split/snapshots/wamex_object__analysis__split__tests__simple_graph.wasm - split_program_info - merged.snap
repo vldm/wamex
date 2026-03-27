@@ -1,5 +1,5 @@
 ---
-source: crates/wamex_object/src/analysis/split_point.rs
+source: crates/wamex_object/src/analysis/split/mod.rs
 expression: split_info_output
 ---
 === Split Program Structure ===
@@ -14,13 +14,14 @@ Module #0: main
     5 <__stack_pointer>
     6 <__data_end>
     7 <__heap_base>
-    8 <table0>
-    9 <memory>
+    8 <__indirect_function_table>
+    9 <__memory_base>
     10 <.Lanon.40cffdd5158028b640e87266bd095959.0>
     11 <.Lanon.40cffdd5158028b640e87266bd095959.1>
     12 <.Lanon.40cffdd5158028b640e87266bd095959.2>
     13 <.Lswitch.table.indirect_fn>
     14 <type0>
-  Exports: 2
-    8 <table0>
-    9 <memory>
+  Exports: 3
+    5 <__stack_pointer>
+    8 <__indirect_function_table>
+    9 <__memory_base>

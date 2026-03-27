@@ -127,7 +127,7 @@ pub fn roundtrip(args: Roundtrip) -> Result<()> {
         split_program_info.output_modules.len() == 1,
         "Roundtrip should produce single module",
     );
-    crate::emit::emit_modules(
+    crate::emit::emit_split_modules(
         &loader,
         &split_program_info,
         |_: &String, data: &[u8]| -> Result<()> {
@@ -197,7 +197,7 @@ pub fn split_inner(
         println!("Dependency graph: {dep_graph:#?}");
     }
 
-    crate::emit::emit_modules(&loader, &split_program_info, |identifier, data| {
+    crate::emit::emit_split_modules(&loader, &split_program_info, |identifier, data| {
         emit_module_fn(ModuleId::new(&identifier.to_string()), data)
     })?;
 

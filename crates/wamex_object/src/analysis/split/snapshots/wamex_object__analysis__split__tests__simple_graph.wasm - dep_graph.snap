@@ -1,5 +1,5 @@
 ---
-source: crates/wamex_object/src/analysis/split_point.rs
+source: crates/wamex_object/src/analysis/split/mod.rs
 expression: dep_graph_output
 ---
 0 func[0] <"hello_world"> (size=20)
@@ -19,7 +19,7 @@ expression: dep_graph_output
 
 3 func[3] <"indirect_fn"> (size=95)
   -> 5 <__stack_pointer>
-  -> 8 <table0>
+  -> 8 <__indirect_function_table>
   -> 13 data[0:528+12]  <".Lswitch.table.indirect_fn"> (size=12)
   -> 14 <type0>
 
@@ -36,7 +36,7 @@ expression: dep_graph_output
   <-P 3 func[3] <"indirect_fn"> (size=95)
   <-P 4 func[4] <"no_inline_fn"> (size=143)
 
-8 <table0>
+8 <__indirect_function_table>
   <-P 3 func[3] <"indirect_fn"> (size=95)
 
 10 data[0:500+13]  <".Lanon.40cffdd5158028b640e87266bd095959.0"> (size=13)

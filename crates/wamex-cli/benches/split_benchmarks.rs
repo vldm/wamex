@@ -129,7 +129,7 @@ fn benchmark_emit_modules(c: &mut Criterion) {
         emit::merge_main_shared(&mut split_program_info);
         b.iter(|| {
             let mut output_counter = 0;
-            let result = emit::emit_modules(
+            let result = emit::emit_split_modules(
                 black_box(&info),
                 false,
                 black_box(&split_program_info),

@@ -17,10 +17,6 @@ use crate::{
 
 impl SplitProgramInfo {
     pub fn into_emit_context<'src>(&self, input_files: &'src FileLoader) -> EmitContext<'src> {
-        todo - !();
-        // todo: implement main routine - convert split point import fn to defined with indirect fn layout
-        // TODO: mark __stack_pointer and __indirect_function_table
-        // as exported
         let snapshot = input_files.get_snapshot();
         let outputs = self
             .output_modules

@@ -12,7 +12,10 @@ use crate::{
     analysis::SplitProgramInfo,
     emit::{
         memory_layout::{DataSymbolsOffsets, SegmentLayout},
-        modify::{OutputEntityRef, wasm_emitter},
+        modify::{
+            OutputEntityRef, code_abs_to_got::CodeAbsToGot, data_abs_to_got::DataAbsToGot,
+            wasm_emitter,
+        },
         plan::OutputId,
         relocation::{FunctionInfo, ModuleLayout, resolver::OutputEntitiesResolver},
     },
@@ -588,7 +591,7 @@ impl<'src> Module<'src> {
 ///
 ///  Emit output modules, from split program info.
 ///
-pub fn emit_modules(
+pub fn emit_split_modules(
     input_files: &FileLoader,
     program_info: &SplitProgramInfo,
     emit_fn: impl FnMut(&OutputId, &[u8]) -> anyhow::Result<()>,
@@ -597,8 +600,13 @@ pub fn emit_modules(
     let mut emit_ctx = program_info.into_emit_context(input_files);
     let main_deps = &program_info.output_modules[0].1.defined_symbols;
     let is_static = |e| main_deps.contains(&e);
+    let blacklist_from_conversion = Some(modify::Blacklist::new(is_static));
+    emit_ctx.copy_entities::<CodeAbsToGot<_>, DataAbsToGot<_>>(
+        blacklist_from_conversion.clone(),
+        blacklist_from_conversion,
+    )?;
 
-    emit_ctx.emit_modules(is_static, emit_fn)
+    emit_ctx.emit_modules(emit_fn)
 }
 
 #[doc(hidden)]
@@ -627,7 +635,7 @@ pub fn split_routine_generic_test(src: &[u8]) -> anyhow::Result<Vec<(OutputId, V
     .unwrap();
 
     let mut result = vec![];
-    emit_modules(&file_loader, &split, |ident, bytes| {
+    emit_split_modules(&file_loader, &split, |ident, bytes| {
         log::debug!("Emitted module {ident} with size {}", bytes.len());
         result.push((ident.clone(), bytes.to_vec()));
         Ok(())
@@ -644,7 +652,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        emit::plan::{EmitContext, OutputModule},
+        emit::{
+            modify::NoFixup,
+            plan::{EmitContext, OutputModule},
+        },
         raw::DataSegmentId,
         typed::{
             DefinedDataChunk, EntityBody, ExportNames, FileLoader, ImportedFunction, LoadedFile,
@@ -691,7 +702,7 @@ mod tests {
         let (_, (_, plan)) = ctx.output_plans.into_iter().next().unwrap();
         let snapshot = file_loader.get_snapshot();
         let OutputModule { module: output, .. } = plan
-            .copy_entities(&file_loader, &snapshot, |_| true)
+            .copy_entities::<NoFixup<_>, NoFixup<_>>(&file_loader, &snapshot, None, None)
             .unwrap();
 
         let mut buf = wasm_encoder::Module::new();

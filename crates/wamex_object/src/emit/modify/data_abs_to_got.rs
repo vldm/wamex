@@ -7,19 +7,22 @@ use anyhow::{Result, bail};
 use smallvec::SmallVec;
 use wasmparser::FuncType;
 
-use super::{Cursor, EntityRelocationEntry, HandleFixups, Rewrite};
+use super::{
+    Cursor, EntityRelocationEntry, HandleFixups, Rewrite,
+    blacklist::{Blacklist, IsSet},
+};
 use crate::{
     SVec,
     emit::{
         modify::wasm_emitter::Encoder,
+        plan::{AddressingMode, OutputModuleCopyPlan},
         relocation::{EntityLocation, resolver::OutputEntitiesResolver},
     },
     index::Temp,
     linkage::reloc::{Encoding, Relative, RelocationWidth},
     typed::{
         DefinedFunction, EntityBody, EntityKind, ExportNames, FileId, FunctionRef,
-        data::DataSymbolRef,
-        snapshot::{EntitiesSnapshot, FlatEntityRef},
+        data::DataSymbolRef, snapshot::EntitiesSnapshot,
     },
 };
 
@@ -42,64 +45,23 @@ pub struct DataSymbolInit<S = Temp<DataSymbolRef>, RelocSymbol = EntityLocation>
 #[derive(derive_more::Debug)]
 pub struct DataAbsToGot<F>
 where
-    F: Fn(FlatEntityRef) -> bool,
+    Blacklist<F>: IsSet,
 {
     // Symbols (in input space) that need to be always treated as static (not converted to GOT-relative)
     #[debug("is_static_symbol: <function>")]
-    pub is_static_symbol: F,
+    pub static_symbols: Blacklist<F>,
     pub start_fn: Temp<FunctionRef>,
 }
 
-// Extra impl block to place method into DataAbsToGot namespace.
-impl DataAbsToGot<fn(FlatEntityRef) -> bool> {
-    /// Convert temp ids to stable and resolve input symbol_ids to output ones.
-    pub fn convert_to_stable_refs_and_resolve(
-        module: &mut crate::typed::Module,
-        module_info: &OutputEntitiesResolver,
-        temps: Vec<DataSymbolInit>,
-    ) -> Vec<FinalDataSymbolInit> {
-        temps
-            .into_iter()
-            .map(|temp| {
-                let relocated_symbol = module_info
-                    .get_output_entity(&temp.relocated_symbol)
-                    .expect("Relocated symbol be defined in output module at this point");
-                let storage = module.data.stable_id(temp.storage);
-                FinalDataSymbolInit {
-                    storage,
-                    relocated_symbol,
-                    is_got_based: temp.is_got_based,
-                }
-            })
-            .collect()
-    }
-}
 impl<F> DataAbsToGot<F>
 where
-    F: Fn(FlatEntityRef) -> bool,
+    Blacklist<F>: IsSet,
 {
-    pub fn new(is_static_symbol: F, module: &mut crate::typed::ModuleBuilder) -> Self {
-        let start_fn = module.functions.push_defined(DefinedFunction {
-            entity_type: FuncType::new([], []),
-            body: EntityBody::New {
-                new_relocs: SmallVec::new(),
-                new_bytes: SmallVec::new(),
-            },
-            name: Some("__wamex_reloc_init".into()),
-            export_as: ExportNames::default(),
-        });
-        module.extra_state.start_functions.push(start_fn);
-
-        Self {
-            is_static_symbol,
-            start_fn,
-        }
-    }
     pub fn is_dyn_symbol(&self, input_snapshot: &EntitiesSnapshot, sym: &EntityKind) -> bool {
         let sym = input_snapshot.pack_ref(*sym);
         // 1. For main - there should be no imported deps. (CodeRelocationHandler shouldn't be constructed for main module)
         // 2. for other modules - static symbols can be refered as-is, other should be converted to GOT-relative.
-        !(self.is_static_symbol)(sym)
+        !self.static_symbols.contains(sym)
     }
 
     pub fn fill_start_fn(
@@ -205,42 +167,27 @@ where
         })?;
         Ok(())
     }
-}
-
-impl<'src, F> HandleFixups<'src> for DataAbsToGot<F>
-where
-    F: Fn(FlatEntityRef) -> bool,
-{
-    type ExtraData = DataSymbolInit;
-    type EntityRef = DataSymbolRef;
-    fn create_entry(
-        &self,
-        entity_ref: Temp<Self::EntityRef>,
-        buffer: Cursor<'src>,
-        (input_file, input_snapshot): (FileId, &EntitiesSnapshot),
-        entry: EntityRelocationEntry,
-    ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
-        match entry.symbol_id {
-            EntityKind::Function(_) | EntityKind::DataSymbol(_) => {
-                // TODO: move outside of this creation
-                Self::check_whitelisted_data_relocation(&entry)?;
-                let extra = DataSymbolInit {
-                    storage: entity_ref,
-                    relocated_symbol: EntityLocation::from_parts(input_file, entry.symbol_id),
-                    is_got_based: self.is_dyn_symbol(input_snapshot, &entry.symbol_id),
-                };
-                return Ok(Some((self.new_entry(buffer, entry)?, extra)));
-            }
-            _ => {}
-        }
-
-        Ok(None)
+    /// Convert temp ids to stable and resolve input symbol_ids to output ones.
+    pub fn convert_to_stable_refs_and_resolve(
+        module: &mut crate::typed::Module,
+        module_info: &OutputEntitiesResolver,
+        temps: Vec<DataSymbolInit>,
+    ) -> Vec<FinalDataSymbolInit> {
+        temps
+            .into_iter()
+            .map(|temp| {
+                let relocated_symbol = module_info
+                    .get_output_entity(&temp.relocated_symbol)
+                    .expect("Relocated symbol be defined in output module at this point");
+                let storage = module.data.stable_id(temp.storage);
+                FinalDataSymbolInit {
+                    storage,
+                    relocated_symbol,
+                    is_got_based: temp.is_got_based,
+                }
+            })
+            .collect()
     }
-}
-impl<F> DataAbsToGot<F>
-where
-    F: Fn(FlatEntityRef) -> bool,
-{
     fn new_entry(&self, _buffer: Cursor<'_>, entry: EntityRelocationEntry) -> Result<Rewrite> {
         debug_assert_eq!(entry.encoding, Encoding::Fixed);
         debug_assert_eq!(entry.relocation_range().len(), 4);
@@ -264,5 +211,77 @@ where
             bail!("Relocation memory pointers is currently not supported")
         }
         Ok(())
+    }
+}
+
+impl<'src, F> HandleFixups<'src> for DataAbsToGot<F>
+where
+    Blacklist<F>: IsSet,
+{
+    type SetupData = Blacklist<F>;
+    type ExtraData = DataSymbolInit;
+    type EntityRef = DataSymbolRef;
+
+    fn setup(
+        shared: Self::SetupData,
+        plan: &OutputModuleCopyPlan,
+        module: &mut crate::typed::ModuleBuilder<'src>,
+    ) -> Result<Option<Self>>
+    where
+        Self: Sized,
+    {
+        if matches!(plan.addressing, AddressingMode::Static) {
+            // No need to create handler if we won't convert any symbol to got-based.
+            return Ok(None);
+        }
+
+        let start_fn = module.functions.push_defined(DefinedFunction {
+            entity_type: FuncType::new([], []),
+            body: EntityBody::New {
+                new_relocs: SmallVec::new(),
+                new_bytes: SmallVec::new(),
+            },
+            name: Some("__wamex_reloc_init".into()),
+            export_as: ExportNames::default(),
+        });
+        module.extra_state.start_functions.push(start_fn);
+
+        Ok(Some(Self {
+            static_symbols: shared,
+            start_fn,
+        }))
+    }
+
+    fn finish(
+        &self,
+        module: &mut crate::typed::Module<'src>,
+        resolver: &OutputEntitiesResolver,
+        agregated_data: Vec<Self::ExtraData>,
+    ) -> Result<()> {
+        let final_data = Self::convert_to_stable_refs_and_resolve(module, resolver, agregated_data);
+        self.fill_start_fn(module, final_data)
+    }
+    fn create_entry(
+        &self,
+        entity_ref: Temp<Self::EntityRef>,
+        buffer: Cursor<'src>,
+        (input_file, input_snapshot): (FileId, &EntitiesSnapshot),
+        entry: EntityRelocationEntry,
+    ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
+        match entry.symbol_id {
+            EntityKind::Function(_) | EntityKind::DataSymbol(_) => {
+                // TODO: move outside of this creation
+                Self::check_whitelisted_data_relocation(&entry)?;
+                let extra = DataSymbolInit {
+                    storage: entity_ref,
+                    relocated_symbol: EntityLocation::from_parts(input_file, entry.symbol_id),
+                    is_got_based: self.is_dyn_symbol(input_snapshot, &entry.symbol_id),
+                };
+                return Ok(Some((self.new_entry(buffer, entry)?, extra)));
+            }
+            _ => {}
+        }
+
+        Ok(None)
     }
 }

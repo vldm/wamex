@@ -16,7 +16,7 @@ use itertools::Itertools;
 
 use crate::{
     emit::{
-        modify::{self, code_abs_to_got::CodeAbsToGot, data_abs_to_got::DataAbsToGot},
+        modify::{self, HandleFixups},
         relocation::{
             EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
             resolver::OutputEntitiesResolver,
@@ -26,8 +26,8 @@ use crate::{
     linkage::file_db::FileRelocs,
     typed::{
         Building, DefinedEntity, EntityBody, EntityKind, EntityType, ExportNames, FileId,
-        FileLoader, GlobalRef, ImportOrDefined, ImportedEntity, Module, TempEntityKind,
-        WithExtraInfo,
+        FileLoader, FunctionRef, GlobalRef, ImportOrDefined, ImportedEntity, Module,
+        TempEntityKind, WithExtraInfo,
         data::{DataSymbolRef, MemSpec},
         snapshot::{FlatEntityRef, MultiSnapshot},
     },
@@ -117,17 +117,17 @@ impl OutputModuleCopyPlan {
             .clone()
     }
     /// Execute the plan and copy entities from input to output modules.
-    pub fn copy_entities<'src, F>(
+    pub fn copy_entities<'src, C, D>(
         &self,
         input_files: &'src FileLoader,
         snapshot: &'_ MultiSnapshot,
-        is_static_symbol: F,
+        code_modifier_shared: Option<C::SetupData>,
+        data_modifier_shared: Option<D::SetupData>,
     ) -> Result<OutputModule<'src>>
     where
-        F: Fn(FlatEntityRef) -> bool + Clone,
+        C: HandleFixups<'src, EntityRef = FunctionRef>,
+        D: HandleFixups<'src, EntityRef = DataSymbolRef>,
     {
-        let is_static = matches!(self.addressing, AddressingMode::Static);
-
         let mem_spec = Self::collect_mem_spec(input_files);
         log::info!(
             "Applying plan for output module with {} entities and {} imports",
@@ -137,12 +137,17 @@ impl OutputModuleCopyPlan {
         let mut action_span = tracing::info_span!("Copy entities").entered();
         let mut module: Module<'src, Building> = Module::new();
 
-        // TODO: implement setup/finish methods for ModifyHandle and allow adding more than one.
-        let code_modifier =
-            (!is_static).then(|| CodeAbsToGot::new(is_static_symbol.clone(), &mut module));
-        let data_modifier = (!is_static).then(|| DataAbsToGot::new(is_static_symbol, &mut module));
+        let code_modifier = code_modifier_shared
+            .map(|shared| C::setup(shared, self, &mut module))
+            .transpose()?
+            .flatten();
+        let data_modifier = data_modifier_shared
+            .map(|shared| D::setup(shared, self, &mut module))
+            .transpose()?
+            .flatten();
 
         let mut data_modifier_artifacts = Vec::new();
+        let mut code_modifier_artifacts = Vec::new();
 
         // map of entities from input file to entities in output module.
         let mut file_info = OutputEntitiesResolver::new();
@@ -172,7 +177,7 @@ impl OutputModuleCopyPlan {
                         let new = module.$entity_type.push_entity(entity);
                         ref_map.push((EntityLocation::from_parts(file_id, $id.into()), new.into()));
                     };
-                    ($entity_type:ident with $modifier:ident $($artifacts:ident)? => $id:expr) => {
+                    ($entity_type:ident with $modifier:ident $artifacts:ident => $id:expr) => {
                         let new = match file.module.$entity_type.get_entity($id) {
                             ImportOrDefined::Import(i) => {
                                 let mut entity = i.clone();
@@ -192,7 +197,6 @@ impl OutputModuleCopyPlan {
 
                                     let mut modified_body = b.clone();
                                     let entity_ref = module.$entity_type.next_defined_key();
-                                    #[allow(unused, reason = "only used in data modifier")]
                                     let artifacts = modify::create_fixup_for_entity(
                                         &mut modified_body,
                                         entity_ref,
@@ -200,7 +204,7 @@ impl OutputModuleCopyPlan {
                                         relocs,
                                         modifier,
                                     )?;
-                                    $($artifacts.extend(artifacts);)?
+                                    $artifacts.extend(artifacts);
 
                                     DefinedEntity {
                                         body: modified_body.into(),
@@ -225,7 +229,7 @@ impl OutputModuleCopyPlan {
                 }
                 match entity {
                     EntityKind::Function(f) => {
-                        copy_entity!(functions with code_modifier => f);
+                        copy_entity!(functions with code_modifier code_modifier_artifacts=> f);
                     }
                     EntityKind::Global(g) => {
                         copy_entity!(globals => g);
@@ -343,14 +347,11 @@ impl OutputModuleCopyPlan {
         replace_span!(&mut action_span, tracing::info_span!("resolve_relocs"));
         // resolve got entries in code modifier, and fill start function body
         // do it before copy_and_resolve_relocs to ensure that all relocs are copied into file_relocs.
-        let data_modifier_artifacts_mapped = DataAbsToGot::convert_to_stable_refs_and_resolve(
-            &mut module,
-            &file_info,
-            data_modifier_artifacts,
-        );
-
+        if let Some(modifier) = code_modifier {
+            modifier.finish(&mut module, &file_info, code_modifier_artifacts)?;
+        }
         if let Some(modifier) = data_modifier {
-            modifier.fill_start_fn(&mut module, data_modifier_artifacts_mapped)?;
+            modifier.finish(&mut module, &file_info, data_modifier_artifacts)?;
         }
         // Now copy and resolve relocs.
         let relocs = module.copy_and_resolve_relocs(&file_info, input_files)?;
@@ -408,9 +409,16 @@ impl<'src> EmitContext<'src> {
         }
     }
     #[tracing::instrument(skip_all, name = "Copy entities")]
-    pub fn copy_entities<F>(&mut self, is_static: F) -> Result<()>
+    pub fn copy_entities<C, D>(
+        &mut self,
+        code_modifier_shared: Option<C::SetupData>,
+        data_modifier_shared: Option<D::SetupData>,
+    ) -> Result<()>
     where
-        F: Fn(FlatEntityRef) -> bool + Clone,
+        C: HandleFixups<'src, EntityRef = FunctionRef>,
+        D: HandleFixups<'src, EntityRef = DataSymbolRef>,
+        C::SetupData: Clone,
+        D::SetupData: Clone,
     {
         let input_files = self.input_files;
         let snapshot = &self.snapshot;
@@ -418,7 +426,12 @@ impl<'src> EmitContext<'src> {
         let mut outputs = PrimaryMap::new();
 
         for (_file_id, (_name, plan)) in &self.output_plans {
-            let output = plan.copy_entities(input_files, snapshot, is_static.clone())?;
+            let output = plan.copy_entities::<C, D>(
+                input_files,
+                snapshot,
+                code_modifier_shared.clone(),
+                data_modifier_shared.clone(),
+            )?;
             outputs.push(output);
         }
         self.output_modules = outputs;
@@ -495,16 +508,17 @@ impl<'src> EmitContext<'src> {
         Ok(())
     }
     ///
-    ///  Emit output modules, from split program info.
+    /// Emit output modules, from split program info.
     ///
     #[tracing::instrument(skip_all)]
     pub fn emit_modules(
         &mut self,
-        is_static: impl Fn(FlatEntityRef) -> bool + Clone,
         emit_fn: impl FnMut(&OutputId, &[u8]) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        // 1. build modules
-        self.copy_entities(is_static)?;
+        assert!(
+            self.output_plans.len() == self.output_modules.len(),
+            "Output plans should be generated for all output modules before emitting"
+        );
 
         // 2. Build layouts
         self.build_layouts()?;
