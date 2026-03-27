@@ -122,7 +122,7 @@ pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
 
 /// Format a SplitProgramInfo into a human-readable string for snapshot testing
 pub fn format_split_program_info(
-    split_info: &crate::analysis::split_point::SplitProgramInfo,
+    split_info: &crate::analysis::split::SplitProgramInfo,
     info: &Module,
 ) -> String {
     use std::fmt::Write;

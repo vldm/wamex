@@ -92,6 +92,12 @@ pub trait HandleFixups<'src> {
     type EntityRef: Copy;
     type ExtraData;
 
+    /// Setup the handler to work with new module.
+    ///
+    /// This function is called once per module,
+    /// state left of previous module can be safely removed, ignored.
+    ///
+    /// The order of processing is not guaranteed.
     fn setup(&mut self, _module: &mut crate::typed::ModuleBuilder<'src>) -> Result<()> {
         Ok(())
     }

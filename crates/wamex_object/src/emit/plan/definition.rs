@@ -73,6 +73,8 @@ pub enum CopySpec {
 }
 
 impl CopySpec {
+    // we can add prefix or simplify name,
+    // but if we modify name - we should keep special entities recognizable (__memory_base, __table_base, __stack_pointer, __indirect_function_table)
     pub fn wamex_export(export_name: String) -> Self {
         Self::WithExport { export_name }
     }

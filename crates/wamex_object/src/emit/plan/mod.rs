@@ -161,11 +161,9 @@ impl OutputModuleCopyPlan {
             })
             .chunk_by(|(file_id, _, _, _)| *file_id);
 
-        // entity_iter(input_files, snapshot, .map(|(e, c)| (*e, c)));
         for (file_id, group) in copy_entities.into_iter() {
             let snapshot = snapshot.file_snapshot(file_id);
 
-            // TODO: Macro that will add export fields to entity from copy.
             for (_, file, entity, copy) in group {
                 macro_rules! copy_entity {
                     ($entity_type:ident => $id:expr) => {

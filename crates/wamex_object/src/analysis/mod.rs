@@ -5,9 +5,9 @@
 
 pub(crate) mod debug;
 mod dep_graph;
-mod split_point;
+mod split;
 #[cfg(test)]
 pub mod testing;
 
 pub use dep_graph::*;
-pub use split_point::*;
+pub use split::*;
