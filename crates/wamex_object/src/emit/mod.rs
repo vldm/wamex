@@ -12,10 +12,7 @@ use crate::{
     analysis::SplitProgramInfo,
     emit::{
         memory_layout::{DataSymbolsOffsets, SegmentLayout},
-        modify::{
-            OutputEntityRef, code_abs_to_got::CodeAbsToGot, data_abs_to_got::DataAbsToGot,
-            wasm_emitter,
-        },
+        modify::{OutputEntityRef, wasm_emitter},
         plan::OutputId,
         relocation::{FunctionInfo, ModuleLayout, resolver::OutputEntitiesResolver},
     },
@@ -601,10 +598,7 @@ pub fn emit_split_modules(
     let main_deps = &program_info.output_modules[0].1.defined_symbols;
     let is_static = |e| main_deps.contains(&e);
     let blacklist_from_conversion = Some(modify::Blacklist::new(is_static));
-    emit_ctx.copy_entities::<CodeAbsToGot<_>, DataAbsToGot<_>>(
-        blacklist_from_conversion.clone(),
-        blacklist_from_conversion,
-    )?;
+    emit_ctx.copy_entities::<modify::AbsToGot<_>>(blacklist_from_conversion)?;
 
     emit_ctx.emit_modules(emit_fn)
 }
@@ -653,7 +647,7 @@ mod tests {
     use super::*;
     use crate::{
         emit::{
-            modify::NoFixup,
+            modify::NoModification,
             plan::{EmitContext, OutputModule},
         },
         raw::DataSegmentId,
@@ -702,7 +696,7 @@ mod tests {
         let (_, (_, plan)) = ctx.output_plans.into_iter().next().unwrap();
         let snapshot = file_loader.get_snapshot();
         let OutputModule { module: output, .. } = plan
-            .copy_entities::<NoFixup<_>, NoFixup<_>>(&file_loader, &snapshot, None, None)
+            .copy_entities::<NoModification>(&file_loader, &snapshot, None)
             .unwrap();
 
         let mut buf = wasm_encoder::Module::new();

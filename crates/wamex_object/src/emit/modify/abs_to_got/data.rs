@@ -7,14 +7,15 @@ use anyhow::{Result, bail};
 use smallvec::SmallVec;
 use wasmparser::FuncType;
 
-use super::{
-    Cursor, EntityRelocationEntry, HandleFixups, Rewrite,
-    blacklist::{Blacklist, IsSet},
-};
 use crate::{
     SVec,
     emit::{
-        modify::wasm_emitter::Encoder,
+        modify::{
+            Cursor, EntityRelocationEntry, Rewrite,
+            abs_to_got::FixupFromRelocs,
+            blacklist::{Blacklist, IsSet},
+            wasm_emitter::Encoder,
+        },
         plan::{AddressingMode, OutputModuleCopyPlan},
         relocation::{EntityLocation, resolver::OutputEntitiesResolver},
     },
@@ -214,7 +215,7 @@ where
     }
 }
 
-impl<'src, F> HandleFixups<'src> for DataAbsToGot<F>
+impl<'src, F> FixupFromRelocs<'src> for DataAbsToGot<F>
 where
     Blacklist<F>: IsSet,
 {

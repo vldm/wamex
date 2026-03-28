@@ -1,24 +1,22 @@
 use anyhow::Result;
 pub use blacklist::Blacklist;
 use cranelift_entity::EntityRef;
+pub use entity_modifier::*;
 
 use crate::{
     SVec,
-    emit::{
-        modify::cursor::Cursor, plan::OutputModuleCopyPlan,
-        relocation::resolver::OutputEntitiesResolver,
-    },
+    emit::modify::{abs_to_got::FixupFromRelocs, cursor::Cursor},
     helpers::RangeExt,
     index::Temp,
     linkage::reloc::{EntityAddressMode, EntityRelocationEntry},
     typed::{EntityBodyCopy, EntityKind, FileId, snapshot::EntitiesSnapshot},
 };
 
-pub mod code_abs_to_got;
 pub mod cursor;
-pub mod data_abs_to_got;
 // pub mod start_fn_gen;
+pub mod abs_to_got;
 mod blacklist;
+mod entity_modifier;
 pub mod wasm_emitter;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -89,86 +87,8 @@ impl Rewrite {
     }
 }
 
-/// Implementation of modification routine.
-/// Allows adding patches to the original code based on the original relocation entries.
-///
-/// The main purpose of this patches is to replace some symbol references with other types.
-/// e.g. converting absoulte address to got-relative, or replacing a function call with an indirect call.
-pub trait HandleFixups<'src> {
-    type EntityRef: Copy;
-    type SetupData;
-    type ExtraData;
-
-    /// Setup the handler to work with new module.
-    ///
-    /// This function is called once per module,
-    /// `SetupData` is shared part that passed to all modules,
-    /// it might be some non-module related state - like blacklist of symbols, or some other global configuration.
-    ///
-    fn setup(
-        shared: Self::SetupData,
-        plan: &OutputModuleCopyPlan,
-        module: &mut crate::typed::ModuleBuilder<'src>,
-    ) -> Result<Option<Self>>
-    where
-        Self: Sized;
-
-    // TODO: Suport modification that need two or more relocs
-    // e.g., for got-relative addressing
-    /// Create a modification entry based on the original relocation entry and the current state of the code.
-    /// Return None if no modification is needed for this entry.
-    fn create_entry(
-        &self,
-        entity: Temp<Self::EntityRef>,
-        buffer: Cursor<'src>,
-        // Usefull when we need to manually resolve relocs
-        input_file: (FileId, &EntitiesSnapshot),
-        entry: EntityRelocationEntry,
-    ) -> Result<Option<(Rewrite, Self::ExtraData)>>;
-
-    /// Handle finalization process.
-    ///
-    /// One can convert accumulated during `create_entry` indexes using `resolver`, and modify
-    /// entities that was created during setup.
-    fn finish(
-        &self,
-        _module: &mut crate::typed::Module<'src>,
-        _resolver: &OutputEntitiesResolver,
-        _agregated_data: Vec<Self::ExtraData>,
-    ) -> Result<()> {
-        Ok(())
-    }
-}
-
-/// A handler that do nothing, and can be used when no modifications needed.
-pub struct NoFixup<R>(std::marker::PhantomData<R>);
-
-impl<R: EntityRef> HandleFixups<'_> for NoFixup<R> {
-    type EntityRef = R;
-    type SetupData = ();
-    type ExtraData = ();
-
-    fn setup(
-        _shared: Self::SetupData,
-        _plan: &OutputModuleCopyPlan,
-        _module: &mut crate::typed::ModuleBuilder<'_>,
-    ) -> Result<Option<Self>> {
-        Ok(None)
-    }
-
-    fn create_entry(
-        &self,
-        _entity: Temp<Self::EntityRef>,
-        _buffer: Cursor<'_>,
-        _input_file: (FileId, &EntitiesSnapshot),
-        _entry: EntityRelocationEntry,
-    ) -> Result<Option<(Rewrite, Self::ExtraData)>> {
-        Ok(None)
-    }
-}
-
 /// Process original relocation entries of an entity, and create needed fixups based on them.
-pub fn create_fixup_for_entity<'src, H: HandleFixups<'src>>(
+pub fn create_fixup_for_entity<'src, H: FixupFromRelocs<'src>>(
     entity: &mut EntityBodyCopy<'src>,
     entity_ref: Temp<H::EntityRef>,
     input_file: (FileId, &EntitiesSnapshot),

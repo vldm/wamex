@@ -211,6 +211,14 @@ where
             ImportOrDefined::Defined(defined) => self.push_defined(defined),
         }
     }
+    /// Returns the index, as if it would be pushed just after this call.
+    /// Without actually modifiing collection.
+    pub fn dry_push_entity(&self, entity: &ImportOrDefined<Import, Defined>) -> Temp<Ref> {
+        match entity {
+            ImportOrDefined::Import(_) => self.next_import_key(),
+            ImportOrDefined::Defined(_) => self.next_defined_key(),
+        }
+    }
 }
 
 impl<'src, Ref, Import, Defined> EntityCollection<Ref, Import, Defined>

@@ -8,14 +8,17 @@ use anyhow::{Result, bail, ensure};
 use cranelift_entity::EntityRef;
 use wasmparser::{GlobalType, Operator};
 
-use super::{
-    Cursor, HandleFixups, OutputEntityRef, OutputRelocationEntry, Rewrite,
-    blacklist::{Blacklist, IsSet},
-    wasm_emitter::MemArgOffsets,
-};
+use super::FixupFromRelocs;
 use crate::{
     SVec,
-    emit::plan::{AddressingMode, OutputModuleCopyPlan},
+    emit::{
+        modify::{
+            Cursor, OutputEntityRef, OutputRelocationEntry, Rewrite,
+            blacklist::{Blacklist, IsSet},
+            wasm_emitter::{self, MemArgOffsets},
+        },
+        plan::{AddressingMode, OutputModuleCopyPlan},
+    },
     index::Temp,
     linkage::reloc::{
         Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth,
@@ -116,7 +119,7 @@ where
     }
 }
 
-impl<'src, F> HandleFixups<'src> for CodeAbsToGot<F>
+impl<'src, F> FixupFromRelocs<'src> for CodeAbsToGot<F>
 where
     Blacklist<F>: IsSet,
 {
@@ -258,7 +261,7 @@ where
         let mut new_bytes = SVec::new();
         let mut new_relocs = SVec::new();
 
-        let mut writer = super::wasm_emitter::Encoder::new(&mut new_bytes, 0);
+        let mut writer = wasm_emitter::Encoder::new(&mut new_bytes, 0);
 
         log::trace!(
             "Replacing {src_ix:?} with gapped entry (global.get <placeholder> + i32.const {offset})",
@@ -313,7 +316,7 @@ where
         let mut new_bytes = SVec::new();
         let mut new_relocs = SVec::new();
 
-        let mut writer = super::wasm_emitter::Encoder::new(&mut new_bytes, 0);
+        let mut writer = wasm_emitter::Encoder::new(&mut new_bytes, 0);
         let store = Self::store_type(&instruction)?;
 
         log::trace!(
@@ -404,7 +407,7 @@ where
 
     fn encode_store_ix<W: Write>(
         &self,
-        writer: &mut super::wasm_emitter::Encoder<W>,
+        writer: &mut wasm_emitter::Encoder<W>,
         ix: &Operator,
     ) -> Result<MemArgOffsets> {
         let fix_offset = |memarg: &wasmparser::MemArg| wasm_encoder::MemArg {

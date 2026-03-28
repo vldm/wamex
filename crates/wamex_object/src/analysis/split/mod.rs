@@ -433,59 +433,6 @@ fn calculate_deps(
         .collect()
 }
 
-// The indirect_function table is shared between main module and submodules.
-// it's layout is:
-// [ 0: empty ]
-// [ 1..N: functions used in this module ]
-// [ N+1..N+M: reserved space for lazy stubs, main module fill it empty, and submodules fill it with stubs ]
-// [ N+M+1.. : dynamic allocated entries - used for tables in submodules ]
-//
-// Example of final layout:
-// 1. After main load:
-// [0, f1, f2, f3, ..., s1_entry1_uninit, s1_entry2_uninit, s2_entry1_uninit, ...]
-// 2. After submodule load:
-// [0, f1, f2, f3, ..., s1_entry1,        s1_entry2,       s1_f1, s1_f2, ...]
-// 3. If submodule reloaded, the following changes are applied:
-// [_, _, _, _, ...,    s1_FIX_entry1,    s1_FIX_entry2,   s1_f1, s1_f2,     s1_FIX_f1, s1_FIX_f2, ...]
-// Note that original s1_f1 and s1_f2 are not removed, because other submodules may use them.
-// And only after calling linker::unload we can reuse these entries.
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub struct IndirectFnLayout {
-    pub start_dyn: usize,
-    pub dyn_fns: Vec<FlatEntityRef>,
-    snapshot: EntitiesSnapshot,
-}
-
-impl IndirectFnLayout {
-    pub fn new(
-        main_indirect_table_len: usize,
-        split_points: &[SplitPoint],
-        snapshot: EntitiesSnapshot,
-    ) -> Self {
-        let start_dyn = main_indirect_table_len;
-        let dyn_fns = split_points
-            .iter()
-            .map(|sp| sp.export_func())
-            .map(|func| snapshot.pack_ref(func))
-            .collect();
-        Self {
-            start_dyn,
-            dyn_fns,
-            snapshot,
-        }
-    }
-    /// Return place reserved for given split point in the flat indirect functions list.
-    pub fn get_split_point_index(&self, split_point: &SplitPoint) -> usize {
-        let id = self.snapshot.pack_ref(split_point.export_func());
-        self.start_dyn
-            + self
-                .dyn_fns
-                .iter()
-                .position(|f| *f == id)
-                .expect("Split point export function not found in indirect functions layout")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
