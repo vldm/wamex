@@ -44,11 +44,8 @@ impl MyMetrics {
     fn calculate_ipc(result: &<MyMetrics as Metrics>::Result) -> u64 {
         let cycles = result.0;
         let instructions = result.2;
-        if cycles == 0 {
-            0
-        } else {
-            instructions / cycles
-        }
+
+        instructions.checked_div(cycles).unwrap_or_default()
     }
 }
 

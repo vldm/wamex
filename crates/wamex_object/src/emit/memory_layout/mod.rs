@@ -294,12 +294,12 @@ impl ReservedValue for DataSymbolOffset {
 
 #[derive(Debug, Clone)]
 pub struct DataStream<'a> {
-    iter: std::iter::FlatMap<
+    pub(crate) iter: std::iter::FlatMap<
         std::slice::Iter<'a, ChunkRepr<'a>>,
         IterBytes<'a>,
         for<'b> fn(&'b ChunkRepr<'a>) -> IterBytes<'b>,
     >,
-    total_size: usize,
+    pub(crate) total_size: usize,
 }
 
 impl DataStream<'_> {

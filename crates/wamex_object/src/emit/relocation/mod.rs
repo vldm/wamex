@@ -185,9 +185,7 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                     }
                 }
                 EntityKind::DataSymbol(data_symbol) => {
-                    let data_offset = self
-                        .current_module_layout
-                        .data_mapping[data_symbol]
+                    let data_offset = self.current_module_layout.data_mapping[data_symbol]
                         .expect("Relocation refers to data symbol outside of module layout")
                         .data_section_offset;
                     for reloc in relocs {

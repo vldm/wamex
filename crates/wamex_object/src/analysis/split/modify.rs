@@ -4,21 +4,26 @@
 //! Contain a code required to convert SplitProgramInfo into copy plan + modifications.
 //!
 
+use anyhow::Result;
 use cranelift_entity::{EntityRef, PrimaryMap};
 
 use crate::{
     analysis::{SplitPoint, SplitProgramInfo},
-    emit::plan::{
-        AddressingMode, CopySpec, EmitContext, GotInfo, ImportSpec, OutputModuleCopyPlan,
-        PlannedGotInfo,
+    emit::{
+        modify::EntityModifier,
+        plan::{
+            AddressingMode, CopySpec, EmitContext, GotInfo, ImportSpec, OutputModuleCopyPlan,
+            PlannedGotInfo,
+        },
     },
     typed::{
-        FileId, FileLoader,
+        FileId, FileLoader, Module,
         snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
 };
 
 impl SplitProgramInfo {
+    #[tracing::instrument(skip_all, name = "Copy entities")]
     pub fn into_emit_context<'src>(&self, input_files: &'src FileLoader) -> EmitContext<'src> {
         let snapshot = input_files.get_snapshot();
         let outputs = self
@@ -104,10 +109,51 @@ impl SplitProgramInfo {
                 .collect(),
         )
     }
+
+    /// Specialized `EmitCtx::copy_entities` impl, that do copying in two steps:
+    ///
+    /// 1. Process main module - calculate `IndirectFnLayout`
+    /// 2. Process rest of modules, with `IndirectFnLayout` as shared state.
+    ///
+    #[tracing::instrument(skip_all, name = "Copy entities")]
+    pub fn copy_entities<'src, M>(
+        ctx: &mut EmitContext<'src>,
+        entity_modifier_setup: Option<M::SetupData>,
+    ) -> Result<()>
+    where
+        M: EntityModifier<'src>,
+        M::SetupData: Clone,
+    {
+        todo!();
+        // let input_files = ctx.input_files;
+        // let snapshot = &ctx.snapshot;
+
+        // let mut outputs = PrimaryMap::new();
+
+        // let main_file_id = FileId::from_u32(0);
+        // // Process main module first.
+        // let (name, main_module_plan) = &ctx.output_plans[main_file_id];
+        // debug_assert_eq!(name, "main");
+
+        // let main_output = main_module_plan.copy_entities::<M>(
+        //     input_files,
+        //     snapshot,
+        //     entity_modifier_setup.clone(),
+        // )?;
+        // main_output.outputs.push(main_output);
+
+        // for (_file_id, (_name, plan)) in ctx.output_plans.iter().skip(1) {
+        //     let output =
+        //         plan.copy_entities::<M>(input_files, snapshot, entity_modifier_setup.clone())?;
+        //     outputs.push(output);
+        // }
+        // ctx.output_modules = outputs;
+        Ok(())
+    }
 }
 
 ///
-/// Convert split imports imports into indirect calls.
+/// Convert split imports into indirect calls.
 ///
 /// Split point consist of two methods:
 /// - exported function - that contain all the implementation.
@@ -145,32 +191,32 @@ pub struct IndirectFnLayout {
     snapshot: EntitiesSnapshot,
 }
 
-impl IndirectFnLayout {
-    pub fn new(
-        main_indirect_table_len: usize,
-        split_points: &[SplitPoint],
-        snapshot: EntitiesSnapshot,
-    ) -> Self {
-        let start_dyn = main_indirect_table_len;
-        let dyn_fns = split_points
-            .iter()
-            .map(|sp| sp.export_func())
-            .map(|func| snapshot.pack_ref(func))
-            .collect();
-        Self {
-            start_dyn,
-            dyn_fns,
-            snapshot,
-        }
-    }
-    /// Return place reserved for given split point in the flat indirect functions list.
-    pub fn get_split_point_index(&self, split_point: &SplitPoint) -> usize {
-        let id = self.snapshot.pack_ref(split_point.export_func());
-        self.start_dyn
-            + self
-                .dyn_fns
-                .iter()
-                .position(|f| *f == id)
-                .expect("Split point export function not found in indirect functions layout")
-    }
-}
+// impl IndirectFnLayout {
+//     pub fn new_raw(
+//         module: &Module,
+//         split_points: &[SplitPoint],
+//         snapshot: EntitiesSnapshot,
+//     ) -> Self {
+//         let start_dyn = module.indirect_function_table;
+//         let dyn_fns = split_points
+//             .iter()
+//             .map(|sp| sp.export_func())
+//             .map(|func| snapshot.pack_ref(func))
+//             .collect();
+//         Self {
+//             start_dyn,
+//             dyn_fns,
+//             snapshot,
+//         }
+//     }
+//     /// Return place reserved for given split point in the flat indirect functions list.
+//     pub fn get_split_point_index(&self, split_point: &SplitPoint) -> usize {
+//         let id = self.snapshot.pack_ref(split_point.export_func());
+//         self.start_dyn
+//             + self
+//                 .dyn_fns
+//                 .iter()
+//                 .position(|f| *f == id)
+//                 .expect("Split point export function not found in indirect functions layout")
+//     }
+// }

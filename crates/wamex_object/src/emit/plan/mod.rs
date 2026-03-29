@@ -25,7 +25,7 @@ use crate::{
     index::GappedMap,
     linkage::file_db::FileRelocs,
     typed::{
-        Building, DefinedEntity, EntityBody, EntityKind, EntityType, ExportNames, FileId,
+        Builder, DefinedEntity, EntityBody, EntityKind, EntityType, ExportNames, FileId,
         FileLoader, FunctionRef, GlobalRef, ImportOrDefined, ImportedEntity, Module,
         TempEntityKind, WithExtraInfo,
         data::{DataSymbolRef, MemSpec},
@@ -133,7 +133,7 @@ impl OutputModuleCopyPlan {
             self.imports.len()
         );
         let mut action_span = tracing::info_span!("Copy entities").entered();
-        let mut module: Module<'src, Building> = Module::new();
+        let mut module: Module<'src, Builder> = Module::new();
 
         let modifier = entity_modifier_setup
             .map(|shared| M::setup(shared, self, &mut module))

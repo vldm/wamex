@@ -29,7 +29,6 @@ pub struct AbsToGot<F>
 where
     Blacklist<F>: IsSet,
 {
-    blacklist: Blacklist<F>,
     code_modifier: Option<CodeAbsToGot<F>>,
     data_modifier: Option<DataAbsToGot<F>>,
 }
@@ -55,7 +54,6 @@ where
         let code_modifier = CodeAbsToGot::setup(shared.clone(), plan, module)?;
         let data_modifier = DataAbsToGot::setup(shared.clone(), plan, module)?;
         Ok(Self {
-            blacklist: shared,
             code_modifier,
             data_modifier,
         })
@@ -232,27 +230,27 @@ impl<'src, 'any> AnyEntity<'src, 'any> {
         match self {
             AnyEntity::Global { new_ref, entity } => AnyEntity::Global {
                 new_ref: *new_ref,
-                entity: &mut *entity,
+                entity,
             },
             AnyEntity::Function { new_ref, entity } => AnyEntity::Function {
                 new_ref: *new_ref,
-                entity: &mut *entity,
+                entity,
             },
             AnyEntity::DataSymbol { new_ref, entity } => AnyEntity::DataSymbol {
                 new_ref: *new_ref,
-                entity: &mut *entity,
+                entity,
             },
             AnyEntity::Table { new_ref, entity } => AnyEntity::Table {
                 new_ref: *new_ref,
-                entity: &mut *entity,
+                entity,
             },
             AnyEntity::Memory { new_ref, entity } => AnyEntity::Memory {
                 new_ref: *new_ref,
-                entity: &mut *entity,
+                entity,
             },
             AnyEntity::Tag { new_ref, entity } => AnyEntity::Tag {
                 new_ref: *new_ref,
-                entity: &mut *entity,
+                entity,
             },
         }
     }

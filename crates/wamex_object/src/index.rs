@@ -440,6 +440,30 @@ impl<Idx: TempIndex> Temp<Idx> {
     }
 }
 
+pub struct WithStart<Idx, Val> {
+    start: Idx,
+    value: Vec<Val>,
+}
+
+impl<Idx, Val> WithStart<Idx, Val> {
+    pub fn new(start: Idx, value: Vec<Val>) -> Self {
+        Self { start, value }
+    }
+    #[inline]
+    pub fn into_iter(self) -> impl Iterator<Item = (Idx, Val)>
+    where
+        Idx: EntityRef,
+    {
+        self.value
+            .into_iter()
+            .enumerate()
+            .map(move |(i, v)| (Idx::new(self.start.index() + i), v))
+    }
+    pub fn as_mut_slice(&mut self) -> &mut [Val] {
+        &mut self.value
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

@@ -1,6 +1,5 @@
 use anyhow::Result;
 pub use blacklist::Blacklist;
-use cranelift_entity::EntityRef;
 pub use entity_modifier::*;
 
 use crate::{

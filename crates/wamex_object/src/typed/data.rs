@@ -179,6 +179,15 @@ impl SpecificLocation {
             SpecificLocation::ConstantOffset(offset) => *offset,
         }
     }
+    pub fn with_zero_offset(&self) -> Self {
+        match self {
+            SpecificLocation::GotBased { global, .. } => SpecificLocation::GotBased {
+                global: *global,
+                offset: 0,
+            },
+            SpecificLocation::ConstantOffset(_) => SpecificLocation::ConstantOffset(0),
+        }
+    }
 }
 
 impl SegmentPlacement {

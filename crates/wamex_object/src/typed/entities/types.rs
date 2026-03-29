@@ -26,6 +26,9 @@ pub struct ExportNames<'src> {
     // NOTE: SVec<T> is invariant over T so we cannot use it here.
 }
 impl<'src> ExportNames<'src> {
+    pub fn new() -> Self {
+        Self { names: vec![] }
+    }
     pub fn add_export(&mut self, name: Cow<'src, str>) {
         if !self.names.contains(&name) {
             self.names.push(name);
@@ -251,6 +254,12 @@ pub enum EntityBody<'src> {
 }
 
 impl EntityBody<'_> {
+    pub fn new_empty(new_bytes: SVec<u8, 32>) -> Self {
+        EntityBody::New {
+            new_bytes,
+            new_relocs: SVec::new(),
+        }
+    }
     pub fn from_bytes<'src>(bytes: &'src [u8], original_range: Range<usize>) -> EntityBody<'src> {
         EntityBody::Copied(EntityBodyCopy {
             original_range,

@@ -48,8 +48,13 @@ pub struct Locked {
     pub start_function: Option<FunctionRef>,
 }
 
+/// This is one of the phases of `Module` creation.
+///
+/// At this phase one can create new entities with temp indexes,
+/// that can be converted to stable indexes after calling `into_locked`.
+///
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Building {
+pub struct Builder {
     /// List of functions to be called on module start.
     /// Should have `()->void` type and can be defined or imported.
     pub start_functions: Vec<Temp<FunctionRef>>,
@@ -131,7 +136,7 @@ impl<'src> LoadedFile<'src> {
     }
 }
 
-pub type ModuleBuilder<'src> = Module<'src, Building>;
+pub type ModuleBuilder<'src> = Module<'src, Builder>;
 
 /// Partially parsed wasm object.
 /// It expects that module has valid structure and contains additional custom sections:
@@ -147,20 +152,21 @@ pub type ModuleBuilder<'src> = Module<'src, Building>;
 /// The temp indexes are used to automatically shift defined entities after new imports are added.
 ///
 #[derive(Debug)]
-pub struct Module<'src, BuilderState = Locked> {
+pub struct Module<'src, Phase = Locked> {
     // wasm entities
-    pub functions: entities::Functions<'src, BuilderState>,
-    pub tables: entities::Tables<'src, BuilderState>,
-    pub memories: entities::Memories<'src, BuilderState>,
-    pub globals: entities::Globals<'src, BuilderState>,
-    pub tags: entities::Tags<'src, BuilderState>,
+    pub functions: entities::Functions<'src, Phase>,
+    pub tables: entities::Tables<'src, Phase>,
+    pub memories: entities::Memories<'src, Phase>,
+    pub globals: entities::Globals<'src, Phase>,
+    pub tags: entities::Tags<'src, Phase>,
 
     /// linkage entity
-    pub data: entities::DataChunks<'src, BuilderState>,
+    pub data: entities::DataChunks<'src, Phase>,
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
     pub mem_spec: data::MemSpec<'src>,
-    pub extra_state: BuilderState,
+
+    pub extra_state: Phase,
 }
 
 impl<'src> Module<'src> {
@@ -623,7 +629,7 @@ impl<'src> ModuleBuilder<'src> {
             indirect_function_table: elements::IndirectFunctionTable::new(
                 TableRef::reserved_value(),
             ),
-            extra_state: Building::default(),
+            extra_state: Builder::default(),
         }
     }
 

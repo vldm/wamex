@@ -25,14 +25,14 @@
 
 use std::borrow::Cow;
 
-use cranelift_entity::{EntityRef, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef, types::ExportEntry};
 use crate::{
-    index::{GappedMap, NonDefault, Temp, TempIndex},
+    index::{GappedMap, NonDefault, Temp, TempIndex, WithStart},
     raw::FuncTypeId,
     typed::{
-        Building, DefinedDataChunk, DefinedEntity, DefinedFunction, DefinedGlobal, DefinedMemory,
+        Builder, DefinedDataChunk, DefinedEntity, DefinedFunction, DefinedGlobal, DefinedMemory,
         DefinedTable, DefinedTag, EntityKind, ExportNames, ImportedDataChunk, ImportedEntity,
         ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, Locked,
         WithExtraInfo, WithoutBody, data::DataSymbolRef,
@@ -56,9 +56,9 @@ pub type DataChunks<'src, BS = Locked> =
 ///
 /// One place for storing imports and defined entities.
 ///
-/// It can have two states:
-/// - `Building` - allows adding new entities, and returns temporary `Temp<Ref>` index.
-/// - `Finished` - works with fixed structure, and returns/receives stable `Ref` index.
+/// It can be either:
+/// - `Builder` - allows adding new entities, and returns temporary `Temp<Ref>` index.
+/// -  AnyOther - works with fixed structure, and returns/receives stable `Ref` index.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EntityCollection<Ref, Import, Defined, BuilderState = Locked>
 where
@@ -70,7 +70,7 @@ where
     _state: std::marker::PhantomData<BuilderState>,
 }
 
-impl<Ref, Import, Defined> Default for EntityCollection<Ref, Import, Defined, Building>
+impl<Ref, Import, Defined> Default for EntityCollection<Ref, Import, Defined, Builder>
 where
     Ref: TempIndex,
 {
@@ -79,7 +79,7 @@ where
     }
 }
 
-impl<Ref, Import, Defined> EntityCollection<Ref, Import, Defined, Building>
+impl<Ref, Import, Defined> EntityCollection<Ref, Import, Defined, Builder>
 where
     Ref: TempIndex,
 {
@@ -323,6 +323,14 @@ where
                     defined,
                 )
             })
+    }
+
+    /// Convert collection into imports and defined maps.
+    pub fn into_parts(self) -> (PrimaryMap<Ref, Import>, WithStart<Ref, Defined>) {
+        let imports: PrimaryMap<Ref, Import> = self.imports.into_iter().collect();
+        let defined = WithStart::new(Ref::new(imports.len()), self.defined);
+
+        (imports, defined)
     }
 
     /// Returns iterator over all entities, both imported and defined.
