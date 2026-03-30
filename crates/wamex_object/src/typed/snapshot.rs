@@ -1,10 +1,10 @@
 use cranelift_entity::PrimaryMap;
 
 use crate::{
-    emit::relocation::EntityLocation, raw::FuncTypeId, typed::{
-        EntityKind, FileId, FunctionRef, GlobalRef, MemoryRef, Module, TableRef, TagRef,
-        data::DataSymbolRef,
-    }
+    emit::relocation::EntityLocation,
+    layouts::DataSymbolRef,
+    raw::FuncTypeId,
+    typed::{EntityKind, FileId, FunctionRef, GlobalRef, MemoryRef, Module, TableRef, TagRef},
 };
 
 impl_entity_index! {
@@ -63,7 +63,7 @@ impl EntitiesSnapshot {
         let num_table_refs = object.tables.len() as u32;
         let num_memory_refs = object.memories.len() as u32;
         let num_tag_refs = object.tags.len() as u32;
-        let num_data_symbol_refs = object.data.len() as u32;
+        let num_data_symbol_refs = object.extra.mem_layout.len() as u32;
 
         Self {
             num_file_offset: 0,
@@ -242,9 +242,12 @@ impl MultiSnapshot {
         self.file_snapshot(loc.file_id).pack_ref(loc.entity)
     }
 
-    pub fn unpack_ref(&self, any_ref: FlatEntityRef) -> EntityLocation{
+    pub fn unpack_ref(&self, any_ref: FlatEntityRef) -> EntityLocation {
         let flat = any_ref.as_u32();
-        assert!(flat < self.total_entities, "Flat entity ref {flat} is out of bounds");
+        assert!(
+            flat < self.total_entities,
+            "Flat entity ref {flat} is out of bounds"
+        );
 
         let idx = self
             .files
@@ -263,7 +266,10 @@ impl MultiSnapshot {
 mod tests {
     use super::{EntitiesSnapshot, MultiSnapshot};
     use crate::{
-        emit::relocation::EntityLocation, raw::FuncTypeId, typed::{EntityKind, FileId, FunctionRef, LoadedFile, data::DataSymbolRef}
+        emit::relocation::EntityLocation,
+        layouts::DataSymbolRef,
+        raw::FuncTypeId,
+        typed::{EntityKind, FileId, FunctionRef, LoadedFile},
     };
     #[test]
     fn test_entity_ref_mapping() {
@@ -280,7 +286,7 @@ mod tests {
             assert_eq!(entity_kind, unpacked);
         });
 
-        module.data.iter().for_each(|(data_ref, _)| {
+        module.extra.mem_layout.iter().for_each(|(data_ref, _)| {
             let entity_kind = EntityKind::DataSymbol(data_ref);
             let flat_ref = snapshot.pack_ref(data_ref);
             let unpacked = snapshot.unpack_ref(flat_ref);
@@ -326,16 +332,38 @@ mod tests {
     #[test]
     fn multi_snapshot_roundtrip_keeps_file_boundaries() {
         let snapshots = [
-            EntitiesSnapshot::new_without_types(&LoadedFile::from_wasm_bytes(crate::testfiles::EXAMPLE_WASM).unwrap().module),
+            EntitiesSnapshot::new_without_types(
+                &LoadedFile::from_wasm_bytes(crate::testfiles::EXAMPLE_WASM)
+                    .unwrap()
+                    .module,
+            ),
             EntitiesSnapshot::for_testing().with_offset(0),
         ];
         let snapshot = MultiSnapshot::new(snapshots);
 
-        let file0_ref = snapshot.pack_ref(EntityLocation::from_parts(FileId::from_u32(0), EntityKind::Function(FunctionRef::from_u32(0))));
-        let file1_ref = snapshot.pack_ref(EntityLocation::from_parts(FileId::from_u32(1), EntityKind::DataSymbol(DataSymbolRef::from_u32(2))));
+        let file0_ref = snapshot.pack_ref(EntityLocation::from_parts(
+            FileId::from_u32(0),
+            EntityKind::Function(FunctionRef::from_u32(0)),
+        ));
+        let file1_ref = snapshot.pack_ref(EntityLocation::from_parts(
+            FileId::from_u32(1),
+            EntityKind::DataSymbol(DataSymbolRef::from_u32(2)),
+        ));
 
-        assert_eq!(snapshot.unpack_ref(file0_ref), EntityLocation::from_parts(FileId::from_u32(0), EntityKind::Function(FunctionRef::from_u32(0))));
-        assert_eq!(snapshot.unpack_ref(file1_ref), EntityLocation::from_parts(FileId::from_u32(1), EntityKind::DataSymbol(DataSymbolRef::from_u32(2))));
+        assert_eq!(
+            snapshot.unpack_ref(file0_ref),
+            EntityLocation::from_parts(
+                FileId::from_u32(0),
+                EntityKind::Function(FunctionRef::from_u32(0))
+            )
+        );
+        assert_eq!(
+            snapshot.unpack_ref(file1_ref),
+            EntityLocation::from_parts(
+                FileId::from_u32(1),
+                EntityKind::DataSymbol(DataSymbolRef::from_u32(2))
+            )
+        );
         assert!(file0_ref.as_u32() < file1_ref.as_u32());
     }
 }

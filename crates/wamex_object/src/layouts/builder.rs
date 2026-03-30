@@ -6,15 +6,15 @@ use std::{
 use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
 use itertools::Itertools;
 
-use super::{ItemType, LayoutItemInfo, Offsets, SealedLayout, SealedSegment, VirtualSpaceId};
+use super::{LayoutItemInfo, Offsets, SealedLayout, SealedSegment, VirtualSpaceId};
 use crate::{
     index::{GappedMap, Temp, TempIndex},
     layouts::{
-        calculate_padding,
-        sealed::{ItemOffsets, SealedItem},
+        SpecificLocation, calculate_padding,
+        sealed::{ItemPlace, SealedItem},
     },
     raw::SegmentId,
-    typed::{BuilderState, EntityCollection, ImportedEntity, data::SpecificLocation},
+    typed::{BuilderState, EntityCollection, ImportedEntity},
 };
 
 //
@@ -33,6 +33,20 @@ pub enum SegmentFlags {
     // TLS segment, which should be copied to TLS memory at startup
     Tls,
 }
+
+impl SegmentFlags {
+    pub fn from_name(name: &str) -> Self {
+        if name.contains(".bss") {
+            Self::ZeroInit
+        } else if name.contains(".rodata") {
+            Self::Readonly
+        } else if name.contains(".tls") {
+            Self::Tls
+        } else {
+            Self::Writable
+        }
+    }
+}
 ///
 /// Information about segment, either data or element.
 ///
@@ -50,7 +64,7 @@ pub struct SegmentSpec<'src> {
     pub segment_flags: SegmentFlags,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct VirtualSpaceLocation<OwnerId> {
     /// Reference to owner entity (Either memory or table).
     pub owner_id: OwnerId,
@@ -160,7 +174,6 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
 
             // Align memory offset of segment to its alignment requirement.
             let padding = calculate_padding(vs_state.offset, alignment);
-            dbg!(padding, alignment, vs_state.offset);
             vs_state.offset += padding;
 
             let mut mem_offset = vs_state.offset;
@@ -179,7 +192,7 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
                 _ => None,
             };
 
-            let mut parts = Vec::new();
+            let mut parts = PrimaryMap::new();
             for (symbol_index, symbol) in grp.into_iter().flatten() {
                 let field_alignment = 1 << symbol.pow2align();
 
@@ -202,17 +215,18 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
                     mem_offset += padding;
                 }
                 let symbol_len = symbol.size();
-                parts.push(SealedItem {
+                let part_id = parts.push(SealedItem {
                     defined_entity: symbol,
                     item_id: Some(symbol_index),
                 });
                 mapping.insert(
                     symbol_index,
-                    ItemOffsets {
+                    ItemPlace {
                         offsets: Offsets {
                             section_offset,
                             va_address: mem_offset + vs_state.va_space_start(),
                         },
+                        part_id,
                         segment_id,
                     },
                 );
@@ -230,11 +244,15 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
             });
             vs_state.offset = mem_offset;
         }
+        assert!(
+            chunks_iter.next().is_none(),
+            "Data symbols without segments?"
+        );
 
         SealedLayout {
             segments,
             imports,
-            items_place: mapping,
+            defined_items: mapping,
         }
     }
 
@@ -253,6 +271,28 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
         } else {
             None
         }
+    }
+
+    /// Crate virtual default active virtual spac, with one segment (if no vs created).
+    /// Return id of this segment
+    pub fn try_create_base_vs(
+        &mut self,
+        location: VirtualSpaceLocation<Temp<OwnerId>>,
+    ) -> VirtualSpaceId {
+        if let Some((vs, _)) = self.virtual_spaces.iter().find(|(_, d)| d.is_some()) {
+            vs
+        } else {
+            self.virtual_spaces.push(Some(location))
+        }
+    }
+
+    pub fn try_create_segment(&mut self, vs_id: VirtualSpaceId) -> SegmentId {
+        self.segments.push(SegmentSpec {
+            vs_id,
+            name: ".rodata".into(),
+            align: 3,
+            segment_flags: SegmentFlags::Readonly,
+        })
     }
 }
 

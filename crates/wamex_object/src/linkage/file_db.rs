@@ -6,11 +6,12 @@ use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 use crate::{
     helpers::{RangeComp, cmp_range},
     index::GappedMap,
+    layouts::DataSymbolRef,
     linkage::reloc::{
         AnyRelocationEntry, Encoding, EntityAddressMode, EntityRelocationEntry, Relative,
         RelocationEntry, RelocationWidth, SymbolType,
     },
-    typed::{EntityKind, FnTypeRef, FunctionRef, SymbolId, data::DataSymbolRef},
+    typed::{EntityKind, FnTypeRef, FunctionRef, SymbolId},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -386,7 +387,7 @@ impl SymbolOffset {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct FileSymbolDb {
     /// Map `SymbolId` from FILE linkage symbol table -> `EntityKind` in wasm object.
     ///

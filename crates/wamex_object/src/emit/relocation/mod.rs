@@ -50,17 +50,15 @@ use std::ops::Range;
 use cranelift_entity::{PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 
 use crate::{
-    emit::{
-        memory_layout::{self, DataSymbolOffset, DataSymbolsOffsets},
-        plan::GotInfo,
-    },
+    emit::plan::GotInfo,
     index::GappedMap,
+    layouts::{DataSymbolRef, DataSymbolsOffsets, Offsets},
     linkage::{
         file_db::FileRelocs,
         reloc::{Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth},
     },
     typed::{
-        EntityKind, FileId, FunctionRef, GlobalRef, ImportOrDefined, Module, data::DataSymbolRef,
+        EntityKind, FileId, FunctionRef, GlobalRef, ImportOrDefined, Module,
         elements::ElementItemId,
     },
 };
@@ -105,7 +103,7 @@ pub struct ModuleLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportedDataDep {
     /// Module where data chunk is defined
-    pub output_location: DataSymbolOffset,
+    pub output_location: Offsets,
     /// GOT base of module where data chunk is defined
     /// None if data chunk is defined in absolute address space (e.g. main module)
     pub got_entry: Option<GlobalRef>,
@@ -144,9 +142,9 @@ impl<'any, 'src> RelocationState<'any, 'src> {
         let code_section = &mut module_bytes[self.current_module_layout.code_section.clone()];
         if log::Level::Debug <= log::max_level() {
             let mut code_start = self.current_module_layout.code_section.start;
-            use memory_layout::hexdump::SymbolDebugExt;
+            use crate::layouts::hexdump::SymbolDebugExt;
             let mut res = String::new();
-            memory_layout::hexdump::SectionDebug {
+            crate::layouts::hexdump::SectionDebug {
                 name: "Code section",
                 bytes: code_section,
                 relocs: code_relocs,
@@ -161,10 +159,10 @@ impl<'any, 'src> RelocationState<'any, 'src> {
         let data_section = &mut module_bytes[self.current_module_layout.data_section.clone()];
 
         if log::Level::Debug <= log::max_level() {
-            use memory_layout::hexdump::SymbolDebugExt;
+            use crate::layouts::hexdump::SymbolDebugExt;
             let mut data_start = self.current_module_layout.data_section.start;
             let mut res = String::new();
-            memory_layout::hexdump::SectionDebug {
+            crate::layouts::hexdump::SectionDebug {
                 name: "Data section",
                 bytes: data_section,
                 relocs: data_relocs,
@@ -187,7 +185,8 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                 EntityKind::DataSymbol(data_symbol) => {
                     let data_offset = self.current_module_layout.data_mapping[data_symbol]
                         .expect("Relocation refers to data symbol outside of module layout")
-                        .data_section_offset;
+                        .offsets
+                        .section_offset;
                     for reloc in relocs {
                         reloc.offset += data_offset as u32;
                     }
@@ -220,7 +219,8 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                 EntityKind::DataSymbol(d) => {
                     if self
                         .current_module
-                        .data
+                        .extra
+                        .mem_layout
                         .get_entity(d)
                         .to_imported()
                         .is_some()
@@ -238,11 +238,12 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                             .get(d)
                             .expect("Cannot find imported data symbol for relocation: {reloc:?}")
                             .output_location
-                            .addr_of_symbol as u32
+                            .va_address as u32
                     } else {
                         self.current_module_layout.data_mapping[d]
                             .expect("Relocation refers to data symbol outside of module layout")
-                            .addr_of_symbol as u32
+                            .offsets
+                            .va_address as u32
                     }
                 }
                 ty => panic!("Relocation for symbol type {ty:?} doesn't have runtime addr"),
@@ -251,7 +252,7 @@ impl<'any, 'src> RelocationState<'any, 'src> {
             EntityAddressMode::BaseStaticIndex => {
                 match reloc.symbol_id {
                     EntityKind::DataSymbol(d) => {
-                        let got = match self.current_module.data.get_entity(d) {
+                        let got = match self.current_module.extra.mem_layout.get_entity(d) {
                             ImportOrDefined::Defined(_) => {
                                 // if defined then it's our got entry.
                                 &self.current_got

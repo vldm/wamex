@@ -11,7 +11,6 @@ use crate::{
     layouts,
     linkage::reloc::EntityRelocationEntry,
     raw::{self, FunctionWithBody},
-    typed::{self},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -89,7 +88,7 @@ pub type DefinedTable<'src> = DefinedEntity<'src, wasmparser::TableType>; // bod
 pub type DefinedGlobal<'src> = DefinedEntity<'src, wasmparser::GlobalType>; // body - init expr (instructions)
 pub type DefinedMemory<'src> = WithoutBody<'src, wasmparser::MemoryType>;
 pub type DefinedTag<'src> = WithoutBody<'src, wasmparser::TagType>;
-pub type DefinedDataChunk<'src> = DefinedEntity<'src, typed::data::DataChunkType>; // body - bytes in memory
+pub type DefinedDataChunk<'src> = DefinedEntity<'src, layouts::ItemType>; // body - bytes in memory
 
 impl<'src, Any> WithExtraInfo<'src> for ImportedEntity<'src, Any> {
     fn export_as(&self) -> &ExportNames<'src> {
@@ -133,23 +132,6 @@ impl<'src, Any> WithExtraInfo<'src> for WithoutBody<'src, Any> {
     }
     fn set_name(&mut self, name: Cow<'src, str>) {
         self.name = Some(name);
-    }
-}
-
-impl<'src> From<typed::data::RawDataChunk<'src>> for DefinedDataChunk<'src> {
-    fn from(v: typed::data::RawDataChunk<'src>) -> DefinedDataChunk<'src> {
-        DefinedEntity {
-            entity_type: typed::data::DataChunkType {
-                segment_id: v.segment_id,
-                pow2align: v.pow2align,
-            },
-            body: EntityBody::from_bytes(
-                v.data,
-                v.original_offset..(v.original_offset + v.data.len()),
-            ),
-            name: Some(v.name),
-            export_as: ExportNames::default(),
-        }
     }
 }
 

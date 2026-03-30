@@ -79,7 +79,7 @@ pub fn main_roots(
 ) -> DepSet {
     let mut roots: DepSet = DepSet::new();
 
-    info.extra_state.start_function.iter().for_each(|start_fn| {
+    info.extra.start_function.iter().for_each(|start_fn| {
         roots.insert(snapshot.pack_ref(*start_fn));
     });
 

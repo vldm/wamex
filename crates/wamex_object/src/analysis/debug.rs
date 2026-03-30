@@ -29,7 +29,12 @@ pub(crate) fn print_deps_inner(
                 )
             }
             EntityKind::DataSymbol(data_ref) => {
-                let data = info.data.get_entity(data_ref).to_defined().unwrap();
+                let data = info
+                    .extra
+                    .mem_layout
+                    .get_entity(data_ref)
+                    .to_defined()
+                    .unwrap();
                 format!(
                     "{dep} data[{segment_id}:{start}+{size}]  <{name:?}> (size={})",
                     info.get_body_len(symbol_kind),
@@ -85,7 +90,12 @@ pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
                 )
             }
             EntityKind::DataSymbol(data_ref) => {
-                let data = info.data.get_entity(data_ref).to_defined().unwrap();
+                let data = info
+                    .extra
+                    .mem_layout
+                    .get_entity(data_ref)
+                    .to_defined()
+                    .unwrap();
                 format!(
                     "{dep} data[{segment_id}:{start}+{size}]  <{name:?}> (size={})",
                     info.get_body_len(symbol_kind),

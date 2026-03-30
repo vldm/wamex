@@ -30,12 +30,13 @@ use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef, types::ExportEntry};
 use crate::{
     index::{GappedMap, NonDefault, Temp, TempIndex, WithStart},
+    layouts::DataSymbolRef,
     raw::FuncTypeId,
     typed::{
         DefinedDataChunk, DefinedEntity, DefinedFunction, DefinedGlobal, DefinedMemory,
         DefinedTable, DefinedTag, EntityKind, ExportNames, ImportedDataChunk, ImportedEntity,
         ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag,
-        WithExtraInfo, WithoutBody, data::DataSymbolRef,
+        WithExtraInfo, WithoutBody,
     },
 };
 
@@ -52,13 +53,6 @@ pub type Tags<'src, BS = SealedState> =
 
 pub type DataChunks<'src, BS = SealedState> =
     EntityCollection<DataSymbolRef, ImportedDataChunk<'src>, DefinedDataChunk<'src>, BS>;
-
-pub type DataChunksNew<'src, BS = SealedState> = EntityCollection<
-    DataSymbolRef,
-    ImportedDataChunk<'src>,
-    crate::layouts::DefinedDataChunk<'src>,
-    BS,
->;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SealedState {}

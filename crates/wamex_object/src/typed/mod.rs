@@ -9,7 +9,7 @@
 use std::{borrow::Cow, fmt::Debug};
 
 use anyhow::{Result, bail};
-use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
+use cranelift_entity::{PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 pub use entities::*;
 use itertools::chain;
 use log::warn;
@@ -19,7 +19,7 @@ use yoke::{Yoke, Yokeable};
 
 use crate::{
     index::Temp,
-    layouts,
+    layouts::{self, MemLayoutSealed},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
@@ -28,7 +28,7 @@ use crate::{
     raw::{self, ImportId},
 };
 
-pub mod data;
+// pub mod data;
 pub mod elements;
 mod entities;
 pub mod snapshot;
@@ -177,13 +177,10 @@ pub struct ModuleGeneric<
     pub globals: entities::Globals<'src, LockedState>,
     pub tags: entities::Tags<'src, LockedState>,
 
-    /// linkage entity
-    pub data: entities::DataChunks<'src, LockedState>,
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
-    pub mem_spec: data::MemSpec<'src>,
 
-    pub extra_state: Phase,
+    pub extra: Phase,
 }
 
 impl<'src> Module<'src> {
@@ -302,129 +299,24 @@ impl<'src> Module<'src> {
             elements::IndirectFunctionTable::from_reader(reader, table_id, true)?;
 
         let g = tracing::info_span!("processing_extra_linkage").entered();
-        // TODO: add undefined data symbols as well.
-        let LinkageInfo {
-            mut file_symbol_db,
-            defined_data_symbols,
-        } = LinkageInfo::from_reader(reader);
-
-        let mut chunks = defined_data_symbols
-            .chunk_by(|o, a| o.1.segment_id == a.1.segment_id)
-            .peekable();
 
         drop(g);
-        // todo!("check that after filtering symbols in file_symbol_db we also have shifts");
-
-        let data = {
-            let _g = tracing::info_span!("Slicing data segments").entered();
-            // todo: make it configurable
-            let slice_chunks = true;
-
-            let mut sliced_chunks = entities::DataChunks::default();
-
-            'iter: for (segment_id, d) in reader.data.data_segments.iter() {
-                let segment_chunk = 'chunk_segment: {
-                    let Some(segment_info) = reader.linking.segments_info.get(segment_id.index())
-                    else {
-                        warn!(
-                            "No segment info for segment {:?}, skipping slicing for this segment.",
-                            segment_id
-                        );
-                        let (name, pow2align) = data::default_segment_info();
-
-                        break 'chunk_segment data::RawDataChunk::from_segment(
-                            segment_id,
-                            d.data,
-                            name,
-                            pow2align,
-                            d.range.end - d.data.len(),
-                        );
-                    };
-                    let pow2align = segment_info.alignment.try_into().unwrap();
-                    let segment_name = segment_info.name;
-                    // Range.start is point to <length> field of data segment.
-                    let data_start = d.range.end - d.data.len();
-                    let segment_chunk = data::RawDataChunk::from_segment(
-                        segment_id,
-                        d.data,
-                        segment_name.into(),
-                        pow2align,
-                        data_start,
-                    );
-
-                    if !slice_chunks {
-                        warn!("Skipping data segment slicing - working with one chunk per segment");
-                        break 'chunk_segment segment_chunk;
-                    }
-
-                    let Some(chunk) = chunks.peek() else {
-                        warn!("No more data symbols, skipping slicing for the rest of segments");
-                        break 'chunk_segment segment_chunk;
-                    };
-
-                    let chunk_segment_id = chunk[0].1.segment_id;
-                    if chunk_segment_id < segment_id {
-                        // data symbols from previous segment (bug)
-                        panic!(
-                            "Segment id mismatch: expected {:?}, found {:?}. Skipping slicing for this segment.",
-                            segment_id, chunk[0].1.segment_id
-                        );
-                    } else if chunk_segment_id > segment_id {
-                        // no data symbols for this segment, just skip slicing
-                        warn!(
-                            "No data symbols for segment {:?}. Skipping slicing for this segment.",
-                            segment_id
-                        );
-                        break 'chunk_segment segment_chunk;
-                    }
-
-                    let defined_data_symbols = chunks
-                        .next()
-                        .unwrap()
-                        .iter()
-                        .map(|&(symbol_id, ref symbol_info)| (symbol_id, symbol_info))
-                        .collect::<Vec<_>>();
-
-                    // TODO: support of imported data symbols..
-                    let next_id = sliced_chunks.next_defined_key().to_stable(0);
-                    let sliced = segment_chunk.slice_segment(defined_data_symbols);
-                    // LLVM provides data symbols in random order, sometimes one symbol can be a part of another symbol.
-                    let filtered = data::DataChunk::canonicalize_data_symbols(
-                        next_id,
-                        sliced,
-                        &mut file_symbol_db,
-                    );
-                    for chunk in filtered {
-                        sliced_chunks.push_defined(DefinedDataChunk::from(chunk));
-                    }
-
-                    continue 'iter;
-                };
-
-                sliced_chunks.push_defined(DefinedDataChunk::from(segment_chunk));
-            }
-
-            sliced_chunks.into_finished()
-        };
-
-        let mem_spec = data::MemSpec::from_reader(reader, memory_id)?;
+        let (mem_layout, file_symbol_db_new) = MemLayoutSealed::recover_from_reader(reader)?;
 
         let this = Module {
             indirect_function_table,
-            data,
             functions,
             tables,
             memories,
             globals,
             tags,
-            mem_spec,
-            extra_state: Locked {
+            extra: Locked {
                 start_function: reader.code.start_func,
-                mem_layout: todo!(),
+                mem_layout,
             },
         };
 
-        Ok((this, file_symbol_db))
+        Ok((this, file_symbol_db_new))
     }
 
     fn try_init_indirect_fn_table(
@@ -480,7 +372,7 @@ impl<'src> Module<'src> {
             EntityKind::Table(table_id) => self.tables.get_entity(table_id).name().cloned(),
             EntityKind::Memory(mem_id) => self.memories.get_entity(mem_id).name().cloned(),
             EntityKind::Tag(tag_id) => self.tags.get_entity(tag_id).name().cloned(),
-            EntityKind::DataSymbol(d) => self.data.get_entity(d).name().cloned(),
+            EntityKind::DataSymbol(d) => self.extra.mem_layout.get_entity(d).name().cloned(),
             EntityKind::Type(_) => None, // types don't have names in name section
         };
 
@@ -504,7 +396,8 @@ impl<'src> Module<'src> {
     pub fn get_body_len(&self, entity: EntityKind) -> usize {
         match entity {
             EntityKind::DataSymbol(d) => self
-                .data
+                .extra
+                .mem_layout
                 .get_entity(d)
                 .to_defined()
                 .map(|defined| defined.body.len()),
@@ -545,7 +438,8 @@ impl<'src> Module<'src> {
             .filter(|(_, e)| !e.export_as().names.is_empty())
             .map(|(r, _)| r.into());
         let data = self
-            .data
+            .extra
+            .mem_layout
             .iter()
             .filter(|(_, e)| !e.export_as().names.is_empty())
             .map(|(r, _)| r.into());
@@ -561,14 +455,15 @@ impl<'src> Module<'src> {
         let functions = self.functions.defined_iter().map(map_body);
         let globals = self.globals.defined_iter().map(map_body);
         let tables = self.tables.defined_iter().map(map_body);
-        let data = self.data.defined_iter().map(map_body);
+        let data = self.extra.mem_layout.defined_iter().map(map_body);
 
         chain!(functions, globals, tables, data)
     }
 
-    pub fn entities_bodies_mut(
+    pub fn modify_entities_bodies(
         &mut self,
-    ) -> impl Iterator<Item = (EntityKind, &mut EntityBody<'src>)> + '_ {
+        mut op: impl FnMut(EntityKind, &mut EntityBody<'src>),
+    ) {
         fn map_body_mut<'any, 'src, T>(
             (v, def): (impl Into<EntityKind>, &'any mut DefinedEntity<'src, T>),
         ) -> (EntityKind, &'any mut EntityBody<'src>) {
@@ -577,9 +472,11 @@ impl<'src> Module<'src> {
         let functions = self.functions.defined_iter_mut().map(map_body_mut);
         let globals = self.globals.defined_iter_mut().map(map_body_mut);
         let tables = self.tables.defined_iter_mut().map(map_body_mut);
-        let data = self.data.defined_iter_mut().map(map_body_mut);
+        chain!(functions, globals, tables).for_each(|(d, e)| op(d, e));
 
-        chain!(functions, globals, tables, data)
+        self.extra
+            .mem_layout
+            .modify_bodies(|data_ref, def| op(data_ref.into(), &mut def.body));
     }
 
     pub fn find_function_id_by_name(&self, name: &str) -> Option<FunctionRef> {
@@ -641,13 +538,11 @@ impl<'src> ModuleBuilder<'src> {
             memories: entities::Memories::default(),
             globals: entities::Globals::default(),
             tags: entities::Tags::default(),
-            data: entities::DataChunks::default(),
-            mem_spec: data::MemSpec::default(),
             tables: entities::Tables::default(),
             indirect_function_table: elements::IndirectFunctionTable::new(
                 TableRef::reserved_value(),
             ),
-            extra_state: Builder::default(),
+            extra: Builder::default(),
         }
     }
 
@@ -680,12 +575,6 @@ impl<'src> ModuleBuilder<'src> {
     ///
     /// Panics: if memory_id for base memory was already set.
     pub fn create_base_memory(&mut self) -> crate::index::Temp<MemoryRef> {
-        if self.mem_spec.mem_id.is_reserved_value() {
-            panic!(
-                "Base memory is already defined with id {:?}.",
-                self.mem_spec.mem_id
-            );
-        }
         self.memories.push_defined(WithoutBody {
             entity_type: raw::MemoryType {
                 memory64: false,
@@ -721,18 +610,11 @@ impl<'src> ModuleBuilder<'src> {
             indirect_function_table.table_id = table_id;
         }
         let memories = self.memories.into_finished();
-        let mut mem_spec = self.mem_spec;
-        if mem_spec.mem_id.is_reserved_value() {
-            let memory_id = Module::<'src>::try_init_base_memory(&memories)
-                .map(|(_name, id)| id)
-                .unwrap_or_default();
-            mem_spec.mem_id = memory_id;
-        }
 
         let fn_imports = self.functions.imports.len();
 
         let start_fns = self
-            .extra_state
+            .extra
             .start_functions
             .into_iter()
             .map(|temp| temp.to_stable(fn_imports))
@@ -748,21 +630,15 @@ impl<'src> ModuleBuilder<'src> {
         Module {
             tables,
             memories,
-            mem_spec,
             indirect_function_table,
-            extra_state: Locked {
+            extra: Locked {
                 start_function,
-
                 // TODO: Make it less fragile (currently it relies on the fact that we use 5byte encoding for count)
-                mem_layout: self
-                    .extra_state
-                    .mem_layout
-                    .seal_at(5, |temp| temp.to_stable(0)),
+                mem_layout: self.extra.mem_layout.seal_at(5, |temp| temp.to_stable(0)),
             },
             functions: self.functions.into_finished(),
             globals: self.globals.into_finished(),
             tags: self.tags.into_finished(),
-            data: self.data.into_finished(),
         }
     }
 
@@ -793,12 +669,9 @@ mod tests {
 
     use super::LoadedFile;
     use crate::{
-        index::GappedMap,
-        raw::SegmentId,
-        typed::{
-            DefinedDataChunk, EntityBody, ExportNames, ImportedFunction, ModuleBuilder,
-            data::DataChunkType,
-        },
+        index::{GappedMap, Temp},
+        layouts::ItemType,
+        typed::{DefinedDataChunk, EntityBody, ExportNames, ImportedFunction, ModuleBuilder},
     };
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
@@ -811,7 +684,7 @@ mod tests {
         let wasm_bytes = std::fs::read(file).unwrap();
         let file = LoadedFile::from_wasm_bytes(&wasm_bytes).unwrap();
         let mut input_object = file.module;
-        assert_eq!(input_object.data.len(), 127);
+        assert_eq!(input_object.extra.mem_layout.item_places().len(), 127);
         assert_eq!(input_object.functions.len(), 706);
 
         let mut indirect_fns = input_object
@@ -858,16 +731,17 @@ mod tests {
             entity_type: FuncType::new(None, None), // void type
         });
 
-        module.data.push_defined(DefinedDataChunk {
+        let segment_id = module
+            .extra
+            .mem_layout
+            .try_create_base_segment(Temp::from_defined(0));
+        module.extra.mem_layout.push_defined(DefinedDataChunk {
             body: EntityBody::New {
                 new_bytes: vec![1, 2, 3].into(),
                 new_relocs: smallvec![],
             },
             name: Some("data".into()),
-            entity_type: DataChunkType {
-                segment_id: SegmentId::from_u32(0),
-                pow2align: 0,
-            },
+            entity_type: ItemType::data_chunk(segment_id, 0),
             export_as: ExportNames::default(),
         });
 
@@ -876,6 +750,6 @@ mod tests {
         dbg!(&module.functions);
         assert_eq!(module.functions.len(), 1);
 
-        assert_eq!(module.data.len(), 1);
+        assert_eq!(module.extra.mem_layout.item_places().len(), 1);
     }
 }

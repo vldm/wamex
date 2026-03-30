@@ -25,7 +25,7 @@ use crate::{
     },
     typed::{
         DefinedGlobal, EntityBody, EntityKind, ExportNames, FileId, FunctionRef, GlobalRef,
-        data::SpecificLocation, snapshot::EntitiesSnapshot,
+        snapshot::EntitiesSnapshot,
     },
 };
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -84,14 +84,12 @@ where
 
     /// Module related configuration.
     fn setup_module(&mut self, builder: &mut crate::typed::ModuleBuilder<'_>) -> Result<()> {
-        let memory_base = match builder.mem_spec.mem_start {
-            SpecificLocation::GotBased { global, .. } => Some(global),
-            _ => None,
-        };
+        // let main_vs = builder.phase.mem_layout.main_vs();
+        // let memory_base = main_vs.and_then(|vs| vs.location.global_ref());
 
-        if memory_base.is_none() {
-            return Ok(());
-        }
+        // if memory_base.is_none() {
+        //     return Ok(());
+        // }
         debug_assert!(self.global_tmps.is_empty());
         // TODO: ensure_global_got_base exist
         for (store_type, content_type) in init_each_store_var() {

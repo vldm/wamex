@@ -5,8 +5,9 @@ use derive_more::{Display, From};
 
 use crate::{
     index::{Temp, TempIndex},
+    layouts::DataSymbolRef,
     raw::{self, FuncTypeId},
-    typed::{Module, data::DataSymbolRef},
+    typed::Module,
 };
 
 mod collections;
@@ -81,7 +82,6 @@ impl TempIndex for DataSymbolRef {
         DataSymbolRef::from_u32(value)
     }
 }
-
 
 /// The entity type for imports and exports of a module.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,9 +184,9 @@ impl TempEntityKind {
             TempEntityKind::Memory(mem_ref) => {
                 EntityKind::Memory(mem_ref.to_stable(module.memories.imports_iter().len()))
             }
-            TempEntityKind::DataSymbol(data_symbol_ref) => {
-                EntityKind::DataSymbol(data_symbol_ref.to_stable(module.data.imports_iter().len()))
-            }
+            TempEntityKind::DataSymbol(data_symbol_ref) => EntityKind::DataSymbol(
+                data_symbol_ref.to_stable(module.extra.mem_layout.imports.len()),
+            ),
         }
     }
 }
@@ -200,4 +200,3 @@ impl ReservedValue for TempEntityKind {
         matches!(self, TempEntityKind::Function(t) if TagRef::from_bits(t.as_bits()).is_reserved_value())
     }
 }
-

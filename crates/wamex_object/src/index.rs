@@ -449,6 +449,10 @@ impl<Idx, Val> WithStart<Idx, Val> {
     pub fn new(start: Idx, value: Vec<Val>) -> Self {
         Self { start, value }
     }
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "Trait impl is harder because cranelift doesn't expose IntoIter type."
+    )]
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = (Idx, Val)>
     where
@@ -466,6 +470,7 @@ impl<Idx, Val> WithStart<Idx, Val> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{index::GappedMap, typed::SymbolId};
 
     struct WithReserved(u32);
     impl crate::index::ReservedValue for WithReserved {
@@ -486,5 +491,45 @@ mod tests {
         assert!(v.expand_ref().is_some());
         let v: PackedOption<WithReserved> = PackedOption::default();
         assert!(v.expand_ref().is_none());
+    }
+
+    #[test]
+    fn test_gapped_map() {
+        // push at 0
+        // push at 2
+        // push at 3
+        // push at 4
+        // push at 5
+        // remove (3,5)
+
+        let val = SymbolId::from_u32(0);
+        let mut gapped_map = GappedMap::new();
+
+        assert!(gapped_map.last_key().is_none());
+
+        gapped_map.insert(val, val);
+        assert_eq!(gapped_map.last_key().unwrap(), val);
+
+        for key in 2..=5 {
+            let key = SymbolId::from_u32(key);
+            gapped_map.insert(key, val);
+            assert_eq!(gapped_map.last_key().unwrap(), key);
+        }
+        for key in [3, 5] {
+            let key = SymbolId::from_u32(key);
+            gapped_map.remove(key);
+        }
+
+        assert_eq!(gapped_map.last_key().unwrap(), SymbolId::from_u32(4));
+        
+        let res: Vec<_> = gapped_map.iter().map(|(k, v)| (k, *v)).collect();
+
+        let expected = vec![
+            (SymbolId::from_u32(0), val),
+            (SymbolId::from_u32(2), val),
+            (SymbolId::from_u32(4), val),
+        ];
+
+        assert_eq!(res, expected)
     }
 }

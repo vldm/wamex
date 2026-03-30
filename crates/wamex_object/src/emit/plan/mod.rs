@@ -22,12 +22,12 @@ use crate::{
             resolver::OutputEntitiesResolver,
         },
     },
-    index::GappedMap,
+    index::{GappedMap, Temp},
+    layouts::DataSymbolRef,
     linkage::file_db::FileRelocs,
     typed::{
         EntityKind, EntityType, ExportNames, FileId, FileLoader, GlobalRef, ImportedEntity, Module,
         ModuleBuilder, TempEntityKind,
-        data::{DataSymbolRef, MemSpec},
         snapshot::{FlatEntityRef, MultiSnapshot},
     },
 };
@@ -107,13 +107,26 @@ macro_rules! replace_span {
 }
 
 impl OutputModuleCopyPlan {
-    pub fn collect_mem_spec<'src>(input_files: &'src FileLoader) -> MemSpec<'src> {
-        // TODO: implement merging of mem spec from multiple modules.
-        input_files
-            .get_file(FileId::from_u32(0))
-            .module
-            .mem_spec
-            .clone()
+    /// Copy virtual space and segments from input module to output module
+    pub fn copy_vs_segments<'src>(output: &mut ModuleBuilder<'src>, input_files: &'src FileLoader) {
+        // TODO: merge info from all modules
+        let first = input_files.get_file(FileId::from_u32(0));
+        // let temp_mem =
+        //     output.memories.push_import(MemoryType {
+        //         minimum: 0,
+        //         memory64: false,
+        //         shared: false,
+        //         page_size_log2: None,
+        //         maximum: None,
+        //     }.into());
+
+        log::error!("Need to create memory");
+        let module = &first.module;
+        let output_layout = module
+            .extra
+            .mem_layout
+            .recover_vs_segments(|_| Temp::from_defined(0));
+        output.extra.mem_layout = output_layout;
     }
     /// Execute the plan and copy entities from input to output modules.
     pub fn copy_entities<'src, M>(
@@ -125,7 +138,6 @@ impl OutputModuleCopyPlan {
     where
         M: EntityModifier<'src>,
     {
-        let mem_spec = Self::collect_mem_spec(input_files);
         log::info!(
             "Applying plan for output module with {} entities and {} imports",
             self.entities.len(),
@@ -133,6 +145,8 @@ impl OutputModuleCopyPlan {
         );
         let mut action_span = tracing::info_span!("Copy entities").entered();
         let mut module = ModuleBuilder::new();
+
+        Self::copy_vs_segments(&mut module, input_files);
 
         let modifier = entity_modifier_setup
             .map(|shared| M::setup(shared, self, &mut module))
@@ -160,9 +174,9 @@ impl OutputModuleCopyPlan {
 
             for (_, file, entity, flat, copy) in group {
                 macro_rules! copy_entity {
-                    ($entity_collection:ident $entity_type:ident => $id:expr) => {
-                        let mut entity = file.module.$entity_collection.get_entity($id).cloned();
-                        let new = module.$entity_collection.dry_push_entity(&entity);
+                    ($($entity_collection:ident).+, $entity_type:ident => $id:expr) => {
+                        let mut entity = file.module.$($entity_collection).+.get_entity($id).cloned();
+                        let new = module.$($entity_collection).+.dry_push_entity(&entity);
                         if let Some(modifier) = &modifier {
 
                             let source_info = SourceInfo {
@@ -178,7 +192,7 @@ impl OutputModuleCopyPlan {
                             modifier_artifact.merge(modifier.modify_entity(source_info, any_entity)?);
                         }
                         copy_entity!(@add_export entity.as_mut().export_as_mut());
-                        let new = module.$entity_collection.push_entity(entity);
+                        let new = module.$($entity_collection).+.push_entity(entity);
                         ref_map.push((EntityLocation::from_parts(file_id, $id.into()), new.into()));
                     };
                     (@add_export $exports:expr) => {
@@ -189,22 +203,22 @@ impl OutputModuleCopyPlan {
                 }
                 match entity {
                     EntityKind::Function(f) => {
-                        copy_entity!(functions Function => f);
+                        copy_entity!(functions, Function => f);
                     }
                     EntityKind::Global(g) => {
-                        copy_entity!(globals Global => g);
+                        copy_entity!(globals, Global => g);
                     }
                     EntityKind::Memory(m) => {
-                        copy_entity!(memories Memory => m);
+                        copy_entity!(memories, Memory => m);
                     }
                     EntityKind::Table(t) => {
-                        copy_entity!(tables Table => t);
+                        copy_entity!(tables, Table => t);
                     }
                     EntityKind::Tag(t) => {
-                        copy_entity!(tags Tag => t);
+                        copy_entity!(tags, Tag => t);
                     }
                     EntityKind::DataSymbol(d) => {
-                        copy_entity!(data DataSymbol => d);
+                        copy_entity!(extra.mem_layout, DataSymbol => d);
                     }
                     EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
                 }
@@ -215,8 +229,8 @@ impl OutputModuleCopyPlan {
         // Add imports for used symbols (even if they are defined in source).
         for (r, import) in &self.imports {
             macro_rules! push_import {
-                ($entity_type:ident => $ty: expr) => {{
-                    let new_ref = module.$entity_type.push_import(ImportedEntity {
+                ($($entity_collection:ident).+ => $ty: expr) => {{
+                    let new_ref = module.$($entity_collection).+.push_import(ImportedEntity {
                         module: import.module.clone().into(),
                         name: import.name.clone().into(),
                         entity_type: $ty.clone(),
@@ -251,7 +265,7 @@ impl OutputModuleCopyPlan {
                     push_import!(tags => m);
                 }
                 EntityType::DataSymbol(d) => {
-                    push_import!(data => d);
+                    push_import!(extra.mem_layout => d);
                 }
             }
         }
@@ -317,7 +331,6 @@ impl OutputModuleCopyPlan {
         // collect indirect table (used by relocs)
         module.extend_indirect_table_from_relocs(&relocs);
 
-        module.mem_spec = mem_spec;
         Ok(OutputModule {
             module,
             resolver: file_info,
@@ -486,7 +499,7 @@ impl<'src> EmitContext<'src> {
         let mut imported_data = GappedMap::new();
         // 2. calculate memoffsets for imported data symbols.
         log::debug!("Calculating imported data offsets for module {ident}");
-        for (orig_d, _i) in output_module.module.data.imports_iter() {
+        for (orig_d, _i) in output_module.module.extra.mem_layout.imports().iter() {
             let src = output_module
                 .resolver
                 .get_entity_src(orig_d.into())
@@ -520,7 +533,7 @@ impl<'src> EmitContext<'src> {
             imported_data.insert(
                 orig_d,
                 ImportedDataDep {
-                    output_location: *extern_ref,
+                    output_location: extern_ref.offsets,
                     got_entry: Some(output_module.dyn_info.as_ref()
                         .expect("Dynamic info should be present for module with imported data symbols")
                         .deps

@@ -32,6 +32,9 @@ impl RangeComp {
             _ => None,
         }
     }
+    pub fn is_intersecting(&self) -> bool {
+        matches!(self, RangeComp::Overlap | RangeComp::Within | RangeComp::NonComparable)
+    }
 }
 
 /// Compares two ranges and returns their relationship.

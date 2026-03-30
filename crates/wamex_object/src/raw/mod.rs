@@ -64,11 +64,13 @@ pub struct ObjectReader<'a> {
     pub target_features: TargetFeatures,
     // other sections
     pub custom_sections: VecMap<Ind<CustomSection<'a>>>,
+    pub(crate) tmp_src: &'a [u8],
 }
 
 impl<'a> ObjectReader<'a> {
     pub fn parse(wasm: &'a [u8]) -> anyhow::Result<Self> {
         let mut module = Self {
+            tmp_src: wasm,
             ..Default::default()
         };
 

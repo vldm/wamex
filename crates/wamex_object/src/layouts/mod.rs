@@ -19,19 +19,21 @@
 //!   2. list of elements/data chunks and information about segment they belong to.
 //!
 
-use std::{borrow::Cow, ops::Range};
+use std::borrow::Cow;
 
-use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::packed_option::ReservedValue;
 use smallvec::smallvec;
 
+pub use self::{
+    builder::{SegmentFlags, SegmentSpec, VirtualSpaceLocation},
+    data::*,
+};
 use crate::{
     SVec,
     emit::modify::wasm_emitter,
     raw::SegmentId,
     typed::{
-        DefinedEntity, EntityBody, EntityBodyCopy, ExportNames, IterBytes, MemoryRef, TableRef,
-        data::{DataSymbolRef, RawDataChunk, SpecificLocation},
+        DefinedEntity, EntityBody, ExportNames, ImportedEntity, IterBytes, MemoryRef, TableRef,
         elements::ElementItemId,
     },
 };
@@ -39,32 +41,20 @@ use crate::{
 impl_entity_index! {
     #[display = "vs"]
     pub struct VirtualSpaceId;
+    #[display = "item"]
+    pub struct PartId;
 }
 
 mod builder;
-mod hexdump;
+mod data;
+pub mod hexdump;
 mod sealed;
 
 use builder::*;
 use sealed::*;
 
+pub type ImportedDataChunk<'src> = ImportedEntity<'src, ()>;
 pub type DefinedDataChunk<'src> = DefinedEntity<'src, ItemType>;
-
-impl<'a> From<RawDataChunk<'a>> for DefinedDataChunk<'a> {
-    fn from(value: RawDataChunk<'a>) -> Self {
-        Self {
-            entity_type: ItemType::data_chunk(value.segment_id, value.pow2align),
-            name: None,
-            export_as: ExportNames::new(),
-            body: EntityBody::Copied(EntityBodyCopy {
-                bytes: value.data,
-                original_range: value.original_offset..value.original_offset + value.data.len(),
-                fixups: vec![],
-                filtered_relocs: CompoundBitSet::new(),
-            }),
-        }
-    }
-}
 
 pub type MemLayoutBuilder<'src> =
     LayoutBuilder<'src, MemoryRef, DataSymbolRef, DefinedDataChunk<'src>>;
@@ -95,22 +85,25 @@ impl ReservedValue for Offsets {
     }
 }
 
-impl ReservedValue for ItemOffsets {
+impl ReservedValue for ItemPlace {
     fn reserved_value() -> Self {
         Self {
             offsets: ReservedValue::reserved_value(),
             segment_id: SegmentId::reserved_value(),
+            part_id: PartId::reserved_value(),
         }
     }
     fn is_reserved_value(&self) -> bool {
-        self.offsets.is_reserved_value() && self.segment_id.is_reserved_value()
+        self.offsets.is_reserved_value()
+            && self.segment_id.is_reserved_value()
+            && self.part_id.is_reserved_value()
     }
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ItemType {
-    segment_id: SegmentId,
-    alignment: u8,
+    pub(crate) segment_id: SegmentId,
+    pub(crate) alignment: u8,
 }
 
 impl ItemType {
@@ -121,7 +114,10 @@ impl ItemType {
         }
     }
     pub fn data_chunk(segment_id: SegmentId, align: u8) -> Self {
-        Self { segment_id, alignment: align }
+        Self {
+            segment_id,
+            alignment: align,
+        }
     }
 }
 
@@ -285,7 +281,7 @@ mod tests {
             ]
         );
         let data_ref = item1_id.to_stable(0);
-        let item = sealed.items_place.get(data_ref).unwrap();
+        let item = sealed.defined_items.get(data_ref).unwrap();
         assert_eq!(item.segment_id, segment_id);
         assert_eq!(item.offsets.va_address, 4); // offset of first item in VA <- 3 byte offset of storage + padding of 1 byte
         assert_eq!(item.offsets.section_offset, 9); // offset of first item in file 9 byte header
@@ -383,12 +379,12 @@ mod tests {
             ]
         );
 
-        let item = sealed.items_place.get(first_data.to_stable(0)).unwrap();
+        let item = sealed.defined_items.get(first_data.to_stable(0)).unwrap();
         assert_eq!(item.segment_id, segment1_id);
         assert_eq!(item.offsets.va_address, 4); // offset of first item in VA <- 3 byte offset of storage + padding of 1 byte
         assert_eq!(item.offsets.section_offset, 9); // offset of first item in file 9 byte header
 
-        let item = sealed.items_place.get(second_data.to_stable(0)).unwrap();
+        let item = sealed.defined_items.get(second_data.to_stable(0)).unwrap();
         assert_eq!(item.segment_id, segment2_id);
         assert_eq!(item.offsets.va_address, 16); // offset of second item in (allign of segment 2)
         assert_eq!(item.offsets.section_offset, 21); // 1st segment header (9) + 1st segment data (3) + 2nd segment header (9)

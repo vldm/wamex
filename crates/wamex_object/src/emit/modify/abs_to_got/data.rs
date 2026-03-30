@@ -20,10 +20,11 @@ use crate::{
         relocation::{EntityLocation, resolver::OutputEntitiesResolver},
     },
     index::Temp,
+    layouts::DataSymbolRef,
     linkage::reloc::{Encoding, Relative, RelocationWidth},
     typed::{
         DefinedFunction, EntityBody, EntityKind, ExportNames, FileId, FunctionRef,
-        data::DataSymbolRef, snapshot::EntitiesSnapshot,
+        snapshot::EntitiesSnapshot,
     },
 };
 
@@ -180,7 +181,7 @@ where
                 let relocated_symbol = module_info
                     .get_output_entity(&temp.relocated_symbol)
                     .expect("Relocated symbol be defined in output module at this point");
-                let storage = module.data.stable_id(temp.storage);
+                let storage = module.extra.mem_layout.stable_id(temp.storage);
                 FinalDataSymbolInit {
                     storage,
                     relocated_symbol,
@@ -245,7 +246,7 @@ where
             name: Some("__wamex_reloc_init".into()),
             export_as: ExportNames::default(),
         });
-        module.extra_state.start_functions.push(start_fn);
+        module.extra.start_functions.push(start_fn);
 
         Ok(Some(Self {
             static_symbols: shared,

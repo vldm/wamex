@@ -17,13 +17,7 @@ use std::{
 
 use wasm_encoder::MemArg;
 
-use crate::{
-    emit::{
-        memory_layout::{self, DataStream},
-        relocation::encode,
-    },
-    typed::data::SpecificLocation,
-};
+use crate::emit::relocation::encode;
 
 /// Wrapper around Write/Seek that track written range, and position and
 /// ensures that seek are done within written range.
@@ -572,37 +566,6 @@ impl SectionAdapter {
     }
 }
 
-pub fn data_segment_adapter<W>(
-    encoder: &mut Encoder<W>,
-    location: Option<SpecificLocation>,
-    data_stream: DataStream<'_>,
-) -> Result<(), std::io::Error>
-where
-    W: Write,
-{
-    // where segment:
-    // - header (mode/offset)
-    // - len of data
-    // - data bytes
-
-    let encoded = memory_layout::SegmentLayout::segment_header(location)?;
-    encoder.push_bytes(&encoded)?;
-    data_stream.encode(encoder)?;
-    Ok(())
-}
-
-// struct DebugHexEncoder<'a, W>(&'a Encoder<W>);
-
-// impl<W> Debug for DebugHexEncoder<'_, Cursor<W>>
-// where
-//     W: AsRef<[u8]>,
-// {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         f.debug_struct("SectionList")
-//             .field("encoder", &hex::encode(self.0.writer.get_ref().as_ref()))
-//             .finish()
-//     }
-// }
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;

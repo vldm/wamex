@@ -7,27 +7,42 @@ pub mod file_db;
 pub mod name_resolver;
 pub mod reloc;
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, ops::Range};
 
-use cranelift_entity::PrimaryMap;
+use cranelift_entity::{EntityRef, PrimaryMap};
 use file_db::FileSymbolDb;
 use log::error;
 use wasmparser::SymbolInfo;
 
 use crate::{
     ObjectReader,
+    layouts::DataSymbolRef,
     linkage::{file_db::SymbolOffset, reloc::AnyRelocationEntry},
-    typed::{
-        EntityKind, FunctionRef, GlobalRef, Module, SymbolId, TableRef, TagRef,
-        data::{DataDefined, DataSymbolRef},
-    },
+    raw::SegmentId,
+    typed::{EntityKind, FunctionRef, GlobalRef, Module, SymbolId, TableRef, TagRef},
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DataDefined<'a> {
+    pub segment_id: SegmentId,
+    pub name: Cow<'a, str>,
+    // Range of bytes in data segment related to this symbol
+    pub range: Range<u32>,
+}
+impl<'a> DataDefined<'a> {
+    pub fn from_defined(value: &wasmparser::DefinedDataSymbol, name: Cow<'a, str>) -> Self {
+        Self {
+            segment_id: SegmentId::from_u32(value.index),
+            range: value.offset..(value.offset + value.size),
+            name,
+        }
+    }
+}
 type Str<'a> = Cow<'a, str>;
 
 pub struct LinkageInfo<'src> {
     pub file_symbol_db: FileSymbolDb,
-    pub defined_data_symbols: Vec<(SymbolId, DataDefined<'src>)>,
+    pub defined_data_symbols: Vec<(SymbolId, DataDefined<'src>, DataSymbolRef)>,
     // pub relocations: Relocations,
 }
 
@@ -71,8 +86,11 @@ impl<'src> LinkageInfo<'src> {
                 } => {
                     let idx = EntityKind::DataSymbol(data_ref);
 
-                    defined_data_symbols
-                        .push((id, DataDefined::from_defined(defined, (*name).into())));
+                    defined_data_symbols.push((
+                        id,
+                        DataDefined::from_defined(defined, (*name).into()),
+                        data_ref,
+                    ));
 
                     data_ref = data_ref.next();
                     (idx, Some(*name), flags)
@@ -114,7 +132,15 @@ impl<'src> LinkageInfo<'src> {
         }
 
         let _g = tracing::debug_span!("Sorting defined data symbols").entered();
-        defined_data_symbols.sort_by_key(|(_, d)| (d.segment_id, d.range.start));
+        defined_data_symbols.sort_by_key(|(_, d, _)| (d.segment_id, d.range.start));
+
+        // renumerate data_symbols - to keep ids ordered
+        for (new_ref, (sym_id, _, data_ref)) in defined_data_symbols.iter_mut().enumerate() {
+            let new_ref = DataSymbolRef::new(new_ref);
+            symbols[*sym_id].entity = new_ref.into();
+            *data_ref = new_ref;
+        }
+
         Self {
             file_symbol_db: FileSymbolDb { symbols },
             defined_data_symbols,
@@ -166,17 +192,20 @@ impl<'src> LinkageInfo<'src> {
     /// - for each data chunks
     #[tracing::instrument(skip_all)]
     pub fn build_regions(input: &Module) -> file_db::Regions {
+        let mem_layout = &input.extra.mem_layout;
+
         let mut code_owners = Vec::with_capacity(input.functions.defined.len());
-        let mut data_owners = Vec::with_capacity(input.data.defined.len());
+        let mut data_owners = Vec::with_capacity(mem_layout.defined_items.len());
 
         for (func_ref, func) in input.functions.defined_iter() {
             code_owners.push((func.original_range(), func_ref));
         }
-
-        for (data_ref, data) in input.data.defined_iter() {
-            data_owners.push((data.original_range(), data_ref));
+        for (data_ref, place) in mem_layout.item_places().iter() {
+            let original_range = mem_layout.segments[place.segment_id].parts[place.part_id]
+                .defined_entity
+                .original_range();
+            data_owners.push((original_range, data_ref))
         }
-
         (code_owners, data_owners)
     }
 }

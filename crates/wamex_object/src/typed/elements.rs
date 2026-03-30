@@ -9,8 +9,9 @@ use super::{ElementItems, Result};
 use crate::{
     SVec,
     index::GappedMap,
+    layouts::SpecificLocation,
     raw,
-    typed::{FunctionRef, Module, TableRef, data::SpecificLocation},
+    typed::{FunctionRef, Module, TableRef},
 };
 
 impl_entity_index! {

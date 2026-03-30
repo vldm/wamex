@@ -11,13 +11,13 @@ use wasmparser::FuncType;
 use crate::{
     analysis::SplitProgramInfo,
     emit::{
-        memory_layout::{DataSymbolsOffsets, SegmentLayout},
         modify::{OutputEntityRef, wasm_emitter},
         plan::OutputId,
         relocation::{FunctionInfo, ModuleLayout, resolver::OutputEntitiesResolver},
     },
     helpers::{ShiftMap, ShiftPoint},
     index::{GappedMap, TempIndex},
+    layouts::DataSymbolsOffsets,
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
     raw::FuncTypeId,
     typed::{
@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-pub mod memory_layout;
+// pub mod memory_layout;
 pub mod modify;
 #[macro_use]
 pub mod plan;
@@ -229,7 +229,7 @@ impl<'src> Module<'src> {
     /// Start fn section - is just a number of entrypoint function.
     /// We will place one function with void signature as start function, with calls of all functions defined in `self.start_functions` array.
     fn generate_start_function_section(&self, output_module: &mut wasm_encoder::Module) {
-        if let Some(start_function) = &self.extra_state.start_function {
+        if let Some(start_function) = &self.extra.start_function {
             output_module.section(&wasm_encoder::StartSection {
                 function_index: start_function.as_u32(),
             });
@@ -315,7 +315,7 @@ impl<'src> Module<'src> {
 
     fn generate_data_count_section(&self, output_module: &mut wasm_encoder::Module) {
         output_module.section(&wasm_encoder::DataCountSection {
-            count: self.mem_spec.data_segments.len() as u32,
+            count: self.extra.mem_layout.segments.len() as u32,
         });
     }
 
@@ -374,27 +374,14 @@ impl<'src> Module<'src> {
         // - len of data
         // - data bytes
 
-        // Order data symbols by their segments.
-        let (segments, data_mapping) = SegmentLayout::build_for_module(self)?;
-
         let adapter =
             wasm_emitter::SectionAdapter::new(wasm_encoder::SectionId::Data.into(), |section| {
-                for (_id, layout) in segments.iter() {
-                    section.item_from_encoder(|e| {
-                        wasm_emitter::data_segment_adapter(
-                            e,
-                            layout.memory_location(),
-                            layout.data_stream(),
-                        )
-                    })?;
-                }
-
-                Ok(())
+                self.extra.mem_layout.encode(section)
             })?;
 
         output_module.section(&adapter);
 
-        Ok(data_mapping)
+        Ok(self.extra.mem_layout.item_places().clone())
     }
 
     /// Copy relocs to new FileRelocs.
@@ -415,7 +402,7 @@ impl<'src> Module<'src> {
         let mut code_owners = GappedMap::new();
         let mut data_owners = GappedMap::new();
 
-        for (entity, body) in self.entities_bodies_mut() {
+        self.modify_entities_bodies(|entity, body| {
             let start = relocs.len();
 
             // - resolve+shift "input" relocs from fixups
@@ -443,7 +430,8 @@ impl<'src> Module<'src> {
 
             let range = start..relocs.len();
             if range.is_empty() {
-                continue;
+                // no relocs - nothing to do
+                return;
             }
 
             match entity {
@@ -459,7 +447,7 @@ impl<'src> Module<'src> {
                     "Only functions and data symbols can have relocs, but got entity with id {entity} relocs: {relocs:?}"
                 ),
             };
-        }
+        });
         Ok(FileRelocs::build_from_parts(
             relocs.into_boxed_slice(),
             code_owners,
@@ -650,11 +638,11 @@ mod tests {
             modify::NoModification,
             plan::{EmitContext, OutputModule},
         },
+        layouts::{ItemType, SegmentFlags, SegmentSpec, SpecificLocation, VirtualSpaceLocation},
         raw::SegmentId,
         typed::{
             DefinedDataChunk, EntityBody, ExportNames, FileLoader, ImportedFunction, LoadedFile,
             ModuleBuilder, WithoutBody,
-            data::{DataChunkType, DataSegmentInfo, SegmentPlacement},
         },
     };
 
@@ -759,9 +747,9 @@ mod tests {
             export_as: ExportNames::default(),
             entity_type: FuncType::new(None, None),
         });
-        module.extra_state.start_functions.push(imported);
+        module.extra.start_functions.push(imported);
         module.create_empty_indirect_fn_table();
-        module.memories.push_defined(WithoutBody {
+        let id = module.memories.push_defined(WithoutBody {
             entity_type: crate::raw::MemoryType {
                 memory64: false,
                 shared: false,
@@ -772,34 +760,47 @@ mod tests {
             export_as: ExportNames::default(),
             name: Some("__base_memory".into()),
         });
+        let data = &mut module.extra.mem_layout;
+        // Add virtual space where this data should stay
+        let vs = data.virtual_spaces.push(Some(VirtualSpaceLocation {
+            owner_id: id,
+            location: SpecificLocation::ConstantOffset(0),
+        }));
 
-        module.mem_spec.data_segments.push(DataSegmentInfo {
+        data.segments.push(SegmentSpec {
+            vs_id: vs,
             name: "data".into(),
-            location: SegmentPlacement::ContinuesMemory,
-            pow2align: 0,
+            align: 0,
+            segment_flags: SegmentFlags::Readonly,
         });
-        module.data.push_defined(DefinedDataChunk {
+
+        data.push_defined(DefinedDataChunk {
             body: EntityBody::New {
                 new_bytes: vec![1, 2, 3].into(),
                 new_relocs: smallvec![],
             },
             name: Some("data".into()),
-            entity_type: DataChunkType {
-                segment_id: SegmentId::from_u32(0),
-                pow2align: 0,
-            },
+            entity_type: ItemType::data_chunk(SegmentId::from_u32(0), 0),
             export_as: ExportNames::default(),
         });
 
         let module = module.into_locked();
+
+        assert_eq!(module.functions.len(), 1);
+        assert_eq!(module.tables.len(), 1);
+        assert_eq!(module.memories.len(), 1);
+        assert_eq!(module.extra.mem_layout.len(), 1);
+
         let mut output = wasm_encoder::Module::new();
         module.generate(&mut output).unwrap();
         let bytes = output.finish();
 
         let loaded = LoadedFile::from_wasm_bytes(&bytes).unwrap();
+
+        dbg!(&loaded.module.extra);
         assert_eq!(loaded.module.functions.len(), 1);
         assert_eq!(loaded.module.tables.len(), 1);
         assert_eq!(loaded.module.memories.len(), 1);
-        assert_eq!(loaded.module.data.len(), 1);
+        assert_eq!(loaded.module.extra.mem_layout.len(), 1);
     }
 }

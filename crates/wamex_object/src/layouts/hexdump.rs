@@ -4,12 +4,15 @@ use cranelift_entity::packed_option::ReservedValue;
 
 use crate::{
     helpers::RangeExt,
+    layouts::DataSymbolRef,
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
-    typed::{EntityBody, EntityKind, Module, data::DataSymbolRef},
+    typed::{EntityBody, EntityKind, Module},
 };
 
+#[derive(derive_more::Debug)]
 pub struct DataPart {
     // pub name: &'a str,
+    #[debug("{}", hex::encode(bytes))]
     pub bytes: Vec<u8>,
     pub refs: Vec<Ref>,
 }
@@ -27,6 +30,7 @@ pub struct Ref {
 pub fn render_part(mut out: impl Write, part_base: usize, part: DataPart, color: bool) {
     // Collect bytes into a vector for indexing
     let bytes: Vec<u8> = part.bytes;
+
     // Mark bytes to ref index
     let mut byte_to_ref: Vec<Option<usize>> = vec![None; bytes.len()];
     for (idx, r) in part.refs.iter().enumerate() {
@@ -227,6 +231,7 @@ pub trait SymbolDebugExt {
         let bytes = self.bytes();
         let len = bytes.len();
         let part = DataPart { bytes, refs };
+
         render_part(&mut out, *base, part, color);
         *base += len;
     }
@@ -243,11 +248,20 @@ pub struct SymbolDebug<'a> {
 
 impl SymbolDebugExt for SymbolDebug<'_> {
     fn get_symbol_shifted_relocs(&self) -> Box<[EntityRelocationEntry]> {
+        log::error!("symbol: {}, {}", self.symbol_name, self.symbol_index);
         self.file_relocs
             .get_data_relocs(self.symbol_index)
             .unwrap_or_default()
             .iter()
-            .map(|r| r.shift_left(self.body.original_range().start))
+            .map(|r| {
+                log::error!(
+                    "offset:{}, reloc: {:?}, original_offset:{}",
+                    r.offset,
+                    r,
+                    self.body.original_range().start
+                );
+                r.shift_left(self.body.original_range().start)
+            })
             .collect()
     }
 

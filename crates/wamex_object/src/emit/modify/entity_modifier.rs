@@ -11,13 +11,13 @@ use crate::{
         relocation::resolver::OutputEntitiesResolver,
     },
     index::Temp,
+    layouts::DataSymbolRef,
     linkage::reloc::EntityRelocationEntry,
     typed::{
         DefinedDataChunk, DefinedFunction, DefinedGlobal, DefinedMemory, DefinedTable, DefinedTag,
         EntityBody, FileId, FunctionRef, GlobalRef, ImportOrDefined, ImportedDataChunk,
         ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, MemoryRef,
         TableRef, TagRef,
-        data::DataSymbolRef,
         snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
 };
