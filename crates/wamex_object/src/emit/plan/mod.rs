@@ -16,7 +16,7 @@ use itertools::Itertools;
 
 use crate::{
     emit::{
-        modify::{self, AnyEntity, EntityModifier, Merge, SourceInfo},
+        modify::{AnyEntity, EntityModifier, Merge, SourceInfo},
         relocation::{
             EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
             resolver::OutputEntitiesResolver,
@@ -25,9 +25,8 @@ use crate::{
     index::GappedMap,
     linkage::file_db::FileRelocs,
     typed::{
-        Builder, DefinedEntity, EntityBody, EntityKind, EntityType, ExportNames, FileId,
-        FileLoader, FunctionRef, GlobalRef, ImportOrDefined, ImportedEntity, Module,
-        TempEntityKind, WithExtraInfo,
+        EntityKind, EntityType, ExportNames, FileId, FileLoader, GlobalRef, ImportedEntity, Module,
+        ModuleBuilder, TempEntityKind,
         data::{DataSymbolRef, MemSpec},
         snapshot::{FlatEntityRef, MultiSnapshot},
     },
@@ -133,7 +132,7 @@ impl OutputModuleCopyPlan {
             self.imports.len()
         );
         let mut action_span = tracing::info_span!("Copy entities").entered();
-        let mut module: Module<'src, Builder> = Module::new();
+        let mut module = ModuleBuilder::new();
 
         let modifier = entity_modifier_setup
             .map(|shared| M::setup(shared, self, &mut module))

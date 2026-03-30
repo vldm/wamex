@@ -9,7 +9,7 @@ use crate::{
     emit::modify::wasm_emitter,
     index::{GappedMap, ReservedValue},
     linkage::file_db::FileRelocs,
-    raw::DataSegmentId,
+    raw::SegmentId,
     typed::{
         DefinedDataChunk, IterBytes, Module,
         data::{BASE_ALIGNMENT, DataSymbolRef, RawDataChunk, SegmentPlacement, SpecificLocation},
@@ -28,7 +28,7 @@ pub struct SegmentLayout<'a> {
     pow2align: u32,
     data_parts: Vec<ChunkRepr<'a>>,
 }
-pub type Segments<'a> = PrimaryMap<DataSegmentId, SegmentLayout<'a>>;
+pub type Segments<'a> = PrimaryMap<SegmentId, SegmentLayout<'a>>;
 pub type DataSymbolsOffsets = GappedMap<DataSymbolRef, DataSymbolOffset>;
 
 impl<'src> SegmentLayout<'src> {
@@ -168,7 +168,7 @@ impl<'src> SegmentLayout<'src> {
         file_relocs: &FileRelocs,
         module: &Module<'_>,
         module_name: String,
-        data_segments: &PrimaryMap<DataSegmentId, SegmentLayout<'_>>,
+        data_segments: &PrimaryMap<SegmentId, SegmentLayout<'_>>,
         print_data_format: &mut impl std::fmt::Write,
         color: bool, // std::io::stdout().is_terminal()
     ) {
@@ -250,7 +250,7 @@ impl<'src> SegmentLayout<'src> {
     fn padding_symbol(
         segment_offset: u32,
         alignment: u32,
-        segment_id: DataSegmentId,
+        segment_id: SegmentId,
     ) -> Option<(DefinedDataChunk<'src>, Cow<'src, str>)> {
         let name = Cow::Borrowed("padding");
         let padding = Self::calculate_padding(segment_offset, alignment);

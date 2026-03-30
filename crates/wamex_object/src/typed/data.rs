@@ -5,6 +5,7 @@
 
 use std::{borrow::Cow, ops::Range};
 
+use anyhow::{bail, ensure};
 use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
 use wasmparser::DataKind;
 
@@ -12,7 +13,7 @@ use crate::{
     ObjectReader, Result,
     helpers::{RangeComp, cmp_range},
     linkage::file_db::{FileSymbolDb, SymbolOffset},
-    raw::DataSegmentId,
+    raw::SegmentId,
     typed::{GlobalRef, MemoryRef, Module, SymbolId},
 };
 
@@ -24,7 +25,7 @@ pub struct MemSpec<'src> {
     pub mem_id: MemoryRef,
     /// before - is a space for stack
     pub mem_start: SpecificLocation,
-    pub data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>>,
+    pub data_segments: PrimaryMap<SegmentId, DataSegmentInfo<'src>>,
 }
 
 impl Default for MemSpec<'_> {
@@ -45,7 +46,7 @@ impl<'src> MemSpec<'src> {
 
     pub fn from_reader(reader: &ObjectReader<'src>, memory_id: MemoryRef) -> Result<Self> {
         let mut mem_start = None;
-        let mut data_segments: PrimaryMap<DataSegmentId, DataSegmentInfo<'src>> = PrimaryMap::new();
+        let mut data_segments: PrimaryMap<SegmentId, DataSegmentInfo<'src>> = PrimaryMap::new();
 
         for (id, segment) in reader.data.data_segments.iter() {
             let (name, pow2align) = if let Some(info) = reader.linking.segments_info.get(id.index())
@@ -129,7 +130,7 @@ impl<'a> DataSegmentInfo<'a> {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DataDefined<'a> {
-    pub segment_id: DataSegmentId,
+    pub segment_id: SegmentId,
     pub name: Cow<'a, str>,
     // Range of bytes in data segment related to this symbol
     pub range: Range<u32>,
@@ -137,7 +138,7 @@ pub struct DataDefined<'a> {
 impl<'a> DataDefined<'a> {
     pub fn from_defined(value: &wasmparser::DefinedDataSymbol, name: Cow<'a, str>) -> Self {
         Self {
-            segment_id: DataSegmentId::from_u32(value.index),
+            segment_id: SegmentId::from_u32(value.index),
             range: value.offset..(value.offset + value.size),
             name,
         }
@@ -179,6 +180,12 @@ impl SpecificLocation {
             SpecificLocation::ConstantOffset(offset) => *offset,
         }
     }
+    pub fn global_ref(&self) -> Option<GlobalRef> {
+        match self {
+            SpecificLocation::GotBased { global, .. } => Some(*global),
+            SpecificLocation::ConstantOffset(_) => None,
+        }
+    }
     pub fn with_zero_offset(&self) -> Self {
         match self {
             SpecificLocation::GotBased { global, .. } => SpecificLocation::GotBased {
@@ -187,6 +194,55 @@ impl SpecificLocation {
             },
             SpecificLocation::ConstantOffset(_) => SpecificLocation::ConstantOffset(0),
         }
+    }
+    /// Decode simple offset expressions:
+    /// - `i32.const` for constant offsets
+    /// - `global.get` for GOT based offsets
+    /// or global.get + i32.const for GOT based offsets with constant offset.
+    pub fn try_from_const_expr(offset_expr: &wasmparser::ConstExpr) -> Result<Self> {
+        let mut reader = offset_expr.get_operators_reader();
+
+        let mut offset = None;
+        let mut got = None;
+
+        match reader.read()? {
+            wasmparser::Operator::I32Const { value } => {
+                ensure!(
+                    offset.is_none(),
+                    "Too complex expression (more than one offset)"
+                );
+                offset = Some(value);
+            }
+            wasmparser::Operator::GlobalGet { global_index } => {
+                ensure!(
+                    got.is_none(),
+                    "Too complex expression (more than one got reference)"
+                );
+                got = Some(GlobalRef::from_u32(global_index))
+            }
+            op => bail!(
+                "Too complex expression found unexpected instruction: {:?}",
+                op
+            ),
+        };
+        if got.is_some() && offset.is_some() {
+            match reader.read()? {
+                wasmparser::Operator::I32Add => {}
+                op => bail!(
+                    "Too complex expression found expected I32Add found: {:?}",
+                    op
+                ),
+            }
+        }
+        match reader.read()? {
+            wasmparser::Operator::End => {}
+            op => bail!("Expected End after const expr: {:?}", op),
+        }
+        let offset = offset.unwrap_or_default() as u32;
+        Ok(match got {
+            Some(global) => SpecificLocation::GotBased { global, offset },
+            None => SpecificLocation::ConstantOffset(offset),
+        })
     }
 }
 
@@ -214,7 +270,7 @@ impl SegmentPlacement {
 /// Data chunk information.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DataChunkType {
-    pub segment_id: DataSegmentId,
+    pub segment_id: SegmentId,
     pub pow2align: u8,
 }
 
@@ -224,7 +280,7 @@ pub struct DataChunk<'src, D> {
     pub original_offset: usize,
     pub data: D,
     pub pow2align: u8,
-    pub segment_id: DataSegmentId,
+    pub segment_id: SegmentId,
     pub name: Cow<'src, str>,
 }
 
@@ -249,13 +305,8 @@ pub enum SymbolRelation<'a> {
 }
 
 impl<'a> RawDataChunk<'a> {
-    /// Hack: Imported data symbol for future resolution.
-    pub fn new_imported() -> Self {
-        todo!()
-    }
-
     pub fn from_segment(
-        segment_id: DataSegmentId,
+        segment_id: SegmentId,
         segment_data: &'a [u8],
         segment_name: Cow<'a, str>,
         pow2align: u8,

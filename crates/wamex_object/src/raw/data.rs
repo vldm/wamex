@@ -1,8 +1,8 @@
 use cranelift_entity::PrimaryMap;
 pub use wasmparser::Data;
 
-use crate::raw::DataSegmentId;
+use crate::raw::SegmentId;
 #[derive(Debug, Default)]
 pub struct DataSection<'a> {
-    pub data_segments: PrimaryMap<DataSegmentId, Data<'a>>,
+    pub data_segments: PrimaryMap<SegmentId, Data<'a>>,
 }

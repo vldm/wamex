@@ -8,6 +8,7 @@ use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef};
 use crate::{
     SVec,
     emit::modify::{Rewrite, wasm_emitter},
+    layouts,
     linkage::reloc::EntityRelocationEntry,
     raw::{self, FunctionWithBody},
     typed::{self},

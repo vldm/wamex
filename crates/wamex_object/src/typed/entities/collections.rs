@@ -32,45 +32,57 @@ use crate::{
     index::{GappedMap, NonDefault, Temp, TempIndex, WithStart},
     raw::FuncTypeId,
     typed::{
-        Builder, DefinedDataChunk, DefinedEntity, DefinedFunction, DefinedGlobal, DefinedMemory,
+        DefinedDataChunk, DefinedEntity, DefinedFunction, DefinedGlobal, DefinedMemory,
         DefinedTable, DefinedTag, EntityKind, ExportNames, ImportedDataChunk, ImportedEntity,
-        ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag, Locked,
+        ImportedFunction, ImportedGlobal, ImportedMemory, ImportedTable, ImportedTag,
         WithExtraInfo, WithoutBody, data::DataSymbolRef,
     },
 };
 
-pub type Functions<'src, BS = Locked> =
+pub type Functions<'src, BS = SealedState> =
     EntityCollection<FunctionRef, ImportedFunction<'src>, DefinedFunction<'src>, BS>;
-pub type Tables<'src, BS = Locked> =
+pub type Tables<'src, BS = SealedState> =
     EntityCollection<TableRef, ImportedTable<'src>, DefinedTable<'src>, BS>;
-pub type Globals<'src, BS = Locked> =
+pub type Globals<'src, BS = SealedState> =
     EntityCollection<GlobalRef, ImportedGlobal<'src>, DefinedGlobal<'src>, BS>;
-pub type Memories<'src, BS = Locked> =
+pub type Memories<'src, BS = SealedState> =
     EntityCollection<MemoryRef, ImportedMemory<'src>, DefinedMemory<'src>, BS>;
-pub type Tags<'src, BS = Locked> =
+pub type Tags<'src, BS = SealedState> =
     EntityCollection<TagRef, ImportedTag<'src>, DefinedTag<'src>, BS>;
 
-pub type DataChunks<'src, BS = Locked> =
+pub type DataChunks<'src, BS = SealedState> =
     EntityCollection<DataSymbolRef, ImportedDataChunk<'src>, DefinedDataChunk<'src>, BS>;
+
+pub type DataChunksNew<'src, BS = SealedState> = EntityCollection<
+    DataSymbolRef,
+    ImportedDataChunk<'src>,
+    crate::layouts::DefinedDataChunk<'src>,
+    BS,
+>;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SealedState {}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BuilderState {}
 
 ///
 /// One place for storing imports and defined entities.
 ///
 /// It can be either:
-/// - `Builder` - allows adding new entities, and returns temporary `Temp<Ref>` index.
-/// -  AnyOther - works with fixed structure, and returns/receives stable `Ref` index.
+/// - `BuilderState` - allows adding new entities, and returns temporary `Temp<Ref>` index.
+/// -  `SealedState` - works with fixed structure, and returns/receives stable `Ref` index.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct EntityCollection<Ref, Import, Defined, BuilderState = Locked>
+pub struct EntityCollection<Ref, Import, Defined, BS = SealedState>
 where
     Ref: TempIndex,
 {
     pub imports: Vec<Import>,
     pub defined: Vec<Defined>,
     _pd: std::marker::PhantomData<Ref>,
-    _state: std::marker::PhantomData<BuilderState>,
+    _pd_state: std::marker::PhantomData<BS>,
 }
 
-impl<Ref, Import, Defined> Default for EntityCollection<Ref, Import, Defined, Builder>
+impl<Ref, Import, Defined> Default for EntityCollection<Ref, Import, Defined, BuilderState>
 where
     Ref: TempIndex,
 {
@@ -79,7 +91,7 @@ where
     }
 }
 
-impl<Ref, Import, Defined> EntityCollection<Ref, Import, Defined, Builder>
+impl<Ref, Import, Defined> EntityCollection<Ref, Import, Defined, BuilderState>
 where
     Ref: TempIndex,
 {
@@ -88,7 +100,7 @@ where
             imports: Vec::new(),
             defined: Vec::new(),
             _pd: std::marker::PhantomData,
-            _state: std::marker::PhantomData,
+            _pd_state: std::marker::PhantomData,
         }
     }
 
@@ -97,7 +109,7 @@ where
             imports,
             defined,
             _pd: std::marker::PhantomData,
-            _state: std::marker::PhantomData,
+            _pd_state: std::marker::PhantomData,
         }
     }
 
@@ -108,12 +120,12 @@ where
         self.defined.as_slice()
     }
 
-    pub fn into_finished(self) -> EntityCollection<Ref, Import, Defined, Locked> {
+    pub fn into_finished(self) -> EntityCollection<Ref, Import, Defined, SealedState> {
         EntityCollection {
             imports: self.imports,
             defined: self.defined,
             _pd: std::marker::PhantomData,
-            _state: std::marker::PhantomData,
+            _pd_state: std::marker::PhantomData,
         }
     }
 

@@ -6,16 +6,15 @@ use std::{
 use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
 use itertools::Itertools;
 
-use super::{
-    ItemType, LayoutItemInfo, Offsets, SealedLayout, SealedSegment, SegmentId, VirtualSpaceId,
-};
+use super::{ItemType, LayoutItemInfo, Offsets, SealedLayout, SealedSegment, VirtualSpaceId};
 use crate::{
     index::{GappedMap, Temp, TempIndex},
     layouts::{
         calculate_padding,
         sealed::{ItemOffsets, SealedItem},
     },
-    typed::{Builder, EntityCollection, ImportedEntity, data::SpecificLocation},
+    raw::SegmentId,
+    typed::{BuilderState, EntityCollection, ImportedEntity, data::SpecificLocation},
 };
 
 //
@@ -23,8 +22,8 @@ use crate::{
 //
 
 /// Type of segment.
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
-pub enum SegmentKind {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum SegmentFlags {
     // No modifications of data expected after initialization (.rodata / static)
     Readonly,
     // Arbitrary data that can be modified at runtime (.data / static mut)
@@ -37,6 +36,8 @@ pub enum SegmentKind {
 ///
 /// Information about segment, either data or element.
 ///
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+
 pub struct SegmentSpec<'src> {
     /// Reference to virtual space in which this segment is located.
     pub vs_id: VirtualSpaceId,
@@ -46,12 +47,13 @@ pub struct SegmentSpec<'src> {
     /// Only valid for data segments.
     pub align: u8,
     /// Segment characteristics used for linker.
-    pub kind: SegmentKind,
+    pub segment_flags: SegmentFlags,
 }
 
-pub struct VirtualSpaceSpec<OwnerId> {
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct VirtualSpaceLocation<OwnerId> {
     /// Reference to owner entity (Either memory or table).
-    pub owner_id: Temp<OwnerId>,
+    pub owner_id: OwnerId,
     ///
     /// Information about segment placement in owner unit.
     /// The segment placement is an virtual address in owner unit.
@@ -59,15 +61,19 @@ pub struct VirtualSpaceSpec<OwnerId> {
     /// Can be:
     /// - GotBased - means that segments will have offsets relative to value of global reference.
     /// - Constant - means that segments will have constant offsets.
-    /// - None - means that all segments within this virtual space are passive.
-    pub location: Option<SpecificLocation>,
+    pub location: SpecificLocation,
 }
 
+type VsKind<OwnerId> = Option<VirtualSpaceLocation<Temp<OwnerId>>>;
+
 /// A builder for layout of data or element segments, that can be used to construct `BackedLayout`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LayoutBuilder<'src, OwnerId, ItemId: TempIndex, DefinedEntity> {
-    pub virtual_spaces: PrimaryMap<VirtualSpaceId, VirtualSpaceSpec<OwnerId>>,
+    /// - None - means that all segments within this virtual space are passive or declared.
+    pub virtual_spaces: PrimaryMap<VirtualSpaceId, VsKind<OwnerId>>,
     pub segments: PrimaryMap<SegmentId, SegmentSpec<'src>>,
-    pub items: EntityCollection<ItemId, ImportedEntity<'src, ItemType>, DefinedEntity, Builder>,
+    // TODO: Can we add any info for ImportedEntity?
+    pub items: EntityCollection<ItemId, ImportedEntity<'src, ()>, DefinedEntity, BuilderState>,
 }
 
 impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
@@ -91,7 +97,7 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
     ) -> SealedLayout<'src, OwnerId, ItemId, DefinedEntity>
     where
         OwnerId: Copy + ReservedValue + TempIndex,
-        DefinedEntity: LayoutItemInfo,
+        DefinedEntity: LayoutItemInfo<OwnerId = OwnerId>,
         ItemId: Display,
     {
         self.seal_at_unchecked(section_offset, false, to_stable)
@@ -111,7 +117,7 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
     ) -> SealedLayout<'src, OwnerId, ItemId, DefinedEntity>
     where
         OwnerId: Copy + ReservedValue + TempIndex,
-        DefinedEntity: LayoutItemInfo,
+        DefinedEntity: LayoutItemInfo<OwnerId = OwnerId>,
         ItemId: Display,
     {
         let items = self.items.into_finished();
@@ -142,29 +148,26 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
         let mut vs_state = self
             .virtual_spaces
             .into_iter()
-            .map(|(_, spec)| VsState::from(spec))
+            .map(|(_, spec)| VsState::new(spec, &to_stable))
             .collect::<PrimaryMap<_, _>>();
 
         for (segment_id, segment) in self.segments {
-            let vs_spec = &mut vs_state[segment.vs_id];
-            let owner_id = to_stable(vs_spec.spec.owner_id);
+            let vs_state = &mut vs_state[segment.vs_id];
 
             // Original segment info
             let alignment = (2usize).pow(segment.align as u32);
             let segment_start = section_offset;
 
             // Align memory offset of segment to its alignment requirement.
-            let padding = calculate_padding(vs_spec.offset, alignment);
-            dbg!(padding, alignment, vs_spec.offset);
-            vs_spec.offset += padding;
+            let padding = calculate_padding(vs_state.offset, alignment);
+            dbg!(padding, alignment, vs_state.offset);
+            vs_state.offset += padding;
 
-            let mut mem_offset = vs_spec.offset;
+            let mut mem_offset = vs_state.offset;
 
             // and shift segment offset by len of header.
-            section_offset += <DefinedEntity as LayoutItemInfo>::segment_header_len(
-                vs_spec.location(),
-                owner_id.as_u32(),
-            );
+            section_offset +=
+                <DefinedEntity as LayoutItemInfo>::segment_header_len(vs_state.base_spec);
 
             let grp = match chunks_iter.peek() {
                 Some((sid, ..)) if segment_id == *sid => Some(chunks_iter.next().unwrap().1),
@@ -208,7 +211,7 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
                     ItemOffsets {
                         offsets: Offsets {
                             section_offset,
-                            va_address: mem_offset + vs_spec.va_space_start(),
+                            va_address: mem_offset + vs_state.va_space_start(),
                         },
                         segment_id,
                     },
@@ -222,11 +225,10 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
                 name: segment.name,
                 parts,
                 pow2align: segment.align,
-                owner: owner_id,
-                va_address: vs_spec.location(),
+                va_address: vs_state.spec(),
                 file_offset: segment_start,
             });
-            vs_spec.offset = mem_offset;
+            vs_state.offset = mem_offset;
         }
 
         SealedLayout {
@@ -262,32 +264,48 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity> Default
     }
 }
 
+/// Intermediate representation of `VirtualSpaceLocation`.
+/// That allow storing offset of Passive/Declared segments (this is needed for padding + relocs).
 struct VsState<OwnerId> {
     // current size of virtual space.
     // Used as separate field instead of modifying spec.location because of passive segments.
     offset: usize,
-    spec: VirtualSpaceSpec<OwnerId>,
-}
-
-impl<OwnerId> From<VirtualSpaceSpec<OwnerId>> for VsState<OwnerId> {
-    fn from(mut spec: VirtualSpaceSpec<OwnerId>) -> Self {
-        let (offset, location) = match spec.location {
-            Some(loc) => (loc.offset() as usize, Some(loc.with_zero_offset())),
-            None => (0, None),
-        };
-        spec.location = location;
-        VsState { offset, spec }
-    }
+    // Base spec with offset set to 0
+    base_spec: Option<VirtualSpaceLocation<OwnerId>>,
 }
 impl<OwnerId> VsState<OwnerId> {
-    fn location(&self) -> Option<SpecificLocation> {
-        self.spec
-            .location
-            .map(|loc| loc.add_offset(self.offset as u32))
+    fn new(tmp_spec: VsKind<OwnerId>, to_stable: impl Fn(Temp<OwnerId>) -> OwnerId) -> Self {
+        let mut offset = 0;
+        let spec = match tmp_spec {
+            Some(spec) => {
+                let owner_id = to_stable(spec.owner_id);
+                let loc = spec.location;
+                offset = loc.offset() as usize;
+                Some(VirtualSpaceLocation {
+                    owner_id,
+                    location: SpecificLocation::with_zero_offset(&loc),
+                })
+            }
+            None => None,
+        };
+        VsState {
+            offset,
+            base_spec: spec,
+        }
+    }
+    /// Recover spec from offset and base part.
+    fn spec(&self) -> Option<VirtualSpaceLocation<OwnerId>>
+    where
+        OwnerId: Copy,
+    {
+        self.base_spec.map(|spec| VirtualSpaceLocation {
+            owner_id: spec.owner_id,
+            location: spec.location.add_offset(self.offset as u32),
+        })
     }
     fn va_space_start(&self) -> usize {
-        match self.spec.location {
-            Some(loc) => loc.offset() as usize,
+        match &self.base_spec {
+            Some(spec) => spec.location.offset() as usize,
             None => 0,
         }
     }

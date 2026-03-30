@@ -650,10 +650,10 @@ mod tests {
             modify::NoModification,
             plan::{EmitContext, OutputModule},
         },
-        raw::DataSegmentId,
+        raw::SegmentId,
         typed::{
             DefinedDataChunk, EntityBody, ExportNames, FileLoader, ImportedFunction, LoadedFile,
-            Module, WithoutBody,
+            ModuleBuilder, WithoutBody,
             data::{DataChunkType, DataSegmentInfo, SegmentPlacement},
         },
     };
@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn create_from_scratch() {
-        let mut module = Module::new();
+        let mut module = ModuleBuilder::new();
 
         let imported = module.functions.push_import(ImportedFunction {
             module: "env".into(),
@@ -785,7 +785,7 @@ mod tests {
             },
             name: Some("data".into()),
             entity_type: DataChunkType {
-                segment_id: DataSegmentId::from_u32(0),
+                segment_id: SegmentId::from_u32(0),
                 pow2align: 0,
             },
             export_as: ExportNames::default(),

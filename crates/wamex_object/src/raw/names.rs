@@ -3,7 +3,7 @@ use vec_map::VecMap;
 
 use super::{
     CustomSectionReader,
-    indexes::{DataSegmentId, ElementId, FuncTypeId},
+    indexes::{ElementId, FuncTypeId, SegmentId},
 };
 use crate::{
     index::{GappedMap, NonDefault},
@@ -20,7 +20,7 @@ pub struct Names<'a> {
     pub labels: VecMap<wasmparser::NameMap<'a>>,
     pub types: GappedMap<FuncTypeId, Str<'a>>,
     pub elements: GappedMap<ElementId, Str<'a>>,
-    pub data_segments: GappedMap<DataSegmentId, Str<'a>>,
+    pub data_segments: GappedMap<SegmentId, Str<'a>>,
     // entities
     pub functions: GappedMap<FunctionRef, Str<'a>>,
     pub tables: GappedMap<TableRef, Str<'a>>,

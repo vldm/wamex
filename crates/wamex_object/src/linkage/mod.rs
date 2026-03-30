@@ -108,7 +108,7 @@ impl<'src> LinkageInfo<'src> {
             }
 
             let real_id = symbols.push(SymbolOffset::new(idx));
-            assert_eq!(id, real_id, "Some symbol was skipped");
+            debug_assert_eq!(id, real_id, "Some symbol was skipped");
 
             id = id.next();
         }

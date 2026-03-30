@@ -19,6 +19,7 @@ use yoke::{Yoke, Yokeable};
 
 use crate::{
     index::Temp,
+    layouts,
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
@@ -43,9 +44,10 @@ impl_entity_index! {
     pub struct SymbolId;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Locked {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Locked<'src> {
     pub start_function: Option<FunctionRef>,
+    pub mem_layout: layouts::MemLayoutSealed<'src>,
 }
 
 /// This is one of the phases of `Module` creation.
@@ -53,13 +55,23 @@ pub struct Locked {
 /// At this phase one can create new entities with temp indexes,
 /// that can be converted to stable indexes after calling `into_locked`.
 ///
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Builder {
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct Builder<'src> {
     /// List of functions to be called on module start.
     /// Should have `()->void` type and can be defined or imported.
     pub start_functions: Vec<Temp<FunctionRef>>,
+    pub mem_layout: layouts::MemLayoutBuilder<'src>,
 }
 
+pub trait IsLocked {
+    type IsLocked;
+}
+impl IsLocked for Locked<'_> {
+    type IsLocked = SealedState;
+}
+impl IsLocked for Builder<'_> {
+    type IsLocked = BuilderState;
+}
 type FileWithData<'src> = Yoke<LoadedFile<'src>, Box<[u8]>>;
 
 ///
@@ -136,7 +148,8 @@ impl<'src> LoadedFile<'src> {
     }
 }
 
-pub type ModuleBuilder<'src> = Module<'src, Builder>;
+pub type ModuleBuilder<'src> = ModuleGeneric<'src, Builder<'src>>;
+pub type Module<'src> = ModuleGeneric<'src, Locked<'src>, SealedState>;
 
 /// Partially parsed wasm object.
 /// It expects that module has valid structure and contains additional custom sections:
@@ -152,16 +165,20 @@ pub type ModuleBuilder<'src> = Module<'src, Builder>;
 /// The temp indexes are used to automatically shift defined entities after new imports are added.
 ///
 #[derive(Debug)]
-pub struct Module<'src, Phase = Locked> {
+pub struct ModuleGeneric<
+    'src,
+    Phase: IsLocked = Locked<'src>,
+    LockedState = <Phase as IsLocked>::IsLocked,
+> {
     // wasm entities
-    pub functions: entities::Functions<'src, Phase>,
-    pub tables: entities::Tables<'src, Phase>,
-    pub memories: entities::Memories<'src, Phase>,
-    pub globals: entities::Globals<'src, Phase>,
-    pub tags: entities::Tags<'src, Phase>,
+    pub functions: entities::Functions<'src, LockedState>,
+    pub tables: entities::Tables<'src, LockedState>,
+    pub memories: entities::Memories<'src, LockedState>,
+    pub globals: entities::Globals<'src, LockedState>,
+    pub tags: entities::Tags<'src, LockedState>,
 
     /// linkage entity
-    pub data: entities::DataChunks<'src, Phase>,
+    pub data: entities::DataChunks<'src, LockedState>,
     // extra information
     pub indirect_function_table: elements::IndirectFunctionTable,
     pub mem_spec: data::MemSpec<'src>,
@@ -403,6 +420,7 @@ impl<'src> Module<'src> {
             mem_spec,
             extra_state: Locked {
                 start_function: reader.code.start_func,
+                mem_layout: todo!(),
             },
         };
 
@@ -692,12 +710,12 @@ impl<'src> ModuleBuilder<'src> {
     ///
     /// Panics: if no default memory/indirect function can be found.
     ///
-    pub fn into_locked(mut self) -> Module<'src, Locked> {
+    pub fn into_locked(mut self) -> Module<'src> {
         let tables = self.tables.into_finished();
 
         let mut indirect_function_table = self.indirect_function_table;
         if indirect_function_table.table_id.is_reserved_value() {
-            let table_id = Module::<'src, Locked>::try_init_indirect_fn_table(&tables)
+            let table_id = Module::<'src>::try_init_indirect_fn_table(&tables)
                 .map(|(_name, id)| id)
                 .unwrap_or_default();
             indirect_function_table.table_id = table_id;
@@ -705,7 +723,7 @@ impl<'src> ModuleBuilder<'src> {
         let memories = self.memories.into_finished();
         let mut mem_spec = self.mem_spec;
         if mem_spec.mem_id.is_reserved_value() {
-            let memory_id = Module::<'src, Locked>::try_init_base_memory(&memories)
+            let memory_id = Module::<'src>::try_init_base_memory(&memories)
                 .map(|(_name, id)| id)
                 .unwrap_or_default();
             mem_spec.mem_id = memory_id;
@@ -732,7 +750,15 @@ impl<'src> ModuleBuilder<'src> {
             memories,
             mem_spec,
             indirect_function_table,
-            extra_state: Locked { start_function },
+            extra_state: Locked {
+                start_function,
+
+                // TODO: Make it less fragile (currently it relies on the fact that we use 5byte encoding for count)
+                mem_layout: self
+                    .extra_state
+                    .mem_layout
+                    .seal_at(5, |temp| temp.to_stable(0)),
+            },
             functions: self.functions.into_finished(),
             globals: self.globals.into_finished(),
             tags: self.tags.into_finished(),
@@ -765,11 +791,14 @@ mod tests {
     use smallvec::smallvec;
     use wasmparser::FuncType;
 
-    use super::{LoadedFile, Module};
+    use super::LoadedFile;
     use crate::{
         index::GappedMap,
-        raw::DataSegmentId,
-        typed::{DefinedDataChunk, EntityBody, ExportNames, ImportedFunction, data::DataChunkType},
+        raw::SegmentId,
+        typed::{
+            DefinedDataChunk, EntityBody, ExportNames, ImportedFunction, ModuleBuilder,
+            data::DataChunkType,
+        },
     };
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
@@ -820,7 +849,7 @@ mod tests {
     // 2. Create simple wasm module from scratch
     #[test]
     fn create_from_scratch() {
-        let mut module = Module::new();
+        let mut module = ModuleBuilder::new();
         module.functions.push_import(ImportedFunction {
             module: "env".into(),
             name: "bar".into(),
@@ -836,7 +865,7 @@ mod tests {
             },
             name: Some("data".into()),
             entity_type: DataChunkType {
-                segment_id: DataSegmentId::from_u32(0),
+                segment_id: SegmentId::from_u32(0),
                 pow2align: 0,
             },
             export_as: ExportNames::default(),

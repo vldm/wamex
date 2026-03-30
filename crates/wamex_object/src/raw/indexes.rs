@@ -8,7 +8,7 @@ impl_entity_index! {
     #[display = "element"]
     pub struct ElementId;
     #[display = "segment"]
-    pub struct DataSegmentId;
+    pub struct SegmentId;
     // #[display = "func"]
     // pub struct InputFuncId(for<'a> InputFunction<'a>);
     #[display = "defined_func"]
