@@ -169,31 +169,39 @@ pub enum TempEntityKind {
 impl TempEntityKind {
     pub fn to_stable(self, module: &Module<'_>) -> EntityKind {
         match self {
-            TempEntityKind::Function(func_ref) => {
-                EntityKind::Function(func_ref.to_stable(module.functions.imports_iter().len()))
+            TempEntityKind::Function(func_ref) => EntityKind::Function(func_ref.to_stable_n32(
+                module.functions.imports_iter().len(),
+                module.functions.defined_iter().len(),
+            )),
+            TempEntityKind::Global(global_ref) => EntityKind::Global(global_ref.to_stable_n32(
+                module.globals.imports_iter().len(),
+                module.globals.defined_iter().len(),
+            )),
+            TempEntityKind::Table(table_ref) => EntityKind::Table(table_ref.to_stable_n32(
+                module.tables.imports_iter().len(),
+                module.tables.defined_iter().len(),
+            )),
+            TempEntityKind::Tag(tag_ref) => EntityKind::Tag(tag_ref.to_stable_n32(
+                module.tags.imports_iter().len(),
+                module.tags.defined_iter().len(),
+            )),
+            TempEntityKind::Memory(mem_ref) => EntityKind::Memory(mem_ref.to_stable_n32(
+                module.memories.imports_iter().len(),
+                module.memories.defined_iter().len(),
+            )),
+            TempEntityKind::DataSymbol(data_symbol_ref) => {
+                EntityKind::DataSymbol(data_symbol_ref.to_stable_n32(
+                    0, // data symbols cannot be imported directly.
+                    module.extra.mem_layout.defined.len(),
+                ))
             }
-            TempEntityKind::Global(global_ref) => {
-                EntityKind::Global(global_ref.to_stable(module.globals.imports_iter().len()))
-            }
-            TempEntityKind::Table(table_ref) => {
-                EntityKind::Table(table_ref.to_stable(module.tables.imports_iter().len()))
-            }
-            TempEntityKind::Tag(tag_ref) => {
-                EntityKind::Tag(tag_ref.to_stable(module.tags.imports_iter().len()))
-            }
-            TempEntityKind::Memory(mem_ref) => {
-                EntityKind::Memory(mem_ref.to_stable(module.memories.imports_iter().len()))
-            }
-            TempEntityKind::DataSymbol(data_symbol_ref) => EntityKind::DataSymbol(
-                data_symbol_ref.to_stable(module.extra.mem_layout.imports.len()),
-            ),
         }
     }
 }
 impl ReservedValue for TempEntityKind {
     fn reserved_value() -> Self {
         // SAFETY: index usage can't cause memory unsafety.
-        TempEntityKind::Tag(unsafe { Temp::from_raw(TagRef::reserved_value().as_bits()) })
+        TempEntityKind::Tag(unsafe { Temp::from_bits(TagRef::reserved_value().as_bits()) })
     }
 
     fn is_reserved_value(&self) -> bool {

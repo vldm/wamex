@@ -22,17 +22,17 @@ impl<'src> MemLayoutSealed<'src> {
         &self,
         data_ref: DataSymbolRef,
     ) -> ImportOrDefined<&ImportedDataChunk<'src>, &DefinedDataChunk<'src>> {
-        if let Some(imp) = self.imports.get(data_ref) {
-            return ImportOrDefined::Import(imp);
+        if let Some(imp) = self.external.get(data_ref) {
+            return ImportOrDefined::External(imp);
         }
 
-        let defined_place = self.defined_items.get(data_ref).expect("data should exist");
+        let defined_place = self.defined.get(data_ref).expect("data should exist");
         let sealed = &self.segments[defined_place.segment_id].parts[defined_place.part_id];
         ImportOrDefined::Defined(&sealed.defined_entity)
     }
 
     pub fn defined_iter(&self) -> impl Iterator<Item = (DataSymbolRef, &DefinedDataChunk<'src>)> {
-        self.defined_items.iter().map(|(id, place)| {
+        self.defined.iter().map(|(id, place)| {
             (
                 id,
                 &self.segments[place.segment_id].parts[place.part_id].defined_entity,
@@ -48,22 +48,22 @@ impl<'src> MemLayoutSealed<'src> {
             ImportOrDefined<&ImportedDataChunk<'src>, &DefinedDataChunk<'src>>,
         ),
     > {
-        let imports = self
-            .imports
+        let external = self
+            .external
             .iter()
-            .map(|(id, import)| (id, ImportOrDefined::Import(import)));
+            .map(|(id, external)| (id, ImportOrDefined::External(external)));
 
         let defined = self
             .defined_iter()
             .map(|(id, v)| (id, ImportOrDefined::Defined(v)));
-        imports.chain(defined)
+        defined.chain(external)
     }
 
     pub fn modify_bodies(
         &mut self,
         mut op: impl FnMut(DataSymbolRef, &mut DefinedDataChunk<'src>),
     ) {
-        for (data_ref, place) in self.defined_items.iter() {
+        for (data_ref, place) in self.defined.iter() {
             op(
                 data_ref,
                 &mut self.segments[place.segment_id].parts[place.part_id].defined_entity,
@@ -72,15 +72,18 @@ impl<'src> MemLayoutSealed<'src> {
     }
 
     pub fn len(&self) -> usize {
-        self.defined_items
+        self.defined_len() + self.external.len()
+    }
+    pub fn defined_len(&self) -> usize {
+        self.defined
             // get last defined in case of gapps (symbols that was pushed, but later was merged into another)
             .last_key()
             .map(|r| r.index() + 1)
-            .unwrap_or_else(|| self.imports.len())
+            .unwrap_or_default()
     }
 
     pub fn stable_id(&self, id: Temp<DataSymbolRef>) -> DataSymbolRef {
-        id.to_stable(self.imports.len())
+        id.to_stable_n32(0, self.defined.len())
     }
 }
 //

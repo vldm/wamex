@@ -124,7 +124,7 @@ impl SplitProgramInfo {
         M: EntityModifier<'src>,
         M::SetupData: Clone,
     {
-        todo!();
+        todo!()
         // let input_files = ctx.input_files;
         // let snapshot = &ctx.snapshot;
 
@@ -140,7 +140,12 @@ impl SplitProgramInfo {
         //     snapshot,
         //     entity_modifier_setup.clone(),
         // )?;
-        // main_output.outputs.push(main_output);
+
+        // // 1. add modifier that will replace SplitPoint imports to `call_indirect <exported fn>`
+        // // 2. add <export fn> to `OutputEntitiesResolver`
+        // // 3.
+        // main_output.module.extra.mem_layout.
+        // outputs.push(main_output);
 
         // for (_file_id, (_name, plan)) in ctx.output_plans.iter().skip(1) {
         //     let output =
@@ -148,7 +153,7 @@ impl SplitProgramInfo {
         //     outputs.push(output);
         // }
         // ctx.output_modules = outputs;
-        Ok(())
+        // Ok(())
     }
 }
 

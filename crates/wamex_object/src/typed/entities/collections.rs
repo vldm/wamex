@@ -61,6 +61,9 @@ pub enum BuilderState {}
 
 ///
 /// One place for storing imports and defined entities.
+/// - Import entities are one that should have import entry in output modules, and no definition.
+/// - Defined entities are one that should have body.
+/// - External entities are similar to import (by information tha they store), but doesn't apear in output module.
 ///
 /// It can be either:
 /// - `BuilderState` - allows adding new entities, and returns temporary `Temp<Ref>` index.
@@ -70,8 +73,10 @@ pub struct EntityCollection<Ref, Import, Defined, BS = SealedState>
 where
     Ref: TempIndex,
 {
-    pub imports: Vec<Import>,
-    pub defined: Vec<Defined>,
+    imports: Vec<Import>,
+    defined: Vec<Defined>,
+    // External is like import that doesn't apear in module.
+    external_refs: Vec<Import>,
     _pd: std::marker::PhantomData<Ref>,
     _pd_state: std::marker::PhantomData<BS>,
 }
@@ -93,6 +98,7 @@ where
         Self {
             imports: Vec::new(),
             defined: Vec::new(),
+            external_refs: Vec::new(),
             _pd: std::marker::PhantomData,
             _pd_state: std::marker::PhantomData,
         }
@@ -102,6 +108,7 @@ where
         Self {
             imports,
             defined,
+            external_refs: Vec::new(),
             _pd: std::marker::PhantomData,
             _pd_state: std::marker::PhantomData,
         }
@@ -118,6 +125,7 @@ where
         EntityCollection {
             imports: self.imports,
             defined: self.defined,
+            external_refs: self.external_refs,
             _pd: std::marker::PhantomData,
             _pd_state: std::marker::PhantomData,
         }
@@ -164,25 +172,26 @@ where
     /// Returns imported entity by index, if index is in imports range.
     /// For import by import index use `imports` field directly.
     pub fn get_import(&self, idx: Temp<Ref>) -> Option<&Import> {
-        let import_idx = idx.to_stable(self.imports.len());
+        let import_idx = idx.to_stable_n32(self.imports.len(), self.defined.len());
         Some(&self.imports[import_idx.index()])
     }
 
     /// Returns defined entity by index, if index is in defined range.
     /// For import by defined index use `defined` field directly.
     pub fn get_defined(&self, idx: Temp<Ref>) -> Option<&Defined> {
-        let defined_idx = idx.to_stable(self.imports.len());
+        let defined_idx = idx.to_stable_n32(self.imports.len(), self.defined.len());
         Some(&self.defined[defined_idx.index()])
     }
 
     /// Returns either imported or defined entity by compound index.
     pub fn get_entity(&self, idx: Temp<Ref>) -> ImportOrDefined<&Import, &Defined> {
-        if idx.as_bits() & Temp::<Ref>::DEFINED_FLAG == 0 {
-            let import_id = idx.as_bits() as usize;
+        if let Some(import) = idx.as_import() {
+            let import_id = import.index();
             ImportOrDefined::Import(&self.imports[import_id])
+        } else if let Some(defined_id) = idx.as_defined() {
+            ImportOrDefined::Defined(&self.defined[defined_id as usize])
         } else {
-            let defined_id = (idx.as_bits() & !Temp::<Ref>::DEFINED_FLAG) as usize;
-            ImportOrDefined::Defined(&self.defined[defined_id])
+            panic!("Index out of bounds")
         }
     }
 
@@ -199,6 +208,13 @@ where
         self.defined.push(defined);
         Temp::from_defined(self.defined.len() - 1)
     }
+
+    /// Reserve place for new "external" entity, and returns its temp index.
+    pub fn push_external(&mut self, import: Import) -> Temp<Ref> {
+        let idx = self.external_refs.len();
+        self.external_refs.push(import);
+        Temp::from_external(idx)
+    }
     /// Returns the next defined index that will be assigned to the next defined entity.
     pub fn next_defined_key(&self) -> Temp<Ref> {
         Temp::from_defined(self.defined.len())
@@ -206,6 +222,10 @@ where
     /// Returns the next import index that will be assigned to the next imported entity.
     pub fn next_import_key(&self) -> Temp<Ref> {
         Temp::from_import(self.imports.len())
+    }
+    /// Returns the next external index that will be assigned to the next external entity.
+    pub fn next_external_key(&self) -> Temp<Ref> {
+        Temp::from_external(self.external_refs.len())
     }
     /// Pushes either import or defined entity, depending on the variant of `ImportOrDefined`.
     pub fn push_entity(
@@ -215,6 +235,7 @@ where
         match entity {
             ImportOrDefined::Import(import) => self.push_import(import),
             ImportOrDefined::Defined(defined) => self.push_defined(defined),
+            ImportOrDefined::External(import) => self.push_external(import),
         }
     }
     /// Returns the index, as if it would be pushed just after this call.
@@ -223,6 +244,7 @@ where
         match entity {
             ImportOrDefined::Import(_) => self.next_import_key(),
             ImportOrDefined::Defined(_) => self.next_defined_key(),
+            ImportOrDefined::External(_) => self.next_external_key(),
         }
     }
 }
@@ -259,12 +281,15 @@ where
 
         self
     }
-    pub fn iter_all_ids(&self) -> impl ExactSizeIterator<Item = Ref> {
+    /// Returns iterator over all entities excluding "external" ones.
+    pub fn iter_active_ids(&self) -> impl ExactSizeIterator<Item = Ref> {
         (0..(self.imports.len() + self.defined.len())).map(EntityRef::new)
     }
+
     pub fn len(&self) -> usize {
-        self.imports.len() + self.defined.len()
+        self.imports.len() + self.defined.len() + self.external_refs.len()
     }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -291,7 +316,7 @@ where
     }
     // Convert temporary index to stable index.
     pub fn stable_id(&self, idx: Temp<Ref>) -> Ref {
-        idx.to_stable(self.imports.len())
+        idx.to_stable_n32(self.imports.len(), self.defined.len())
     }
     /// Returns iterator over imported entities.
     /// The returned iterator yields pairs of (compound index, import reference).
@@ -332,11 +357,21 @@ where
     }
 
     /// Convert collection into imports and defined maps.
-    pub fn into_parts(self) -> (PrimaryMap<Ref, Import>, WithStart<Ref, Defined>) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        PrimaryMap<Ref, Import>,
+        WithStart<Ref, Defined>,
+        WithStart<Ref, Import>,
+    ) {
         let imports: PrimaryMap<Ref, Import> = self.imports.into_iter().collect();
         let defined = WithStart::new(Ref::new(imports.len()), self.defined);
+        let external = WithStart::new(
+            Ref::new(imports.len() + defined.as_slice().len()),
+            self.external_refs,
+        );
 
-        (imports, defined)
+        (imports, defined, external)
     }
 
     /// Returns iterator over all entities, both imported and defined.
@@ -402,6 +437,7 @@ where
 pub enum ImportOrDefined<Import, Defined> {
     Import(Import),
     Defined(Defined),
+    External(Import),
 }
 
 impl<Import, Defined> ImportOrDefined<Import, Defined> {
@@ -417,10 +453,20 @@ impl<Import, Defined> ImportOrDefined<Import, Defined> {
             _ => None,
         }
     }
+    pub fn to_external(self) -> Option<Import> {
+        match self {
+            ImportOrDefined::External(e) => Some(e),
+            _ => None,
+        }
+    }
+    pub fn is_external(&self) -> bool {
+        matches!(self, ImportOrDefined::External(_))
+    }
     pub fn as_mut(&mut self) -> ImportOrDefined<&mut Import, &mut Defined> {
         match self {
             ImportOrDefined::Import(i) => ImportOrDefined::Import(i),
             ImportOrDefined::Defined(d) => ImportOrDefined::Defined(d),
+            ImportOrDefined::External(e) => ImportOrDefined::External(e),
         }
     }
 }
@@ -433,6 +479,7 @@ impl<Import, Defined> ImportOrDefined<&Import, &Defined> {
         match *self {
             ImportOrDefined::Import(i) => ImportOrDefined::Import(i.clone()),
             ImportOrDefined::Defined(d) => ImportOrDefined::Defined(d.clone()),
+            ImportOrDefined::External(e) => ImportOrDefined::External(e.clone()),
         }
     }
 }
@@ -465,6 +512,7 @@ where
         match self {
             ImportOrDefined::Import(import) => &import.entity_type,
             ImportOrDefined::Defined(defined) => defined.get_type(),
+            ImportOrDefined::External(external) => &external.entity_type,
         }
     }
 }
@@ -478,12 +526,14 @@ where
         match self {
             ImportOrDefined::Import(import) => import.export_as(),
             ImportOrDefined::Defined(defined) => defined.export_as(),
+            ImportOrDefined::External(external) => external.export_as(),
         }
     }
     pub fn name(&self) -> Option<&Cow<'src, str>> {
         match self {
             ImportOrDefined::Import(import) => import.name(),
             ImportOrDefined::Defined(defined) => defined.name(),
+            ImportOrDefined::External(external) => external.name(),
         }
     }
 }
@@ -497,12 +547,14 @@ where
         match self {
             ImportOrDefined::Import(import) => import.export_as_mut(),
             ImportOrDefined::Defined(defined) => defined.export_as_mut(),
+            ImportOrDefined::External(external) => external.export_as_mut(),
         }
     }
     pub fn set_name(&mut self, name: Cow<'src, str>) {
         match self {
             ImportOrDefined::Import(import) => import.set_name(name),
             ImportOrDefined::Defined(defined) => defined.set_name(name),
+            ImportOrDefined::External(external) => external.set_name(name),
         }
     }
 }
@@ -516,6 +568,7 @@ where
         match self {
             ImportOrDefined::Import(import) => import.export_as(),
             ImportOrDefined::Defined(defined) => defined.export_as(),
+            ImportOrDefined::External(external) => external.export_as(),
         }
     }
 }

@@ -382,12 +382,18 @@ pub trait TempIndex: EntityRef {
 }
 /// Temporary index type that gives packed representation of import|defined index.
 /// Used during building phase, when final indexes are not known, because some imports may shift defined entities.
+///
+/// It has three states:
+/// - [1<value>] - defined entity.
+/// - [00<value>] - imported entity.
+/// - [01<value>] - external entity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 #[display("{_0}")]
 pub struct Temp<Idx>(u32, std::marker::PhantomData<Idx>);
 impl<Idx: TempIndex> Temp<Idx> {
     pub const DEFINED_FLAG: u32 = 1 << 31;
-    pub const MAX_VALUE: u32 = Self::DEFINED_FLAG - 1;
+    pub const EXTERNAL_FLAG: u32 = 1 << 30;
+    pub const MAX_VALUE: u32 = Self::EXTERNAL_FLAG - 1;
 
     pub fn from_import(index: usize) -> Self {
         debug_assert!(index <= (Self::MAX_VALUE as usize));
@@ -400,11 +406,19 @@ impl<Idx: TempIndex> Temp<Idx> {
             std::marker::PhantomData,
         )
     }
+    pub fn from_external(index: usize) -> Self {
+        debug_assert!(index <= (Self::MAX_VALUE as usize));
+        Self(
+            (index as u32) | Self::EXTERNAL_FLAG,
+            std::marker::PhantomData,
+        )
+    }
+
     ///
     /// # Safety
     /// Caller should ensure that value has valid import/defined entity,
     /// before converting `to_stable`.
-    pub unsafe fn from_raw(value: u32) -> Self {
+    pub unsafe fn from_bits(value: u32) -> Self {
         Self(value, std::marker::PhantomData)
     }
     pub fn as_bits(&self) -> u32 {
@@ -413,7 +427,7 @@ impl<Idx: TempIndex> Temp<Idx> {
 
     #[inline]
     pub fn as_import(&self) -> Option<Idx> {
-        if (self.0 & Self::DEFINED_FLAG) == 0 {
+        if (self.0 & Self::DEFINED_FLAG) == 0 && (self.0 & Self::EXTERNAL_FLAG) == 0 {
             Some(Idx::from_u32(self.0))
         } else {
             None
@@ -430,16 +444,30 @@ impl<Idx: TempIndex> Temp<Idx> {
     }
 
     #[inline]
-    pub fn to_stable(self, num_imports: usize) -> Idx {
-        if (self.0 & Self::DEFINED_FLAG) != 0 {
-            let defined_index = (self.0 & !Self::DEFINED_FLAG) as usize;
-            Idx::from_u32((num_imports + defined_index) as u32)
-        } else {
-            Idx::from_u32(self.0)
+    pub fn to_stable_n32(self, num_imports: usize, num_defined: usize) -> Idx {
+        let tag = (self.0 & (Self::DEFINED_FLAG | Self::EXTERNAL_FLAG)) >> 30;
+        match dbg!(tag) {
+            0x0 => {
+                // import
+                let import_index = self.0 & Self::MAX_VALUE;
+                Idx::from_u32(import_index)
+            }
+            0x2 => {
+                // defined
+                let defined_index = self.0 & Self::MAX_VALUE;
+                Idx::from_u32(num_imports as u32 + defined_index)
+            }
+            0x1 => {
+                // extern
+                let extern_index = self.0 & Self::MAX_VALUE;
+                Idx::from_u32(num_imports as u32 + num_defined as u32 + extern_index)
+            }
+            _ => unreachable!(),
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WithStart<Idx, Val> {
     start: Idx,
     value: Vec<Val>,
@@ -463,14 +491,46 @@ impl<Idx, Val> WithStart<Idx, Val> {
             .enumerate()
             .map(move |(i, v)| (Idx::new(self.start.index() + i), v))
     }
+    pub fn iter(&self) -> impl Iterator<Item = (Idx, &Val)>
+    where
+        Idx: EntityRef,
+    {
+        self.value
+            .iter()
+            .enumerate()
+            .map(move |(i, v)| (Idx::new(self.start.index() + i), v))
+    }
+    pub fn get(&self, idx: Idx) -> Option<&Val>
+    where
+        Idx: EntityRef,
+    {
+        let offset = idx.index().checked_sub(self.start.index())?;
+        self.value.get(offset)
+    }
+
     pub fn as_mut_slice(&mut self) -> &mut [Val] {
         &mut self.value
+    }
+    pub fn as_slice(&self) -> &[Val] {
+        &self.value
+    }
+    pub fn len(&self) -> usize {
+        self.value.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.value.is_empty()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{index::GappedMap, typed::SymbolId};
+    use cranelift_entity::EntityRef;
+
+    use crate::{
+        index::{GappedMap, Temp},
+        layouts::DataSymbolRef,
+        typed::SymbolId,
+    };
 
     struct WithReserved(u32);
     impl crate::index::ReservedValue for WithReserved {
@@ -521,7 +581,7 @@ mod tests {
         }
 
         assert_eq!(gapped_map.last_key().unwrap(), SymbolId::from_u32(4));
-        
+
         let res: Vec<_> = gapped_map.iter().map(|(k, v)| (k, *v)).collect();
 
         let expected = vec![
@@ -531,5 +591,43 @@ mod tests {
         ];
 
         assert_eq!(res, expected)
+    }
+
+    #[test]
+    fn test_temp_index() {
+        let imports = 0..10;
+        let defined = 0..5;
+        let extern_ref = 0..3;
+
+        for i in imports.clone() {
+            let temp = Temp::<DataSymbolRef>::from_import(i);
+            assert_eq!(temp.as_import().unwrap(), DataSymbolRef::new(i));
+            assert!(temp.as_defined().is_none());
+            assert_eq!(
+                temp.to_stable_n32(imports.len(), defined.len()),
+                DataSymbolRef::new(i)
+            );
+        }
+
+        for i in defined.clone() {
+            let temp = Temp::<DataSymbolRef>::from_defined(i);
+            let expected_ref = DataSymbolRef::new(imports.len() + i);
+            assert_eq!(temp.as_defined().unwrap(), i as u32);
+            assert!(temp.as_import().is_none());
+            assert_eq!(
+                temp.to_stable_n32(imports.len(), defined.len()),
+                expected_ref
+            );
+        }
+        for i in extern_ref.clone() {
+            let temp = Temp::<DataSymbolRef>::from_external(i);
+            let expected_ref = DataSymbolRef::new(imports.len() + defined.len() + i);
+            assert!(temp.as_import().is_none());
+            assert!(temp.as_defined().is_none());
+            assert_eq!(
+                temp.to_stable_n32(imports.len(), defined.len()),
+                expected_ref
+            );
+        }
     }
 }

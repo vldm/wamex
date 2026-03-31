@@ -218,7 +218,7 @@ pub fn process_special_entities(
     // 1. copy all memories to the list;
     special_entities.extend(
         info.memories
-            .iter_all_ids()
+            .iter_active_ids()
             .map(|id| ("memory", snapshot.pack_ref(id))),
     );
     // 2. if indirect table exist - add it to the list as well.

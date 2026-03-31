@@ -222,7 +222,7 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                         .extra
                         .mem_layout
                         .get_entity(d)
-                        .to_imported()
+                        .to_external()
                         .is_some()
                     {
                         // log::error!("reloc {reloc:?}");

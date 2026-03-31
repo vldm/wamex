@@ -176,6 +176,7 @@ impl OutputModuleCopyPlan {
                 macro_rules! copy_entity {
                     ($($entity_collection:ident).+, $entity_type:ident => $id:expr) => {
                         let mut entity = file.module.$($entity_collection).+.get_entity($id).cloned();
+                        assert!(!entity.is_external(), "Copying external entities looks like a bug");
                         let new = module.$($entity_collection).+.dry_push_entity(&entity);
                         if let Some(modifier) = &modifier {
 
@@ -429,21 +430,25 @@ impl<'src> EmitContext<'src> {
 
             let imported_data = self.collect_dylink_data_deps(ident, output_module);
 
-            let split_module = &mut self.output_modules[file];
+            let output_module_info = &mut self.output_modules[file];
             let writer = &mut self.writers[file];
 
             // 3. building relocation state and applying relocs
             log::debug!("Applying relocation state for module {ident}");
             // reborrow as mutable
             let reloc_state = RelocationState::new(
-                &split_module.module,
+                &output_module_info.module,
                 &self.layouts[file],
-                split_module.dyn_info.as_ref().map(|d| d.our_got.clone()),
+                output_module_info
+                    .dyn_info
+                    .as_ref()
+                    .map(|d| d.our_got.clone()),
                 imported_data,
                 &self.layouts,
             );
 
-            reloc_state.shift_offsets_and_apply_relocs(&mut writer.0, &mut split_module.relocs);
+            reloc_state
+                .shift_offsets_and_apply_relocs(&mut writer.0, &mut output_module_info.relocs);
         }
         Ok(())
     }
@@ -499,7 +504,7 @@ impl<'src> EmitContext<'src> {
         let mut imported_data = GappedMap::new();
         // 2. calculate memoffsets for imported data symbols.
         log::debug!("Calculating imported data offsets for module {ident}");
-        for (orig_d, _i) in output_module.module.extra.mem_layout.imports().iter() {
+        for (orig_d, _i) in output_module.module.extra.mem_layout.external().iter() {
             let src = output_module
                 .resolver
                 .get_entity_src(orig_d.into())

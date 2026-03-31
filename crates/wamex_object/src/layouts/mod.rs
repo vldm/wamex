@@ -264,7 +264,7 @@ mod tests {
             body: EntityBody::new_empty(smallvec![1, 2, 3, 4]),
         });
 
-        let sealed = builder.seal_at(0, |temp| temp.to_stable(0));
+        let sealed = builder.seal_at(0, |temp| temp.to_stable_n32(0, 0));
 
         dbg!(&sealed);
         let output = sealed.segments[segment_id]
@@ -280,8 +280,8 @@ mod tests {
                 1, 2, 3, 4 // data
             ]
         );
-        let data_ref = item1_id.to_stable(0);
-        let item = sealed.defined_items.get(data_ref).unwrap();
+        let data_ref = item1_id.to_stable_n32(0, 0);
+        let item = sealed.defined.get(data_ref).unwrap();
         assert_eq!(item.segment_id, segment_id);
         assert_eq!(item.offsets.va_address, 4); // offset of first item in VA <- 3 byte offset of storage + padding of 1 byte
         assert_eq!(item.offsets.section_offset, 9); // offset of first item in file 9 byte header
@@ -333,7 +333,7 @@ mod tests {
             body: EntityBody::new_empty(smallvec![1, 2, 3, 4]),
         });
 
-        let sealed = builder.seal_at(0, |temp| temp.to_stable(0));
+        let sealed = builder.seal_at(0, |temp| temp.to_stable_n32(0, 0));
 
         dbg!(&sealed);
 
@@ -379,12 +379,12 @@ mod tests {
             ]
         );
 
-        let item = sealed.defined_items.get(first_data.to_stable(0)).unwrap();
+        let item = sealed.defined.get(first_data.to_stable_n32(0, 0)).unwrap();
         assert_eq!(item.segment_id, segment1_id);
         assert_eq!(item.offsets.va_address, 4); // offset of first item in VA <- 3 byte offset of storage + padding of 1 byte
         assert_eq!(item.offsets.section_offset, 9); // offset of first item in file 9 byte header
 
-        let item = sealed.defined_items.get(second_data.to_stable(0)).unwrap();
+        let item = sealed.defined.get(second_data.to_stable_n32(0, 0)).unwrap();
         assert_eq!(item.segment_id, segment2_id);
         assert_eq!(item.offsets.va_address, 16); // offset of second item in (allign of segment 2)
         assert_eq!(item.offsets.section_offset, 21); // 1st segment header (9) + 1st segment data (3) + 2nd segment header (9)

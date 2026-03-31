@@ -70,12 +70,14 @@ where
         &self,
         module: &mut crate::typed::Module,
         data_inits: Vec<FinalDataSymbolInit>,
+        start_fn_id: FunctionRef,
     ) -> Result<(), anyhow::Error> {
-        let idx = self
-            .start_fn
-            .as_defined()
-            .expect("Start function should be defined");
-        match &mut module.functions.defined[idx as usize] {
+        match &mut module
+            .functions
+            .get_entity_mut(start_fn_id)
+            .to_defined()
+            .unwrap()
+        {
             DefinedFunction {
                 body:
                     EntityBody::New {
@@ -261,7 +263,11 @@ where
         agregated_data: Vec<Self::ExtraData>,
     ) -> Result<()> {
         let final_data = Self::convert_to_stable_refs_and_resolve(module, resolver, agregated_data);
-        self.fill_start_fn(module, final_data)
+        self.fill_start_fn(
+            module,
+            final_data,
+            module.functions.stable_id(self.start_fn),
+        )
     }
     fn create_entry(
         &self,

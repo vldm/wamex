@@ -135,7 +135,16 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
         ItemId: Display,
     {
         let items = self.items.into_finished();
-        let (imports, mut defined) = items.into_parts();
+        let (imports, mut defined, external) = items.into_parts();
+
+        if !imports.is_empty() {
+            for import in imports.iter() {
+                log::error!("Import {}: {:?}", import.0, import.1);
+            }
+
+            // Imports have ids < defined and should apear in output entity
+            panic!("Imports in data entries is not allowed, use external entries instead");
+        }
 
         if !skip_sort {
             defined
@@ -251,8 +260,8 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
 
         SealedLayout {
             segments,
-            imports,
-            defined_items: mapping,
+            external,
+            defined: mapping,
         }
     }
 

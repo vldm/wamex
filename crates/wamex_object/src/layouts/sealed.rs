@@ -8,7 +8,7 @@ use super::{DataSymbolRef, ItemType, Offsets, SpecificLocation};
 use crate::{
     emit::modify::wasm_emitter::{self, EncodeWithRelocOffset, SectionList},
     helpers::cmp_range,
-    index::{GappedMap, Temp},
+    index::{GappedMap, Temp, WithStart},
     layouts::{
         DefinedDataChunk, LayoutItemInfo, MemLayoutBuilder, PartId, SegmentFlags, VirtualSpaceId,
         builder::{SegmentSpec, VirtualSpaceLocation},
@@ -84,18 +84,19 @@ pub struct SealedLayout<'src, OwnerId, ItemId: EntityRef, DefinedEntity> {
     pub segments: PrimaryMap<SegmentId, SealedSegment<'src, OwnerId, ItemId, DefinedEntity>>,
 
     /// Imported items that left after sealing.
-    pub(crate) imports: PrimaryMap<ItemId, ImportedEntity<'src, ()>>,
-    pub(crate) defined_items: GappedMap<ItemId, ItemPlace>,
+    pub(crate) external: WithStart<ItemId, ImportedEntity<'src, ()>>,
+    /// Can have gaps when recover from object file (e.g. overlapping items).
+    pub(crate) defined: GappedMap<ItemId, ItemPlace>,
 }
 
 impl<'src, OwnerId, ItemId: EntityRef, DefinedEntity>
     SealedLayout<'src, OwnerId, ItemId, DefinedEntity>
 {
     pub fn item_places(&self) -> &GappedMap<ItemId, ItemPlace> {
-        &self.defined_items
+        &self.defined
     }
-    pub fn imports(&self) -> &PrimaryMap<ItemId, ImportedEntity<'src, ()>> {
-        &self.imports
+    pub fn external(&self) -> &WithStart<ItemId, ImportedEntity<'src, ()>> {
+        &self.external
     }
     pub fn segments(
         &self,
@@ -215,10 +216,11 @@ impl<'src> super::MemLayoutSealed<'src> {
             })
             .collect();
 
+        let num_defined = defined_items.len();
         Ok(Self {
             segments: sealed_segments,
-            defined_items,
-            imports: PrimaryMap::new(),
+            defined: defined_items,
+            external: WithStart::new(DataSymbolRef::new(num_defined), Vec::new()),
         })
     }
 
@@ -390,12 +392,13 @@ impl<'src> super::MemLayoutSealed<'src> {
             );
         }
 
+        let num_defined = items_place.len();
         Ok((
             Self {
                 segments,
-                defined_items: items_place,
+                defined: items_place,
                 // TODO: take from linkage info.
-                imports: PrimaryMap::new(),
+                external: WithStart::new(DataSymbolRef::new(num_defined), Vec::new()),
             },
             file_symbol_db,
         ))
