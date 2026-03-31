@@ -444,7 +444,7 @@ impl<Idx: TempIndex> Temp<Idx> {
     }
 
     #[inline]
-    pub fn to_stable_n32(self, num_imports: usize, num_defined: usize) -> Idx {
+    pub fn to_stable(self, num_imports: usize, num_defined: usize) -> Idx {
         let tag = (self.0 & (Self::DEFINED_FLAG | Self::EXTERNAL_FLAG)) >> 30;
         match dbg!(tag) {
             0x0 => {
@@ -604,7 +604,7 @@ mod tests {
             assert_eq!(temp.as_import().unwrap(), DataSymbolRef::new(i));
             assert!(temp.as_defined().is_none());
             assert_eq!(
-                temp.to_stable_n32(imports.len(), defined.len()),
+                temp.to_stable(imports.len(), defined.len()),
                 DataSymbolRef::new(i)
             );
         }
@@ -614,20 +614,14 @@ mod tests {
             let expected_ref = DataSymbolRef::new(imports.len() + i);
             assert_eq!(temp.as_defined().unwrap(), i as u32);
             assert!(temp.as_import().is_none());
-            assert_eq!(
-                temp.to_stable_n32(imports.len(), defined.len()),
-                expected_ref
-            );
+            assert_eq!(temp.to_stable(imports.len(), defined.len()), expected_ref);
         }
         for i in extern_ref.clone() {
             let temp = Temp::<DataSymbolRef>::from_external(i);
             let expected_ref = DataSymbolRef::new(imports.len() + defined.len() + i);
             assert!(temp.as_import().is_none());
             assert!(temp.as_defined().is_none());
-            assert_eq!(
-                temp.to_stable_n32(imports.len(), defined.len()),
-                expected_ref
-            );
+            assert_eq!(temp.to_stable(imports.len(), defined.len()), expected_ref);
         }
     }
 }

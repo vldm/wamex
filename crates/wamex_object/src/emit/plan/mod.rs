@@ -133,7 +133,7 @@ impl OutputModuleCopyPlan {
         &self,
         input_files: &'src FileLoader,
         snapshot: &'_ MultiSnapshot,
-        entity_modifier_setup: Option<M::SetupData>,
+        entity_modifier_setup: M::SetupData,
     ) -> Result<OutputModule<'src>>
     where
         M: EntityModifier<'src>,
@@ -143,55 +143,49 @@ impl OutputModuleCopyPlan {
             self.entities.len(),
             self.imports.len()
         );
-        let mut action_span = tracing::info_span!("Copy entities").entered();
+        let mut action_span = tracing::info_span!("Setup modifier").entered();
         let mut module = ModuleBuilder::new();
 
         Self::copy_vs_segments(&mut module, input_files);
 
-        let modifier = entity_modifier_setup
-            .map(|shared| M::setup(shared, self, &mut module))
-            .transpose()?;
+        let modifier = M::setup(entity_modifier_setup, self, &mut module)?;
 
         let mut modifier_artifact = <M::ExtraData as Merge>::new();
 
-        // map of entities from input file to entities in output module.
-        let mut file_info = OutputEntitiesResolver::new();
-
         let mut ref_map: Vec<(EntityLocation, TempEntityKind)> = Vec::new();
 
+        replace_span!(&mut action_span, tracing::info_span!("Copy entities"));
         let copy_entities = self
             .entities
             .iter()
             .map(move |(flat, extra)| {
                 let EntityLocation { file_id, entity } = snapshot.unpack_ref(*flat);
                 let loaded_file = input_files.get_file(file_id);
-                (file_id, loaded_file, entity, *flat, extra)
+                (file_id, loaded_file, entity, extra)
             })
-            .chunk_by(|(file_id, _, _, _, _)| *file_id);
+            .chunk_by(|(file_id, _, _, _)| *file_id);
 
         for (file_id, group) in copy_entities.into_iter() {
             let snapshot = snapshot.file_snapshot(file_id);
 
-            for (_, file, entity, flat, copy) in group {
+            for (_, file, entity_ref, copy) in group {
                 macro_rules! copy_entity {
                     ($($entity_collection:ident).+, $entity_type:ident => $id:expr) => {
                         let mut entity = file.module.$($entity_collection).+.get_entity($id).cloned();
                         assert!(!entity.is_external(), "Copying external entities looks like a bug");
                         let new = module.$($entity_collection).+.dry_push_entity(&entity);
-                        if let Some(modifier) = &modifier {
+                        let source_info = SourceInfo {
+                            input_file: file_id,
+                            snapshot,
+                            source_entity: entity_ref,
+                            entity_relocs: file.relocs.get_entity_relocs($id.into()).unwrap_or_default(),
+                        };
+                        let any_entity = AnyEntity::$entity_type {
+                            new_ref: new,
+                            entity: entity.as_mut(),
+                        };
+                        modifier_artifact.merge(modifier.modify_entity(source_info, any_entity)?);
 
-                            let source_info = SourceInfo {
-                                input_file: file_id,
-                                snapshot,
-                                source_entity: flat,
-                                entity_relocs: file.relocs.get_entity_relocs($id.into()).unwrap_or_default(),
-                            };
-                            let any_entity = AnyEntity::$entity_type {
-                                new_ref: new,
-                                entity: &mut entity,
-                            };
-                            modifier_artifact.merge(modifier.modify_entity(source_info, any_entity)?);
-                        }
                         copy_entity!(@add_export entity.as_mut().export_as_mut());
                         let new = module.$($entity_collection).+.push_entity(entity);
                         ref_map.push((EntityLocation::from_parts(file_id, $id.into()), new.into()));
@@ -202,7 +196,7 @@ impl OutputModuleCopyPlan {
                         }
                     }
                 }
-                match entity {
+                match entity_ref {
                     EntityKind::Function(f) => {
                         copy_entity!(functions, Function => f);
                     }
@@ -280,6 +274,9 @@ impl OutputModuleCopyPlan {
             &mut action_span,
             tracing::info_span!("convert_ids_to_stable")
         );
+
+        // map of entities from input file to entities in output module.
+        let mut file_info = OutputEntitiesResolver::new();
         // Fill mapping for all used entities.
         for (src, entity) in ref_map {
             file_info.add_entity_mapping(src, entity.to_stable(&module));
@@ -319,12 +316,13 @@ impl OutputModuleCopyPlan {
                 })
             }
         };
-        replace_span!(&mut action_span, tracing::info_span!("resolve_relocs"));
+        replace_span!(&mut action_span, tracing::info_span!("finish_modifier"));
         // resolve got entries in code modifier, and fill start function body
         // do it before copy_and_resolve_relocs to ensure that all relocs are copied into file_relocs.
-        if let Some(modifier) = modifier {
-            modifier.finish(&mut module, &file_info, modifier_artifact)?;
-        }
+
+        modifier.finish(&mut module, &mut file_info, modifier_artifact)?;
+
+        replace_span!(&mut action_span, tracing::info_span!("resolve_relocs"));
         // Now copy and resolve relocs.
         let relocs = module.copy_and_resolve_relocs(&file_info, input_files)?;
 
@@ -380,7 +378,7 @@ impl<'src> EmitContext<'src> {
         }
     }
     #[tracing::instrument(skip_all, name = "Copy entities")]
-    pub fn copy_entities<M>(&mut self, entity_modifier_setup: Option<M::SetupData>) -> Result<()>
+    pub fn copy_entities<M>(&mut self, entity_modifier_setup: M::SetupData) -> Result<()>
     where
         M: EntityModifier<'src>,
         M::SetupData: Clone,

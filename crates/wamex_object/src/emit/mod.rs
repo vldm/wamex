@@ -585,7 +585,7 @@ pub fn emit_split_modules(
     let mut emit_ctx = program_info.into_emit_context(input_files);
     let main_deps = &program_info.output_modules[0].1.defined_symbols;
     let is_static = |e| main_deps.contains(&e);
-    let blacklist_from_conversion = Some(modify::Blacklist::new(is_static));
+    let blacklist_from_conversion = modify::Blacklist::new(is_static);
     emit_ctx.copy_entities::<modify::AbsToGot<_>>(blacklist_from_conversion)?;
 
     emit_ctx.emit_modules(emit_fn)
@@ -684,7 +684,7 @@ mod tests {
         let (_, (_, plan)) = ctx.output_plans.into_iter().next().unwrap();
         let snapshot = file_loader.get_snapshot();
         let OutputModule { module: output, .. } = plan
-            .copy_entities::<NoModification>(&file_loader, &snapshot, None)
+            .copy_entities::<NoModification>(&file_loader, &snapshot, ())
             .unwrap();
 
         let mut buf = wasm_encoder::Module::new();

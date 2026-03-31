@@ -618,14 +618,14 @@ impl<'src> ModuleBuilder<'src> {
             .extra
             .start_functions
             .into_iter()
-            .map(|temp| temp.to_stable_n32(fn_imports, fn_defined))
+            .map(|temp| temp.to_stable(fn_imports, fn_defined))
             .collect::<Vec<_>>();
 
         let start_function = (start_fns.len() > 1).then(|| {
             let start_body = Self::generate_start_function(&start_fns);
             self.functions
                 .push_defined(start_body)
-                .to_stable_n32(fn_imports, fn_defined)
+                .to_stable(fn_imports, fn_defined)
         });
 
         Module {
@@ -637,7 +637,7 @@ impl<'src> ModuleBuilder<'src> {
 
                 mem_layout: self.extra.mem_layout.seal_at(
                     5, // TODO: Make it less fragile (currently it relies on the fact that we use 5byte encoding for count)
-                    |temp| temp.to_stable_n32(0, 0),
+                    |temp| temp.to_stable(0, 0),
                 ),
             },
             functions: self.functions.into_finished(),

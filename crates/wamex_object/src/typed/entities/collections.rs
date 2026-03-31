@@ -61,9 +61,10 @@ pub enum BuilderState {}
 
 ///
 /// One place for storing imports and defined entities.
-/// - Import entities are one that should have import entry in output modules, and no definition.
-/// - Defined entities are one that should have body.
-/// - External entities are similar to import (by information tha they store), but doesn't apear in output module.
+/// - `Import` entities are one that should have import entry in output modules, and no definition.
+/// - `Defined` entities are one that should have body.
+/// - `External` entities are similar to import (by information that they store), but doesn't apear in output module.
+///   It's like hidden import entity.
 ///
 /// It can be either:
 /// - `BuilderState` - allows adding new entities, and returns temporary `Temp<Ref>` index.
@@ -172,14 +173,14 @@ where
     /// Returns imported entity by index, if index is in imports range.
     /// For import by import index use `imports` field directly.
     pub fn get_import(&self, idx: Temp<Ref>) -> Option<&Import> {
-        let import_idx = idx.to_stable_n32(self.imports.len(), self.defined.len());
+        let import_idx = idx.to_stable(self.imports.len(), self.defined.len());
         Some(&self.imports[import_idx.index()])
     }
 
     /// Returns defined entity by index, if index is in defined range.
     /// For import by defined index use `defined` field directly.
     pub fn get_defined(&self, idx: Temp<Ref>) -> Option<&Defined> {
-        let defined_idx = idx.to_stable_n32(self.imports.len(), self.defined.len());
+        let defined_idx = idx.to_stable(self.imports.len(), self.defined.len());
         Some(&self.defined[defined_idx.index()])
     }
 
@@ -316,7 +317,7 @@ where
     }
     // Convert temporary index to stable index.
     pub fn stable_id(&self, idx: Temp<Ref>) -> Ref {
-        idx.to_stable_n32(self.imports.len(), self.defined.len())
+        idx.to_stable(self.imports.len(), self.defined.len())
     }
     /// Returns iterator over imported entities.
     /// The returned iterator yields pairs of (compound index, import reference).
@@ -398,36 +399,38 @@ where
         self.try_get_entity_mut(stable_index)
             .expect("Index out of bounds")
     }
+
     pub fn try_get_entity_mut(
         &mut self,
         stable_index: Ref,
     ) -> Option<ImportOrDefined<&mut Import, &mut Defined>> {
         let num_imports = self.imports.len();
-        if stable_index.index() < num_imports {
-            Some(ImportOrDefined::Import(
-                &mut self.imports[stable_index.index()],
-            ))
-        } else {
-            let defined_index = stable_index.index() - num_imports;
-            if defined_index < self.defined.len() {
+        match stable_index.index() {
+            i if i < num_imports => Some(ImportOrDefined::Import(&mut self.imports[i])),
+            i if i < num_imports + self.defined.len() => {
+                let defined_index = i - num_imports;
                 Some(ImportOrDefined::Defined(&mut self.defined[defined_index]))
-            } else {
-                None
             }
+            i => self
+                .external_refs
+                .get_mut(i - num_imports - self.defined.len())
+                .map(ImportOrDefined::External),
         }
     }
     /// Returns entity by index, or `None` if index is out of bounds.
     pub fn try_get_entity(&self, stable_index: Ref) -> Option<ImportOrDefined<&Import, &Defined>> {
         let num_imports = self.imports.len();
-        if stable_index.index() < num_imports {
-            Some(ImportOrDefined::Import(&self.imports[stable_index.index()]))
-        } else {
-            let defined_index = stable_index.index() - num_imports;
-            if defined_index < self.defined.len() {
+
+        match stable_index.index() {
+            i if i < num_imports => Some(ImportOrDefined::Import(&self.imports[i])),
+            i if i < num_imports + self.defined.len() => {
+                let defined_index = i - num_imports;
                 Some(ImportOrDefined::Defined(&self.defined[defined_index]))
-            } else {
-                None
             }
+            i => self
+                .external_refs
+                .get(i - num_imports - self.defined.len())
+                .map(ImportOrDefined::External),
         }
     }
 }
@@ -469,7 +472,24 @@ impl<Import, Defined> ImportOrDefined<Import, Defined> {
             ImportOrDefined::External(e) => ImportOrDefined::External(e),
         }
     }
+    pub fn as_deref_mut(
+        &mut self,
+    ) -> ImportOrDefined<
+        &mut <Import as std::ops::Deref>::Target,
+        &mut <Defined as std::ops::Deref>::Target,
+    >
+    where
+        Import: std::ops::DerefMut,
+        Defined: std::ops::DerefMut,
+    {
+        match self {
+            ImportOrDefined::Import(i) => ImportOrDefined::Import(i.deref_mut()),
+            ImportOrDefined::Defined(d) => ImportOrDefined::Defined(d.deref_mut()),
+            ImportOrDefined::External(e) => ImportOrDefined::External(e.deref_mut()),
+        }
+    }
 }
+
 impl<Import, Defined> ImportOrDefined<&Import, &Defined> {
     pub fn cloned(&self) -> ImportOrDefined<Import, Defined>
     where

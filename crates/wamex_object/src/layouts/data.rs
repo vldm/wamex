@@ -83,7 +83,7 @@ impl<'src> MemLayoutSealed<'src> {
     }
 
     pub fn stable_id(&self, id: Temp<DataSymbolRef>) -> DataSymbolRef {
-        id.to_stable_n32(0, self.defined.len())
+        id.to_stable(0, self.defined.len())
     }
 }
 //
