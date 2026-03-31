@@ -142,9 +142,9 @@ impl<'any, 'src> RelocationState<'any, 'src> {
         let code_section = &mut module_bytes[self.current_module_layout.code_section.clone()];
         if log::Level::Debug <= log::max_level() {
             let mut code_start = self.current_module_layout.code_section.start;
-            use crate::layouts::hexdump::SymbolDebugExt;
+            use crate::layouts::data::hexdump::SymbolDebugExt;
             let mut res = String::new();
-            crate::layouts::hexdump::SectionDebug {
+            crate::layouts::data::hexdump::SectionDebug {
                 name: "Code section",
                 bytes: code_section,
                 relocs: code_relocs,

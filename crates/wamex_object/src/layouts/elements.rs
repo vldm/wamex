@@ -1,22 +1,55 @@
-use std::fmt::Debug;
+use std::{borrow::Cow, fmt::Debug};
 
-use anyhow::{Result, bail, ensure};
-use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
-use wasmparser::{ElementItems, ElementKind};
+use anyhow::{Result, bail};
+use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
+use wasmparser::ElementItems;
 
 use crate::{
     index::{GappedMap, WithStart},
-    layouts::{
-        ElementLayoutSealed,
-        sealed::{SealedItem, SealedSegment},
-    },
-    raw,
-    typed::{FunctionRef, Module, TableRef},
+    layouts::{PartId, SegmentPlacement},
+    raw::{self, SegmentId},
+    typed::{FunctionRef, TableRef},
 };
 
 impl_entity_index! {
     #[display = "ei"]
     pub struct ElementItemId;
+}
+todo!(Implement element build + encoding for seal);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SealedElementSegment<'src, T> {
+    /// Body of segment, containing defined entities.
+    pub parts: PrimaryMap<PartId, T>,
+
+    /// Name of segment.
+    pub name: Cow<'src, str>,
+}
+
+#[derive(Copy, Debug, Clone, Eq, PartialEq)]
+pub struct ElementItemPlace {
+    pub segment_id: SegmentId,
+    pub part_id: PartId,
+}
+impl ReservedValue for ElementItemPlace {
+    fn reserved_value() -> Self {
+        Self {
+            segment_id: SegmentId::reserved_value(),
+            part_id: PartId::reserved_value(),
+        }
+    }
+    fn is_reserved_value(&self) -> bool {
+        self.segment_id.is_reserved_value() && self.part_id.is_reserved_value()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ElementLayoutSealed<'src, T> {
+    pub segments: PrimaryMap<SegmentId, SealedElementSegment<'src, T>>,
+
+    /// Imported items that left after sealing.
+    pub(crate) external: WithStart<ElementItemId, ()>,
+    /// Can have gaps when recover from object file (e.g. overlapping items).
+    pub(crate) defined: GappedMap<ElementItemId, ElementItemPlace>,
 }
 
 pub trait ElementType<'a>: Debug {
@@ -25,13 +58,8 @@ pub trait ElementType<'a>: Debug {
     /// Provides a way to access each element as internal iterator of `Self` type.
     ///
     /// Params:
-    /// first - Id of the first element item.
-    /// save - Internal iterator callback that handles each item (stores in a map ID -> Self)
-    fn for_item(
-        items: ElementItems<'a>,
-        first: ElementItemId,
-        save: impl FnMut(ElementItemId, Self),
-    ) -> Result<()>
+    /// save - Internal iterator callback that handles each item
+    fn for_item(items: ElementItems<'a>, save: impl FnMut(Self)) -> Result<()>
     where
         Self: Sized;
 }
@@ -43,18 +71,12 @@ impl ElementType<'_> for FunctionRef {
             _ => None,
         }
     }
-    fn for_item(
-        items: ElementItems<'_>,
-        first: ElementItemId,
-        mut save: impl FnMut(ElementItemId, Self),
-    ) -> Result<()> {
+    fn for_item(items: ElementItems<'_>, mut save: impl FnMut(Self)) -> Result<()> {
         match items {
             ElementItems::Functions(func_indices) => {
-                let mut elem_id = first;
                 for elem in func_indices.into_iter_with_offsets() {
                     let (_offset, func_id) = elem?;
-                    save(elem_id, FunctionRef::from_u32(func_id));
-                    elem_id = elem_id.next();
+                    save(FunctionRef::from_u32(func_id));
                 }
                 Ok(())
             }
@@ -68,11 +90,7 @@ impl<'src, T: ElementType<'src> + ReservedValue + Clone> ElementLayoutSealed<'sr
     // search all element segments for needed table_id,
     // if default_table is set, then segments with no table_index (Wasm MVP spec) are also considered.
     // Returns error if element segment uses unsupported offset expression or item type.
-    pub fn from_reader(
-        module: &raw::ObjectReader<'src>,
-        table_id: TableRef,
-        default_table: bool,
-    ) -> Result<Self> {
+    pub fn typed_from_reader(module: &raw::ObjectReader<'src>, table_id: TableRef) -> Result<Self> {
         let mut this = ElementLayoutSealed {
             segments: PrimaryMap::new(),
             external: WithStart::default(),
@@ -80,73 +98,86 @@ impl<'src, T: ElementType<'src> + ReservedValue + Clone> ElementLayoutSealed<'sr
         };
 
         for (id, element) in module.elements.iter() {
-            let ElementKind::Active {
-                table_index,
-                offset_expr,
-            } = &element.kind
-            else {
-                continue;
-            };
+            let kind = element_kind_to_location(&element.kind);
 
-            let sealed_segment = SealedSegment {
-                parts: PrimaryMap::new(),
-                /* not provided for element segments */
-                name: "default".into(),
-                pow2align: 1,
-                va_address: None,
-                file_offset: 0,
-            };
-
-            match table_index {
-                // if table_id matched
-                Some(idx) if *idx == table_id.index() as u32 => {}
-                // or we processing default table on Wasm MVP spec
-                None if default_table => {}
+            match kind.table() {
+                Some(idx) if idx == table_id => {}
                 _ => {
+                    // TODO: support passive/declared segments as well.
                     continue;
                 }
             }
 
-            // SealedItem {
-            //     defined_entity: T,
-            //     item_id: None,
-            // }
+            let mut parts = PrimaryMap::new();
 
-            // Multisegment support
-            let offset = Module::read_const_expr(offset_expr)
-                .with_context(|| format!("Failed to read offset expression for element {id:?}"))?;
-
-            ensure!(
-                offset >= 0,
-                "Negative offset expressions are not supported in element segments (element {id:?})",
-            );
-
-            let item_id =
-                ElementItemId::from_u32(offset.try_into().expect("Negative offset checked above"));
-
-            // SecondaryMap not yet support reserving capacity, so skipping for now
-            // if let Some(size) = T::hint_size(&element.items) {
-            //     let max_elem = item_id.index() + size as usize;
-            //     let extra = max_elem.saturating_sub(table.items.len());
-
-            //     log::debug!(
-            //         "Reserving {} extra element slots for element segment {:?} in table {:?}",
-            //         extra,
-            //         id,
-            //         table_id,
-            //     );
-
-            //     table.items.reserve(extra);
-            // }
-
-            T::for_item(element.items.clone(), item_id, |elem_id, elem| {
-                table.items[elem_id] = elem.into();
+            T::for_item(element.items.clone(), |elem| {
+                parts.push(elem);
             })?;
 
-            table.extra_segments.push(item_id); // enforce segment for each element segment, even if no gaps are present, to preserve original layout as much as possible for better diff results.
+            let sealed_segment = SealedElementSegment {
+                parts,
+                name: id.to_string().into(),
+            };
+            this.segments.push(sealed_segment);
         }
-        Ok(table)
+        Ok(this)
     }
 }
 
-pub type IndirectFunctionTable = ElementTable<FunctionRef>;
+// pub type IndirectFunctionTable = ElementTable<FunctionRef>;
+
+fn element_kind_to_location(element_kind: &wasmparser::ElementKind) -> ElementKind<TableRef> {
+    match element_kind {
+        wasmparser::ElementKind::Passive => ElementKind::Passive,
+        wasmparser::ElementKind::Declared => ElementKind::Declared,
+        wasmparser::ElementKind::Active {
+            table_index,
+            offset_expr,
+        } => ElementKind::Active {
+            table_ref: TableRef::from_u32(table_index.unwrap_or_default()),
+            location: SegmentPlacement::try_from_const_expr(offset_expr)
+                .expect("Only const offset supported for active data segments"),
+        },
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum ElementKind<OwnerId> {
+    Active {
+        /// Reference to owner memory.
+        table_ref: OwnerId,
+        ///
+        /// Information about segment placement in owner unit.
+        /// The segment placement is an virtual address in owner unit.
+        ///
+        /// Can be:
+        /// - GotBased - means that segments will have offsets relative to value of global reference.
+        /// - Constant - means that segments will have constant offsets.
+        location: SegmentPlacement,
+    },
+    Passive,
+    Declared,
+}
+impl<OwnerId> ElementKind<OwnerId> {
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Active { .. })
+    }
+    pub fn location(&self) -> Option<SegmentPlacement> {
+        match self {
+            Self::Active { location, .. } => Some(*location),
+            _ => None,
+        }
+    }
+    pub fn table(&self) -> Option<OwnerId>
+    where
+        OwnerId: Copy,
+    {
+        match self {
+            Self::Active {
+                table_ref: memory_ref,
+                ..
+            } => Some(*memory_ref),
+            _ => None,
+        }
+    }
+}

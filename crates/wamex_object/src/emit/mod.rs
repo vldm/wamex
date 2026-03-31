@@ -638,7 +638,10 @@ mod tests {
             modify::NoModification,
             plan::{EmitContext, OutputModule},
         },
-        layouts::{ItemType, SegmentFlags, SegmentSpec, SpecificLocation, VirtualSpaceKind},
+        layouts::{
+            ItemType, SegmentPlacement,
+            data::{DataKind, SegmentFlags, SegmentSpec},
+        },
         raw::SegmentId,
         typed::{
             DefinedDataChunk, EntityBody, ExportNames, FileLoader, ImportedFunction, LoadedFile,
@@ -762,9 +765,9 @@ mod tests {
         });
         let data = &mut module.extra.mem_layout;
         // Add virtual space where this data should stay
-        let vs = data.virtual_spaces.push(VirtualSpaceKind::Active {
-            owner_id: id,
-            location: SpecificLocation::ConstantOffset(0),
+        let vs = data.virtual_spaces.push(DataKind::Active {
+            memory_ref: id,
+            location: SegmentPlacement::ConstantOffset(0),
         });
 
         data.segments.push(SegmentSpec {

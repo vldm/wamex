@@ -1,27 +1,24 @@
 use std::borrow::Cow;
 
-use anyhow::{Result, bail, ensure};
+use anyhow::Result;
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
-use wasmparser::Table;
+use smallvec::smallvec;
 
-use super::MemLayoutSealed;
+pub use self::{builder::*, sealed::*};
 use crate::{
+    SVec,
+    emit::modify::wasm_emitter,
     index::{GappedMap, Temp, WithStart},
-    layouts::{
-        DefinedDataChunk, ItemType, LayoutItemInfo, MemLayoutBuilder, Offsets, PartId,
-        SegmentFlags, SegmentSpec, SpecificLocation, VirtualSpaceKind, VsRecover,
-        guess_data_alignment,
-        sealed::{ItemPlace, SealedItem, SealedSegment},
-    },
+    layouts::{PartId, SegmentPlacement},
     linkage::{
         LinkageInfo,
         file_db::{FileRelocs, FileSymbolDb},
     },
     raw::SegmentId,
     typed::{
-        DefinedEntity, EntityBody, EntityBodyCopy, ExportNames, GlobalRef, ImportOrDefined,
-        ImportedDataChunk, MemoryRef, Module, TableRef,
+        DefinedDataChunk, DefinedEntity, EntityBody, EntityBodyCopy, ExportNames, ImportOrDefined,
+        ImportedEntity, MemoryRef, Module,
     },
 };
 
@@ -30,10 +27,32 @@ impl_entity_index! {
     pub struct DataSymbolRef;
 }
 
+mod builder;
+pub mod hexdump;
+mod sealed;
+
 // Align base of memory to 16 bytes, if it wasn't already aligned.
 pub const BASE_ALIGNMENT: u8 = u8::trailing_zeros(16) as u8;
 
-pub const DEFAULT_HEAP_START: SpecificLocation = SpecificLocation::ConstantOffset(0x100000);
+pub const DEFAULT_HEAP_START: SegmentPlacement = SegmentPlacement::ConstantOffset(0x100000);
+
+pub type ImportedDataChunk<'src> = ImportedEntity<'src, ()>;
+
+impl DefinedDataChunk<'_> {
+    pub fn debug_name(&self) -> &str {
+        self.name.as_deref().unwrap_or("<unnamed>")
+    }
+    fn padding_symbol(padding: usize, segment_id: SegmentId) -> Self {
+        Self {
+            entity_type: ItemType::data_chunk(segment_id, 0),
+            name: Some(Cow::Borrowed("padding")),
+            export_as: ExportNames::new(),
+            body: EntityBody::new_empty(smallvec![0; padding]),
+        }
+    }
+}
+
+// LayoutBuilder<'src, MemoryRef, DataSymbolRef, DefinedDataChunk<'src>>;
 
 //
 // Impl for sealed
@@ -115,7 +134,7 @@ impl<'src> MemLayoutSealed<'src> {
         print_data_format: &mut impl std::fmt::Write,
         color: bool, // std::io::stdout().is_terminal()
     ) {
-        use super::hexdump::SymbolDebugExt;
+        use hexdump::SymbolDebugExt;
         writeln!(print_data_format, "<Module {module_name}>").unwrap();
 
         let mut base = 0;
@@ -125,7 +144,7 @@ impl<'src> MemLayoutSealed<'src> {
                 let name = &chunk.defined_entity.debug_name();
                 let symbol_index = chunk.item_id.unwrap_or(DataSymbolRef::reserved_value());
 
-                let db = super::hexdump::SymbolDebug {
+                let db = hexdump::SymbolDebug {
                     module,
                     file_relocs,
                     segment,
@@ -150,12 +169,9 @@ impl<'src> MemLayoutSealed<'src> {
                 let pow2align = guess_data_alignment(0, 0);
                 let va_address = data_kind_to_location(&data.kind);
 
-                let mut parts: PrimaryMap<
-                    PartId,
-                    SealedItem<DefinedDataChunk<'src>, DataSymbolRef>,
-                > = PrimaryMap::new();
+                let mut parts: PrimaryMap<PartId, SealedDataItem> = PrimaryMap::new();
 
-                let part_id = parts.push(SealedItem {
+                let part_id = parts.push(SealedDataItem {
                     item_id: None,
                     defined_entity: DefinedEntity {
                         body: EntityBody::Copied(EntityBodyCopy {
@@ -174,7 +190,7 @@ impl<'src> MemLayoutSealed<'src> {
                 });
                 defined_items.insert(
                     DataSymbolRef::new(id.index()),
-                    ItemPlace {
+                    DataItemPlace {
                         offsets: Offsets {
                             section_offset: data.range.start,
                             va_address: va_address.location().map_or(0, |v| v.offset() as usize), // TODO
@@ -185,7 +201,7 @@ impl<'src> MemLayoutSealed<'src> {
                 );
 
                 let file_offset = data.range.start - data.data.len();
-                SealedSegment::<'src> {
+                SealedDataSegment::<'src> {
                     name,
                     parts,
                     pow2align,
@@ -231,9 +247,9 @@ impl<'src> MemLayoutSealed<'src> {
             let name = segment_info.name.into();
             let pow2align = segment_info.alignment.try_into().unwrap();
             let data = &reader.data.data_segments[segment_id];
-            segments.push(SealedSegment {
+            segments.push(SealedDataSegment {
                 name,
-                parts: PrimaryMap::<_, SealedItem<DefinedDataChunk<'src>, DataSymbolRef>>::new(),
+                parts: PrimaryMap::<_, SealedDataItem>::new(),
                 pow2align,
                 va_address: data_kind_to_location(&data.kind),
                 file_offset: data.range.start,
@@ -321,7 +337,7 @@ impl<'src> MemLayoutSealed<'src> {
                 }
                 // add padding item;
                 let padding = DefinedEntity::padding_symbol(gap_range.len(), segment_id);
-                let item = SealedItem {
+                let item = SealedDataItem {
                     item_id: None,
                     defined_entity: padding,
                 };
@@ -340,7 +356,7 @@ impl<'src> MemLayoutSealed<'src> {
                 symbol_in_data.len(),
                 file_offset,
             );
-            let item = SealedItem {
+            let item = SealedDataItem {
                 item_id: Some(data_symbol_id),
                 defined_entity: DefinedEntity {
                     body: EntityBody::Copied(EntityBodyCopy {
@@ -360,7 +376,7 @@ impl<'src> MemLayoutSealed<'src> {
             let part_id = segments[segment_id].parts.push(item);
             items_place.insert(
                 data_symbol_id,
-                ItemPlace {
+                DataItemPlace {
                     offsets: Offsets {
                         section_offset: file_range.start,
                         va_address: mem_offset, // TODO + segment offset?
@@ -405,12 +421,14 @@ impl<'src> MemLayoutSealed<'src> {
         }
         for (_, segments, vs_location) in vs_recover.iter_vs() {
             let location = match vs_location {
-                VirtualSpaceKind::Active { owner_id, location } => VirtualSpaceKind::Active {
-                    owner_id: import_mem(owner_id),
+                DataKind::Active {
+                    memory_ref,
+                    location,
+                } => DataKind::Active {
+                    memory_ref: import_mem(memory_ref),
                     location,
                 },
-                VirtualSpaceKind::Passive => VirtualSpaceKind::Passive,
-                VirtualSpaceKind::Declared => VirtualSpaceKind::Declared,
+                DataKind::Passive => DataKind::Passive,
             };
             let vs_id = builder.virtual_spaces.push(location);
             for segment in segments {
@@ -460,50 +478,340 @@ impl<'src> MemLayoutBuilder<'src> {
     ///
     /// Return main active virtual space.
     ///
-    pub fn main_vs(&self) -> Option<VirtualSpaceKind<Temp<MemoryRef>>> {
+    pub fn main_vs(&self) -> Option<DataKind<Temp<MemoryRef>>> {
         self.virtual_spaces
             .values()
             .copied()
-            .find(VirtualSpaceKind::is_active)
+            .find(DataKind::is_active)
     }
 }
 
-pub type DataSymbolsOffsets = GappedMap<DataSymbolRef, ItemPlace>;
+pub type DataSymbolsOffsets = GappedMap<DataSymbolRef, DataItemPlace>;
 
-fn element_kind_to_location(element_kind: &wasmparser::ElementKind) -> VirtualSpaceKind<TableRef> {
-    match element_kind {
-        wasmparser::ElementKind::Passive => VirtualSpaceKind::Passive,
-        wasmparser::ElementKind::Declared => VirtualSpaceKind::Declared,
-        wasmparser::ElementKind::Active {
-            table_index,
-            offset_expr,
-        } => VirtualSpaceKind::Active {
-            owner_id: TableRef::from_u32(table_index.unwrap_or_default()),
-            location: SpecificLocation::try_from_const_expr(offset_expr)
-                .expect("Only const offset supported for active data segments"),
-        },
-    }
-}
-
-fn data_kind_to_location(data_kind: &wasmparser::DataKind) -> VirtualSpaceKind<MemoryRef> {
+fn data_kind_to_location(data_kind: &wasmparser::DataKind) -> DataKind<MemoryRef> {
     match data_kind {
-        wasmparser::DataKind::Passive => VirtualSpaceKind::Passive,
+        wasmparser::DataKind::Passive => DataKind::Passive,
         wasmparser::DataKind::Active {
             memory_index,
             offset_expr,
         } => {
-            let location = SpecificLocation::try_from_const_expr(offset_expr)
+            let location = SegmentPlacement::try_from_const_expr(offset_expr)
                 .expect("Only const offset supported for active data segments");
-            VirtualSpaceKind::Active {
-                owner_id: MemoryRef::from_u32(*memory_index),
+            DataKind::Active {
+                memory_ref: MemoryRef::from_u32(*memory_index),
                 location,
             }
         }
     }
 }
 
+#[derive(Copy, Debug, Clone, Eq, PartialEq)]
+pub struct Offsets {
+    /// Offset of symbol in wasm file relative to section start.
+    pub section_offset: usize,
+    /// Offset of symbol in virtual address space.
+    /// Either offset in memory, or index in table - both related to `segment_location`.
+    pub va_address: usize,
+}
+
+impl ReservedValue for Offsets {
+    fn reserved_value() -> Self {
+        Self {
+            section_offset: usize::MAX,
+            va_address: usize::MAX,
+        }
+    }
+    fn is_reserved_value(&self) -> bool {
+        self.section_offset == usize::MAX && self.va_address == usize::MAX
+    }
+}
+
+impl ReservedValue for DataItemPlace {
+    fn reserved_value() -> Self {
+        Self {
+            offsets: ReservedValue::reserved_value(),
+            segment_id: SegmentId::reserved_value(),
+            part_id: PartId::reserved_value(),
+        }
+    }
+    fn is_reserved_value(&self) -> bool {
+        self.offsets.is_reserved_value()
+            && self.segment_id.is_reserved_value()
+            && self.part_id.is_reserved_value()
+    }
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ItemType {
+    pub(crate) segment_id: SegmentId,
+    pub(crate) alignment: u8,
+}
+
+impl ItemType {
+    pub fn element_item(segment_id: SegmentId) -> Self {
+        Self {
+            segment_id,
+            alignment: 0,
+        }
+    }
+    pub fn data_chunk(segment_id: SegmentId, align: u8) -> Self {
+        Self {
+            segment_id,
+            alignment: align,
+        }
+    }
+}
+
+// impl<'src> LayoutItemInfo for DefinedEntity<'src, ItemType> {
+//     type OwnerId = MemoryRef;
+//     fn debug_name(&self) -> &str {
+//         self.name.as_deref().unwrap_or("<unnamed>")
+//     }
+//     fn segment_id(&self) -> SegmentId {
+//         self.entity_type.segment_id
+//     }
+//     fn iter_chunks(&self) -> IterBytes<'_> {
+//         self.body.iter_chunks()
+//     }
+//     fn pow2align(&self) -> u8 {
+//         self.entity_type.alignment
+//     }
+//     fn size(&self) -> usize {
+//         self.body.len()
+//     }
+//     fn padding_symbol(padding: usize, segment_id: SegmentId) -> Self {
+//         Self {
+//             entity_type: ItemType::data_chunk(segment_id, 0),
+//             name: Some(Cow::Borrowed("padding")),
+//             export_as: ExportNames::new(),
+//             body: EntityBody::new_empty(smallvec![0; padding]),
+//         }
+//     }
+//     fn segment_header_start(
+//         location: VirtualSpaceKind<Self::OwnerId>,
+//     ) -> Result<SVec<u8, 32>, std::io::Error> {
+//         data_segment_header(location)
+//     }
+// }
+
+fn guess_data_alignment(segment_pow2align: u8, start_mem_offset: usize) -> u8 {
+    let start_align = start_mem_offset
+        .trailing_zeros()
+        .try_into()
+        .unwrap_or(u8::MAX);
+
+    // Can't exceed the segment's alignment
+    segment_pow2align.min(start_align)
+}
+
+fn calculate_padding(starting_point: usize, alignment: usize) -> usize {
+    let misalignment = starting_point % alignment;
+    if misalignment == 0 {
+        0
+    } else {
+        alignment - misalignment
+    }
+}
+
+fn data_segment_header_len(location: DataKind<MemoryRef>) -> usize {
+    data_segment_header_start(location).unwrap().len() + 5
+}
+fn data_segment_header_start(
+    location: DataKind<MemoryRef>,
+) -> Result<SVec<u8, 32>, std::io::Error> {
+    Ok(match location {
+        DataKind::Passive => {
+            // passive segment
+            let mut v = SVec::new();
+            v.push(0x01); // flag for passive segment
+            v
+        }
+        DataKind::Active {
+            memory_ref,
+            location,
+        } => {
+            let mut result = SVec::new();
+            let mut encoder = wasm_emitter::Encoder::new(&mut result, 0);
+            let memory_index = memory_ref.as_u32();
+            if memory_index == 0 {
+                encoder.push_byte(0x00)?; // active segment in default memory
+            } else {
+                encoder.push_byte(0x02)?; // active segment with explicit memory index
+                encoder.encode_leb_5byte(memory_index)?;
+            }
+            let offset = location.to_init_expr();
+            encoder.encode_const_expr(&offset)?;
+            result
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use smallvec::smallvec;
+
+    use super::*;
+    use crate::{
+        index::Temp,
+        typed::{DefinedEntity, EntityBody, ExportNames},
+    };
+
+    // Create a data from scratch and try to seal it.
+    #[test]
+    fn create_and_seal() {
+        let mem_id = Temp::from_import(0);
+
+        let mut builder = MemLayoutBuilder::new();
+        let vs_id = builder.virtual_spaces.push(DataKind::Active {
+            memory_ref: mem_id,
+            location: SegmentPlacement::ConstantOffset(3), // some unaligned offset
+        });
+
+        let segment_id = builder.segments.push(SegmentSpec {
+            vs_id,
+            name: "segment1".into(),
+            align: 2,
+            segment_flags: SegmentFlags::Writable,
+        });
+
+        let item1_id = builder.items.push_defined(DefinedEntity {
+            entity_type: ItemType::data_chunk(segment_id, 1),
+            name: Some("data1".into()),
+            export_as: ExportNames::new(),
+            body: EntityBody::new_empty(smallvec![3, 4, 5]),
+        });
+
+        let _item2_id = builder.items.push_defined(DefinedEntity {
+            entity_type: ItemType::data_chunk(segment_id, 2),
+            name: Some("data2".into()),
+            export_as: ExportNames::new(),
+            body: EntityBody::new_empty(smallvec![1, 2, 3, 4]),
+        });
+
+        let sealed = builder.seal_at(0, |temp| temp.to_stable(0, 0));
+
+        dbg!(&sealed);
+        let output = sealed.segments[segment_id]
+            .data_stream()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            output,
+            vec![
+                3, 4, 5, // first item
+                0, // padding
+                1, 2, 3, 4 // data
+            ]
+        );
+        let data_ref = item1_id.to_stable(0, 0);
+        let item = sealed.defined.get(data_ref).unwrap();
+        assert_eq!(item.segment_id, segment_id);
+        assert_eq!(item.offsets.va_address, 4); // offset of first item in VA <- 3 byte offset of storage + padding of 1 byte
+        assert_eq!(item.offsets.section_offset, 9); // offset of first item in file 9 byte header
+        let segment_offset = sealed.segments[segment_id]
+            .va_address
+            .location()
+            .unwrap()
+            .offset();
+
+        assert_eq!(segment_offset, 4); // offset of segment in virtual memory ( 3 byte offset of storage + padding of 1 byte)
+    }
+
+    #[test]
+    fn multiple_segments_padding() {
+        let mem_id = Temp::from_import(0);
+
+        let mut builder = MemLayoutBuilder::new();
+        let vs_id = builder.virtual_spaces.push(DataKind::Active {
+            memory_ref: mem_id,
+            location: SegmentPlacement::ConstantOffset(3), // some unaligned offset
+        });
+
+        let segment1_id = builder.segments.push(SegmentSpec {
+            vs_id,
+            name: "segment1".into(),
+            align: 2,
+            segment_flags: SegmentFlags::Writable,
+        });
+
+        let segment2_id = builder.segments.push(SegmentSpec {
+            vs_id,
+            name: "segment2".into(),
+            align: 4,
+            segment_flags: SegmentFlags::Writable,
+        });
+
+        let first_data = builder.items.push_defined(DefinedEntity {
+            entity_type: ItemType::data_chunk(segment1_id, 1),
+            name: Some("data1".into()),
+            export_as: ExportNames::new(),
+            body: EntityBody::new_empty(smallvec![3, 4, 5]),
+        });
+
+        let second_data = builder.items.push_defined(DefinedEntity {
+            entity_type: ItemType::data_chunk(segment2_id, 2),
+            name: Some("data2".into()),
+            export_as: ExportNames::new(),
+            body: EntityBody::new_empty(smallvec![1, 2, 3, 4]),
+        });
+
+        let sealed = builder.seal_at(0, |temp| temp.to_stable(0, 0));
+
+        dbg!(&sealed);
+
+        assert!(
+            sealed.segments[segment1_id]
+                .va_address
+                .location()
+                .unwrap()
+                .offset()
+                .is_multiple_of(1 << sealed.segments[segment1_id].pow2align)
+        ); // check alignment of first segment
+        assert!(
+            sealed.segments[segment2_id]
+                .va_address
+                .location()
+                .unwrap()
+                .offset()
+                .is_multiple_of(1 << sealed.segments[segment2_id].pow2align)
+        ); // check alignment of second segment
+
+        assert_eq!(sealed.segments[segment1_id].file_offset, 0);
+        assert_eq!(sealed.segments[segment2_id].file_offset, 9 + 3); // header of first segment + data len
+        let output = sealed.segments[segment1_id]
+            .data_stream()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            output,
+            vec![
+                3, 4, 5, // first item
+            ]
+        );
+        let output = sealed.segments[segment2_id]
+            .data_stream()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            output,
+            vec![
+                1, 2, 3, 4 // data
+            ]
+        );
+
+        let item = sealed.defined.get(first_data.to_stable(0, 0)).unwrap();
+        assert_eq!(item.segment_id, segment1_id);
+        assert_eq!(item.offsets.va_address, 4); // offset of first item in VA <- 3 byte offset of storage + padding of 1 byte
+        assert_eq!(item.offsets.section_offset, 9); // offset of first item in file 9 byte header
+
+        let item = sealed.defined.get(second_data.to_stable(0, 0)).unwrap();
+        assert_eq!(item.segment_id, segment2_id);
+        assert_eq!(item.offsets.va_address, 16); // offset of second item in (allign of segment 2)
+        assert_eq!(item.offsets.section_offset, 21); // 1st segment header (9) + 1st segment data (3) + 2nd segment header (9)
+    }
 
     use crate::typed::LoadedFile;
 

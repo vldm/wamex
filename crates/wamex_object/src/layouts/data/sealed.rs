@@ -1,54 +1,42 @@
 use std::{borrow::Cow, collections::BTreeMap, fmt::Debug, io::Write, ops::Range};
 
 use anyhow::Result;
-use cranelift_bitset::CompoundBitSet;
-use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, PrimaryMap};
 
-use super::{DataSymbolRef, ItemType, Offsets, SpecificLocation};
+use super::{DataKind, DataSymbolRef, Offsets};
 use crate::{
     emit::modify::wasm_emitter::{self, EncodeWithRelocOffset, SectionList},
     helpers::cmp_range,
-    index::{GappedMap, Temp, WithStart},
-    layouts::{
-        DefinedDataChunk, LayoutItemInfo, MemLayoutBuilder, PartId, SegmentFlags, VirtualSpaceId,
-        builder::{SegmentSpec, VirtualSpaceKind},
-        guess_data_alignment,
-    },
-    linkage::{
-        LinkageInfo,
-        file_db::{FileRelocs, FileSymbolDb},
-    },
+    index::{GappedMap, WithStart},
+    layouts::{PartId, VirtualSpaceId},
     raw::SegmentId,
-    typed::{
-        DefinedEntity, EntityBody, EntityBodyCopy, ExportNames, ImportedEntity, IterBytes,
-        MemoryRef, Module,
-    },
+    typed::{DefinedDataChunk, ImportedEntity, IterBytes, MemoryRef},
 };
 
 /// Either element in table or data chunk in segment.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SealedItem<DefinedEntity, ItemId> {
+pub struct SealedDataItem<'src> {
     /// Body of item.
-    pub defined_entity: DefinedEntity,
+    pub defined_entity: DefinedDataChunk<'src>,
     ///
     /// Id that was used in builder to refer to this item.
     /// (debug purpose)
     ///
     /// None if technical item (padding)
-    pub item_id: Option<ItemId>,
+    pub item_id: Option<DataSymbolRef>,
 }
 
 #[derive(Copy, Debug, Clone, Eq, PartialEq)]
-pub struct ItemPlace {
+pub struct DataItemPlace {
     pub offsets: Offsets,
     pub segment_id: SegmentId,
     pub part_id: PartId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SealedSegment<'src, OwnerId, ItemId: EntityRef, DefinedEntity> {
+pub struct SealedDataSegment<'src> {
     /// Body of segment, containing defined entities.
-    pub parts: PrimaryMap<PartId, SealedItem<DefinedEntity, ItemId>>,
+    pub parts: PrimaryMap<PartId, SealedDataItem<'src>>,
 
     /// Name of segment.
     pub name: Cow<'src, str>,
@@ -57,64 +45,50 @@ pub struct SealedSegment<'src, OwnerId, ItemId: EntityRef, DefinedEntity> {
     pub pow2align: u8,
 
     /// Address in virtual memory or table where segment should be placed.
-    pub va_address: VirtualSpaceKind<OwnerId>,
+    pub va_address: DataKind<MemoryRef>,
 
     /// Offset of segment in the file.
     pub file_offset: usize,
 }
 
-impl<'src, OwnerId, ItemId: EntityRef, DefinedEntity>
-    SealedSegment<'src, OwnerId, ItemId, DefinedEntity>
-where
-    DefinedEntity: LayoutItemInfo,
-{
-    pub fn data_stream(&self) -> DataStream<'_, DefinedEntity, ItemId> {
+impl<'src> SealedDataSegment<'src> {
+    pub fn data_stream(&self) -> DataStream<'_> {
         let total_size: usize = self
             .parts
             .values()
-            .map(|chunk| chunk.defined_entity.size())
+            .map(|chunk| chunk.defined_entity.body.len())
             .sum();
 
-        let iter: FlatIter<'_, DefinedEntity, ItemId> = self
+        let iter: FlatIter<'_> = self
             .parts
             .values()
-            .flat_map(|chunk| chunk.defined_entity.iter_chunks());
+            .flat_map(|chunk| chunk.defined_entity.body.iter_chunks());
         DataStream { iter, total_size }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SealedLayout<'src, OwnerId, ItemId: EntityRef, DefinedEntity> {
-    pub segments: PrimaryMap<SegmentId, SealedSegment<'src, OwnerId, ItemId, DefinedEntity>>,
+pub struct MemLayoutSealed<'src> {
+    pub segments: PrimaryMap<SegmentId, SealedDataSegment<'src>>,
 
     /// Imported items that left after sealing.
-    pub(crate) external: WithStart<ItemId, ImportedEntity<'src, ()>>,
+    pub(crate) external: WithStart<DataSymbolRef, ImportedEntity<'src, ()>>,
     /// Can have gaps when recover from object file (e.g. overlapping items).
-    pub(crate) defined: GappedMap<ItemId, ItemPlace>,
+    pub(crate) defined: GappedMap<DataSymbolRef, DataItemPlace>,
 }
 
-impl<'src, OwnerId, ItemId: EntityRef, DefinedEntity>
-    SealedLayout<'src, OwnerId, ItemId, DefinedEntity>
-{
-    pub fn item_places(&self) -> &GappedMap<ItemId, ItemPlace> {
+impl<'src> MemLayoutSealed<'src> {
+    pub fn item_places(&self) -> &GappedMap<DataSymbolRef, DataItemPlace> {
         &self.defined
     }
-    pub fn external(&self) -> &WithStart<ItemId, ImportedEntity<'src, ()>> {
+    pub fn external(&self) -> &WithStart<DataSymbolRef, ImportedEntity<'src, ()>> {
         &self.external
     }
-    pub fn segments(
-        &self,
-    ) -> &PrimaryMap<SegmentId, SealedSegment<'src, OwnerId, ItemId, DefinedEntity>> {
+    pub fn segments(&self) -> &PrimaryMap<SegmentId, SealedDataSegment<'src>> {
         &self.segments
     }
 }
-impl<'src, OwnerId, ItemId: EntityRef, DefinedEntity>
-    SealedLayout<'src, OwnerId, ItemId, DefinedEntity>
-where
-    DefinedEntity: LayoutItemInfo<OwnerId = OwnerId> + Debug,
-    OwnerId: EntityRef + Debug,
-    ItemId: Debug,
-{
+impl<'src> MemLayoutSealed<'src> {
     pub fn encode<W>(&self, writer: &mut SectionList<W>) -> Result<(), std::io::Error>
     where
         W: std::io::Write,
@@ -134,7 +108,7 @@ where
 //
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
 pub(super) struct VsKey {
-    vs_location: VirtualSpaceKind<MemoryRef>,
+    vs_location: DataKind<MemoryRef>,
     // Bump number to distinguish different virtual spaces with same base and got (e.g. multiple passive segments)
     // If segments cannot be merged (intersects) - try to keep their original offsets.
     bump_num: usize,
@@ -188,18 +162,13 @@ impl VsRecover {
 
     pub fn iter_vs(
         &self,
-    ) -> impl Iterator<Item = (VirtualSpaceId, Vec<SegmentId>, VirtualSpaceKind<MemoryRef>)> + '_
-    {
+    ) -> impl Iterator<Item = (VirtualSpaceId, Vec<SegmentId>, DataKind<MemoryRef>)> + '_ {
         self.virtual_spaces
             .iter()
             .map(|(key, state)| (state.vs_id, state.segments.clone(), key.vs_location))
     }
 
-    pub fn add_segment(
-        &mut self,
-        segment_id: SegmentId,
-        segment: &SealedSegment<'_, MemoryRef, DataSymbolRef, DefinedDataChunk<'_>>,
-    ) {
+    pub fn add_segment(&mut self, segment_id: SegmentId, segment: &SealedDataSegment<'_>) {
         let (mut key, offset) = Self::get_vs_key_base(segment);
         let range = offset..offset + segment.data_stream().bytes_len();
         let (key, state) = 'push: {
@@ -235,19 +204,20 @@ impl VsRecover {
     }
 
     // Get VsKey with bump = 0.
-    fn get_vs_key_base(
-        segment: &SealedSegment<'_, MemoryRef, DataSymbolRef, DefinedDataChunk<'_>>,
-    ) -> (VsKey, usize) {
+    fn get_vs_key_base(segment: &SealedDataSegment<'_>) -> (VsKey, usize) {
         match segment.va_address {
-            VirtualSpaceKind::Active {
-                mut owner_id,
+            DataKind::Active {
+                memory_ref,
                 location,
             } => {
                 let offset = location.offset() as usize;
                 let location = location.with_zero_offset();
                 (
                     VsKey {
-                        vs_location: VirtualSpaceKind::Active { owner_id, location },
+                        vs_location: DataKind::Active {
+                            memory_ref,
+                            location,
+                        },
                         bump_num: 0,
                     },
                     offset,
@@ -268,40 +238,39 @@ impl VsRecover {
 // Encode helpers
 //
 
-fn data_segment_adapter<W, DefinedEntity, ItemId>(
+fn data_segment_adapter<W>(
     encoder: &mut wasm_emitter::Encoder<W>,
-    location: VirtualSpaceKind<DefinedEntity::OwnerId>,
-    data_stream: DataStream<DefinedEntity, ItemId>,
+    location: DataKind<MemoryRef>,
+    data_stream: DataStream,
 ) -> Result<(), std::io::Error>
 where
     W: Write,
-    DefinedEntity: LayoutItemInfo,
 {
     // where segment:
     // - header (mode/offset)
     // - len of data
     // - data bytes
 
-    let header = <DefinedEntity as LayoutItemInfo>::segment_header_start(location)?;
+    let header = super::data_segment_header_start(location)?;
     encoder.push_bytes(&header)?;
     // len + data
     data_stream.encode(encoder)?;
     Ok(())
 }
 
-type FlatIter<'a, DefinedEntity, ItemId> = std::iter::FlatMap<
-    std::slice::Iter<'a, SealedItem<DefinedEntity, ItemId>>,
+type FlatIter<'a> = std::iter::FlatMap<
+    std::slice::Iter<'a, SealedDataItem<'a>>,
     IterBytes<'a>,
-    for<'b> fn(&'b SealedItem<DefinedEntity, ItemId>) -> IterBytes<'b>,
+    for<'b> fn(&'b SealedDataItem<'a>) -> IterBytes<'b>,
 >;
 
 #[derive(Debug)]
-pub struct DataStream<'a, DefinedEntity, ItemId> {
-    pub(crate) iter: FlatIter<'a, DefinedEntity, ItemId>,
+pub struct DataStream<'a> {
+    pub(crate) iter: FlatIter<'a>,
     pub(crate) total_size: usize,
 }
 
-impl<'a, DefinedEntity, ItemId> Clone for DataStream<'a, DefinedEntity, ItemId> {
+impl<'a> Clone for DataStream<'a> {
     fn clone(&self) -> Self {
         Self {
             iter: self.iter.clone(),
@@ -310,13 +279,13 @@ impl<'a, DefinedEntity, ItemId> Clone for DataStream<'a, DefinedEntity, ItemId> 
     }
 }
 
-impl<'a, DefinedEntity, ItemId> DataStream<'a, DefinedEntity, ItemId> {
+impl<'a> DataStream<'a> {
     fn bytes_len(&self) -> usize {
         self.total_size
     }
 }
 
-impl<'a, DefinedEntity, ItemId> Iterator for DataStream<'a, DefinedEntity, ItemId> {
+impl<'a> Iterator for DataStream<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -324,9 +293,7 @@ impl<'a, DefinedEntity, ItemId> Iterator for DataStream<'a, DefinedEntity, ItemI
     }
 }
 
-impl<'a, DefinedEntity, ItemId> wasm_emitter::EncodeWithRelocOffset
-    for DataStream<'a, DefinedEntity, ItemId>
-{
+impl<'a> wasm_emitter::EncodeWithRelocOffset for DataStream<'a> {
     type Offsets = u32; // offset to bytes stream start
     fn encode<W>(
         &self,

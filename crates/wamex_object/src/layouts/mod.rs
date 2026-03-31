@@ -19,26 +19,11 @@
 //!   2. list of elements/data chunks and information about segment they belong to.
 //!
 
-use std::borrow::Cow;
-
 use anyhow::{Result, bail, ensure};
-use cranelift_entity::packed_option::ReservedValue;
-// use elements::ElementItemId;
-use smallvec::smallvec;
 
-pub use self::{
-    builder::{SegmentFlags, SegmentSpec, VirtualSpaceKind},
-    data::*,
-};
-use crate::{
-    SVec,
-    emit::modify::wasm_emitter,
-    raw::SegmentId,
-    typed::{
-        DefinedEntity, EntityBody, ExportNames, GlobalRef, ImportedEntity, IterBytes, MemoryRef,
-        TableRef, elements::ElementItemId,
-    },
-};
+// use elements::ElementItemId;
+pub use self::data::*;
+use crate::typed::GlobalRef;
 impl_entity_index! {
     #[display = "vs"]
     pub struct VirtualSpaceId;
@@ -46,111 +31,37 @@ impl_entity_index! {
     pub struct PartId;
 }
 
-mod builder;
-mod data;
-// mod elements;
-pub mod hexdump;
-mod sealed;
-
-use builder::*;
-use sealed::*;
-
-pub type ImportedDataChunk<'src> = ImportedEntity<'src, ()>;
-pub type DefinedDataChunk<'src> = DefinedEntity<'src, ItemType>;
-
-pub type MemLayoutBuilder<'src> =
-    LayoutBuilder<'src, MemoryRef, DataSymbolRef, DefinedDataChunk<'src>>;
-pub type MemLayoutSealed<'src> =
-    SealedLayout<'src, MemoryRef, DataSymbolRef, DefinedDataChunk<'src>>;
-
-pub type ElementLayoutBuilder<'src, T> = LayoutBuilder<'src, TableRef, ElementItemId, T>;
-pub type ElementLayoutSealed<'src, T> = SealedLayout<'src, TableRef, ElementItemId, T>;
-
-#[derive(Copy, Debug, Clone, Eq, PartialEq)]
-pub struct Offsets {
-    /// Offset of symbol in wasm file relative to section start.
-    pub section_offset: usize,
-    /// Offset of symbol in virtual address space.
-    /// Either offset in memory, or index in table - both related to `segment_location`.
-    pub va_address: usize,
-}
-
-impl ReservedValue for Offsets {
-    fn reserved_value() -> Self {
-        Self {
-            section_offset: usize::MAX,
-            va_address: usize::MAX,
-        }
-    }
-    fn is_reserved_value(&self) -> bool {
-        self.section_offset == usize::MAX && self.va_address == usize::MAX
-    }
-}
-
-impl ReservedValue for ItemPlace {
-    fn reserved_value() -> Self {
-        Self {
-            offsets: ReservedValue::reserved_value(),
-            segment_id: SegmentId::reserved_value(),
-            part_id: PartId::reserved_value(),
-        }
-    }
-    fn is_reserved_value(&self) -> bool {
-        self.offsets.is_reserved_value()
-            && self.segment_id.is_reserved_value()
-            && self.part_id.is_reserved_value()
-    }
-}
-
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ItemType {
-    pub(crate) segment_id: SegmentId,
-    pub(crate) alignment: u8,
-}
-
-impl ItemType {
-    pub fn element_item(segment_id: SegmentId) -> Self {
-        Self {
-            segment_id,
-            alignment: 0,
-        }
-    }
-    pub fn data_chunk(segment_id: SegmentId, align: u8) -> Self {
-        Self {
-            segment_id,
-            alignment: align,
-        }
-    }
-}
+pub mod data;
+mod elements;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SpecificLocation {
+pub enum SegmentPlacement {
     /// Place chunk at offset (starting from mem_start) in active memory, where offset is calculated as value of global + offset.
     GotBased { global: GlobalRef, offset: u32 },
     /// Place chunk at offset (starting from mem_start) in active memory.
     ConstantOffset(u32),
 }
 
-impl SpecificLocation {
+impl SegmentPlacement {
     pub fn offset(&self) -> u32 {
         match self {
-            SpecificLocation::GotBased { offset, .. } => *offset,
-            SpecificLocation::ConstantOffset(offset) => *offset,
+            SegmentPlacement::GotBased { offset, .. } => *offset,
+            SegmentPlacement::ConstantOffset(offset) => *offset,
         }
     }
     pub fn global_ref(&self) -> Option<GlobalRef> {
         match self {
-            SpecificLocation::GotBased { global, .. } => Some(*global),
-            SpecificLocation::ConstantOffset(_) => None,
+            SegmentPlacement::GotBased { global, .. } => Some(*global),
+            SegmentPlacement::ConstantOffset(_) => None,
         }
     }
     pub fn with_zero_offset(&self) -> Self {
         match self {
-            SpecificLocation::GotBased { global, .. } => SpecificLocation::GotBased {
+            SegmentPlacement::GotBased { global, .. } => SegmentPlacement::GotBased {
                 global: *global,
                 offset: 0,
             },
-            SpecificLocation::ConstantOffset(_) => SpecificLocation::ConstantOffset(0),
+            SegmentPlacement::ConstantOffset(_) => SegmentPlacement::ConstantOffset(0),
         }
     }
     /// Decode simple offset expressions:
@@ -198,307 +109,35 @@ impl SpecificLocation {
         }
         let offset = offset.unwrap_or_default() as u32;
         Ok(match got {
-            Some(global) => SpecificLocation::GotBased { global, offset },
-            None => SpecificLocation::ConstantOffset(offset),
+            Some(global) => SegmentPlacement::GotBased { global, offset },
+            None => SegmentPlacement::ConstantOffset(offset),
         })
     }
 
     pub fn add_offset(&self, offset: u32) -> Self {
         match self {
-            SpecificLocation::GotBased {
+            SegmentPlacement::GotBased {
                 global,
                 offset: base,
-            } => SpecificLocation::GotBased {
+            } => SegmentPlacement::GotBased {
                 global: *global,
                 offset: base + offset,
             },
-            SpecificLocation::ConstantOffset(base) => {
-                SpecificLocation::ConstantOffset(base + offset)
+            SegmentPlacement::ConstantOffset(base) => {
+                SegmentPlacement::ConstantOffset(base + offset)
             }
         }
     }
     pub fn to_init_expr(&self) -> wasm_encoder::ConstExpr {
         match self {
-            SpecificLocation::GotBased { global, offset } => {
+            SegmentPlacement::GotBased { global, offset } => {
                 wasm_encoder::ConstExpr::global_get(global.as_u32())
                     .with_i32_const((*offset).try_into().unwrap())
                     .with_i32_add()
             }
-            SpecificLocation::ConstantOffset(base) => {
+            SegmentPlacement::ConstantOffset(base) => {
                 wasm_encoder::ConstExpr::i32_const((*base).try_into().unwrap())
             }
         }
-    }
-}
-
-/// Representation of item layout within segment.
-pub trait LayoutItemInfo {
-    type OwnerId;
-    fn segment_id(&self) -> SegmentId;
-    fn pow2align(&self) -> u8;
-    // TODO: Allow implementing another type for elements.
-    fn iter_chunks(&self) -> IterBytes<'_>;
-    fn size(&self) -> usize;
-    fn debug_name(&self) -> &str;
-    fn padding_symbol(padding: usize, segment_id: SegmentId) -> Self
-    where
-        Self: Sized;
-
-    // Encode segment header without len of data.
-    fn segment_header_start(
-        location: VirtualSpaceKind<Self::OwnerId>,
-    ) -> Result<SVec<u8, 32>, std::io::Error>;
-
-    fn segment_header_len(location: VirtualSpaceKind<Self::OwnerId>) -> usize {
-        Self::segment_header_start(location).unwrap().len() + 5 // 5 bytes for len of data
-    }
-}
-
-impl<'src> LayoutItemInfo for DefinedEntity<'src, ItemType> {
-    type OwnerId = MemoryRef;
-    fn debug_name(&self) -> &str {
-        self.name.as_deref().unwrap_or("<unnamed>")
-    }
-    fn segment_id(&self) -> SegmentId {
-        self.entity_type.segment_id
-    }
-    fn iter_chunks(&self) -> IterBytes<'_> {
-        self.body.iter_chunks()
-    }
-    fn pow2align(&self) -> u8 {
-        self.entity_type.alignment
-    }
-    fn size(&self) -> usize {
-        self.body.len()
-    }
-    fn padding_symbol(padding: usize, segment_id: SegmentId) -> Self {
-        Self {
-            entity_type: ItemType::data_chunk(segment_id, 0),
-            name: Some(Cow::Borrowed("padding")),
-            export_as: ExportNames::new(),
-            body: EntityBody::new_empty(smallvec![0; padding]),
-        }
-    }
-    fn segment_header_start(
-        location: VirtualSpaceKind<Self::OwnerId>,
-    ) -> Result<SVec<u8, 32>, std::io::Error> {
-        data_segment_header(location)
-    }
-}
-
-fn guess_data_alignment(segment_pow2align: u8, start_mem_offset: usize) -> u8 {
-    let start_align = start_mem_offset
-        .trailing_zeros()
-        .try_into()
-        .unwrap_or(u8::MAX);
-
-    // Can't exceed the segment's alignment
-    segment_pow2align.min(start_align)
-}
-
-fn calculate_padding(starting_point: usize, alignment: usize) -> usize {
-    let misalignment = starting_point % alignment;
-    if misalignment == 0 {
-        0
-    } else {
-        alignment - misalignment
-    }
-}
-
-fn data_segment_header(
-    location: VirtualSpaceKind<MemoryRef>,
-) -> Result<SVec<u8, 32>, std::io::Error> {
-    Ok(match location {
-        VirtualSpaceKind::Declared => {
-            panic!("Data segments can't be declared, they should be either active or passive")
-        }
-        VirtualSpaceKind::Passive => {
-            // passive segment
-            let mut v = SVec::new();
-            v.push(0x01); // flag for passive segment
-            v
-        }
-        VirtualSpaceKind::Active { owner_id, location } => {
-            let mut result = SVec::new();
-            let mut encoder = wasm_emitter::Encoder::new(&mut result, 0);
-            let memory_index = owner_id.as_u32();
-            if memory_index == 0 {
-                encoder.push_byte(0x00)?; // active segment in default memory
-            } else {
-                encoder.push_byte(0x02)?; // active segment with explicit memory index
-                encoder.encode_leb_5byte(memory_index)?;
-            }
-            let offset = location.to_init_expr();
-            encoder.encode_const_expr(&offset)?;
-            result
-        }
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use smallvec::smallvec;
-
-    use super::*;
-    use crate::{
-        index::Temp,
-        typed::{DefinedEntity, EntityBody, ExportNames},
-    };
-
-    // Create a data from scratch and try to seal it.
-    #[test]
-    fn create_and_seal() {
-        let mem_id = Temp::from_import(0);
-
-        let mut builder = MemLayoutBuilder::new();
-        let vs_id = builder.virtual_spaces.push(VirtualSpaceKind::Active {
-            owner_id: mem_id,
-            location: SpecificLocation::ConstantOffset(3), // some unaligned offset
-        });
-
-        let segment_id = builder.segments.push(SegmentSpec {
-            vs_id,
-            name: "segment1".into(),
-            align: 2,
-            segment_flags: SegmentFlags::Writable,
-        });
-
-        let item1_id = builder.items.push_defined(DefinedEntity {
-            entity_type: ItemType::data_chunk(segment_id, 1),
-            name: Some("data1".into()),
-            export_as: ExportNames::new(),
-            body: EntityBody::new_empty(smallvec![3, 4, 5]),
-        });
-
-        let _item2_id = builder.items.push_defined(DefinedEntity {
-            entity_type: ItemType::data_chunk(segment_id, 2),
-            name: Some("data2".into()),
-            export_as: ExportNames::new(),
-            body: EntityBody::new_empty(smallvec![1, 2, 3, 4]),
-        });
-
-        let sealed = builder.seal_at(0, |temp| temp.to_stable(0, 0));
-
-        dbg!(&sealed);
-        let output = sealed.segments[segment_id]
-            .data_stream()
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
-        assert_eq!(
-            output,
-            vec![
-                3, 4, 5, // first item
-                0, // padding
-                1, 2, 3, 4 // data
-            ]
-        );
-        let data_ref = item1_id.to_stable(0, 0);
-        let item = sealed.defined.get(data_ref).unwrap();
-        assert_eq!(item.segment_id, segment_id);
-        assert_eq!(item.offsets.va_address, 4); // offset of first item in VA <- 3 byte offset of storage + padding of 1 byte
-        assert_eq!(item.offsets.section_offset, 9); // offset of first item in file 9 byte header
-        let segment_offset = sealed.segments[segment_id]
-            .va_address
-            .location()
-            .unwrap()
-            .offset();
-
-        assert_eq!(segment_offset, 4); // offset of segment in virtual memory ( 3 byte offset of storage + padding of 1 byte)
-    }
-
-    #[test]
-    fn multiple_segments_padding() {
-        let mem_id = Temp::from_import(0);
-
-        let mut builder = MemLayoutBuilder::new();
-        let vs_id = builder.virtual_spaces.push(VirtualSpaceKind::Active {
-            owner_id: mem_id,
-            location: SpecificLocation::ConstantOffset(3), // some unaligned offset
-        });
-
-        let segment1_id = builder.segments.push(SegmentSpec {
-            vs_id,
-            name: "segment1".into(),
-            align: 2,
-            segment_flags: SegmentFlags::Writable,
-        });
-
-        let segment2_id = builder.segments.push(SegmentSpec {
-            vs_id,
-            name: "segment2".into(),
-            align: 4,
-            segment_flags: SegmentFlags::Writable,
-        });
-
-        let first_data = builder.items.push_defined(DefinedEntity {
-            entity_type: ItemType::data_chunk(segment1_id, 1),
-            name: Some("data1".into()),
-            export_as: ExportNames::new(),
-            body: EntityBody::new_empty(smallvec![3, 4, 5]),
-        });
-
-        let second_data = builder.items.push_defined(DefinedEntity {
-            entity_type: ItemType::data_chunk(segment2_id, 2),
-            name: Some("data2".into()),
-            export_as: ExportNames::new(),
-            body: EntityBody::new_empty(smallvec![1, 2, 3, 4]),
-        });
-
-        let sealed = builder.seal_at(0, |temp| temp.to_stable(0, 0));
-
-        dbg!(&sealed);
-
-        assert!(
-            sealed.segments[segment1_id]
-                .va_address
-                .location()
-                .unwrap()
-                .offset()
-                .is_multiple_of(1 << sealed.segments[segment1_id].pow2align)
-        ); // check alignment of first segment
-        assert!(
-            sealed.segments[segment2_id]
-                .va_address
-                .location()
-                .unwrap()
-                .offset()
-                .is_multiple_of(1 << sealed.segments[segment2_id].pow2align)
-        ); // check alignment of second segment
-
-        assert_eq!(sealed.segments[segment1_id].file_offset, 0);
-        assert_eq!(sealed.segments[segment2_id].file_offset, 9 + 3); // header of first segment + data len
-        let output = sealed.segments[segment1_id]
-            .data_stream()
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
-        assert_eq!(
-            output,
-            vec![
-                3, 4, 5, // first item
-            ]
-        );
-        let output = sealed.segments[segment2_id]
-            .data_stream()
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
-        assert_eq!(
-            output,
-            vec![
-                1, 2, 3, 4 // data
-            ]
-        );
-
-        let item = sealed.defined.get(first_data.to_stable(0, 0)).unwrap();
-        assert_eq!(item.segment_id, segment1_id);
-        assert_eq!(item.offsets.va_address, 4); // offset of first item in VA <- 3 byte offset of storage + padding of 1 byte
-        assert_eq!(item.offsets.section_offset, 9); // offset of first item in file 9 byte header
-
-        let item = sealed.defined.get(second_data.to_stable(0, 0)).unwrap();
-        assert_eq!(item.segment_id, segment2_id);
-        assert_eq!(item.offsets.va_address, 16); // offset of second item in (allign of segment 2)
-        assert_eq!(item.offsets.section_offset, 21); // 1st segment header (9) + 1st segment data (3) + 2nd segment header (9)
     }
 }

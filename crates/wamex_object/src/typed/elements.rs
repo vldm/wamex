@@ -9,7 +9,7 @@ use super::{ElementItems, Result};
 use crate::{
     SVec,
     index::GappedMap,
-    layouts::SpecificLocation,
+    layouts::SegmentPlacement,
     raw,
     typed::{FunctionRef, Module, TableRef},
 };
@@ -73,7 +73,7 @@ pub struct ElementTable<T: ReservedValue + Clone> {
     pub extra_segments: SVec<ElementItemId>,
     /// Location of element segments
     // TODO: support different locations for different segments, to combine GOT and absolute addressing for one table.
-    pub location: SpecificLocation,
+    pub location: SegmentPlacement,
 }
 
 impl<T: ReservedValue + Clone> ElementTable<T> {
@@ -87,7 +87,7 @@ impl<T: ReservedValue + Clone> ElementTable<T> {
             table_id,
             items,
             extra_segments: SVec::new(),
-            location: SpecificLocation::ConstantOffset(0),
+            location: SegmentPlacement::ConstantOffset(0),
         }
     }
     /// Iterates over all items,
