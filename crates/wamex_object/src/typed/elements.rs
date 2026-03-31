@@ -18,6 +18,7 @@ impl_entity_index! {
     #[display = "ei"]
     pub struct ElementItemId;
 }
+
 pub trait ElementType<'a>: Debug {
     /// Provides a hint for the number of items in the element segment, allowing to pre-allocate the map capacity.
     fn hint_size(items: &ElementItems<'a>) -> Option<u32>;

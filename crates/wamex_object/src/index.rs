@@ -467,7 +467,7 @@ impl<Idx: TempIndex> Temp<Idx> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct WithStart<Idx, Val> {
     start: Idx,
     value: Vec<Val>,

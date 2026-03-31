@@ -65,26 +65,39 @@ pub struct SegmentSpec<'src> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct VirtualSpaceLocation<OwnerId> {
-    /// Reference to owner entity (Either memory or table).
-    pub owner_id: OwnerId,
-    ///
-    /// Information about segment placement in owner unit.
-    /// The segment placement is an virtual address in owner unit.
-    ///
-    /// Can be:
-    /// - GotBased - means that segments will have offsets relative to value of global reference.
-    /// - Constant - means that segments will have constant offsets.
-    pub location: SpecificLocation,
+pub enum VirtualSpaceKind<OwnerId> {
+    Active {
+        /// Reference to owner entity (Either memory or table).
+        owner_id: OwnerId,
+        ///
+        /// Information about segment placement in owner unit.
+        /// The segment placement is an virtual address in owner unit.
+        ///
+        /// Can be:
+        /// - GotBased - means that segments will have offsets relative to value of global reference.
+        /// - Constant - means that segments will have constant offsets.
+        location: SpecificLocation,
+    },
+    Declared,
+    Passive,
 }
-
-type VsKind<OwnerId> = Option<VirtualSpaceLocation<Temp<OwnerId>>>;
+impl<OwnerId> VirtualSpaceKind<OwnerId> {
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Active { .. })
+    }
+    pub fn location(&self) -> Option<SpecificLocation> {
+        match self {
+            Self::Active { location, .. } => Some(*location),
+            _ => None,
+        }
+    }
+}
 
 /// A builder for layout of data or element segments, that can be used to construct `BackedLayout`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LayoutBuilder<'src, OwnerId, ItemId: TempIndex, DefinedEntity> {
     /// - None - means that all segments within this virtual space are passive or declared.
-    pub virtual_spaces: PrimaryMap<VirtualSpaceId, VsKind<OwnerId>>,
+    pub virtual_spaces: PrimaryMap<VirtualSpaceId, VirtualSpaceKind<Temp<OwnerId>>>,
     pub segments: PrimaryMap<SegmentId, SegmentSpec<'src>>,
     // TODO: Can we add any info for ImportedEntity?
     pub items: EntityCollection<ItemId, ImportedEntity<'src, ()>, DefinedEntity, BuilderState>,
@@ -286,12 +299,16 @@ impl<'src, OwnerId, ItemId: TempIndex, DefinedEntity>
     /// Return id of this segment
     pub fn try_create_base_vs(
         &mut self,
-        location: VirtualSpaceLocation<Temp<OwnerId>>,
+        owner: Temp<OwnerId>,
+        location: SpecificLocation,
     ) -> VirtualSpaceId {
-        if let Some((vs, _)) = self.virtual_spaces.iter().find(|(_, d)| d.is_some()) {
+        if let Some((vs, _)) = self.virtual_spaces.iter().find(|(_, d)| d.is_active()) {
             vs
         } else {
-            self.virtual_spaces.push(Some(location))
+            self.virtual_spaces.push(VirtualSpaceKind::Active {
+                owner_id: owner,
+                location,
+            })
         }
     }
 
@@ -320,22 +337,27 @@ struct VsState<OwnerId> {
     // Used as separate field instead of modifying spec.location because of passive segments.
     offset: usize,
     // Base spec with offset set to 0
-    base_spec: Option<VirtualSpaceLocation<OwnerId>>,
+    base_spec: VirtualSpaceKind<OwnerId>,
 }
 impl<OwnerId> VsState<OwnerId> {
-    fn new(tmp_spec: VsKind<OwnerId>, to_stable: impl Fn(Temp<OwnerId>) -> OwnerId) -> Self {
+    fn new(
+        tmp_spec: VirtualSpaceKind<Temp<OwnerId>>,
+        to_stable: impl Fn(Temp<OwnerId>) -> OwnerId,
+    ) -> Self {
         let mut offset = 0;
         let spec = match tmp_spec {
-            Some(spec) => {
-                let owner_id = to_stable(spec.owner_id);
-                let loc = spec.location;
+            VirtualSpaceKind::Active { owner_id, location } => {
+                let owner_id = to_stable(owner_id);
+                let loc = location;
                 offset = loc.offset() as usize;
-                Some(VirtualSpaceLocation {
+                VirtualSpaceKind::Active {
                     owner_id,
                     location: SpecificLocation::with_zero_offset(&loc),
-                })
+                }
             }
-            None => None,
+            // map to other generic
+            VirtualSpaceKind::Passive => VirtualSpaceKind::Passive,
+            VirtualSpaceKind::Declared => VirtualSpaceKind::Declared,
         };
         VsState {
             offset,
@@ -343,19 +365,22 @@ impl<OwnerId> VsState<OwnerId> {
         }
     }
     /// Recover spec from offset and base part.
-    fn spec(&self) -> Option<VirtualSpaceLocation<OwnerId>>
+    fn spec(&self) -> VirtualSpaceKind<OwnerId>
     where
         OwnerId: Copy,
     {
-        self.base_spec.map(|spec| VirtualSpaceLocation {
-            owner_id: spec.owner_id,
-            location: spec.location.add_offset(self.offset as u32),
-        })
+        match self.base_spec {
+            VirtualSpaceKind::Active { owner_id, location } => VirtualSpaceKind::Active {
+                owner_id,
+                location: location.add_offset(self.offset as u32),
+            },
+            other => other,
+        }
     }
     fn va_space_start(&self) -> usize {
         match &self.base_spec {
-            Some(spec) => spec.location.offset() as usize,
-            None => 0,
+            VirtualSpaceKind::Active { location, .. } => location.offset() as usize,
+            _ => 0,
         }
     }
 }

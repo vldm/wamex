@@ -1,18 +1,39 @@
+use std::borrow::Cow;
+
 use anyhow::{Result, bail, ensure};
-use cranelift_entity::EntityRef;
+use cranelift_bitset::CompoundBitSet;
+use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
+use wasmparser::Table;
 
 use super::MemLayoutSealed;
 use crate::{
-    index::{GappedMap, Temp},
-    layouts::{DefinedDataChunk, MemLayoutBuilder, VirtualSpaceLocation, sealed::ItemPlace},
+    index::{GappedMap, Temp, WithStart},
+    layouts::{
+        DefinedDataChunk, ItemType, LayoutItemInfo, MemLayoutBuilder, Offsets, PartId,
+        SegmentFlags, SegmentSpec, SpecificLocation, VirtualSpaceKind, VsRecover,
+        guess_data_alignment,
+        sealed::{ItemPlace, SealedItem, SealedSegment},
+    },
+    linkage::{
+        LinkageInfo,
+        file_db::{FileRelocs, FileSymbolDb},
+    },
     raw::SegmentId,
-    typed::{GlobalRef, ImportOrDefined, ImportedDataChunk, MemoryRef},
+    typed::{
+        DefinedEntity, EntityBody, EntityBodyCopy, ExportNames, GlobalRef, ImportOrDefined,
+        ImportedDataChunk, MemoryRef, Module, TableRef,
+    },
 };
 
 impl_entity_index! {
     #[display="data"]
     pub struct DataSymbolRef;
 }
+
+// Align base of memory to 16 bytes, if it wasn't already aligned.
+pub const BASE_ALIGNMENT: u8 = u8::trailing_zeros(16) as u8;
+
+pub const DEFAULT_HEAP_START: SpecificLocation = SpecificLocation::ConstantOffset(0x100000);
 
 //
 // Impl for sealed
@@ -85,25 +106,337 @@ impl<'src> MemLayoutSealed<'src> {
     pub fn stable_id(&self, id: Temp<DataSymbolRef>) -> DataSymbolRef {
         id.to_stable(0, self.defined.len())
     }
+
+    pub fn debug_layout(
+        &self,
+        file_relocs: &FileRelocs,
+        module: &Module<'_>,
+        module_name: String,
+        print_data_format: &mut impl std::fmt::Write,
+        color: bool, // std::io::stdout().is_terminal()
+    ) {
+        use super::hexdump::SymbolDebugExt;
+        writeln!(print_data_format, "<Module {module_name}>").unwrap();
+
+        let mut base = 0;
+        for (_, segment) in self.segments.iter() {
+            for (_, chunk) in segment.parts.iter() {
+                let segment = &segment.name;
+                let name = &chunk.defined_entity.debug_name();
+                let symbol_index = chunk.item_id.unwrap_or(DataSymbolRef::reserved_value());
+
+                let db = super::hexdump::SymbolDebug {
+                    module,
+                    file_relocs,
+                    segment,
+                    symbol_name: name,
+                    symbol_index,
+                    body: &chunk.defined_entity.body,
+                };
+                db.debug_symbol_ext(&mut *print_data_format, &mut base, color);
+            }
+        }
+    }
+
+    fn create_from_segments(
+        segments: &PrimaryMap<SegmentId, wasmparser::Data<'src>>,
+    ) -> Result<Self> {
+        let mut defined_items = GappedMap::new();
+
+        let sealed_segments = segments
+            .iter()
+            .map(|(id, data)| {
+                let name: Cow<'src, str> = format!("segment_{id}").into();
+                let pow2align = guess_data_alignment(0, 0);
+                let va_address = data_kind_to_location(&data.kind);
+
+                let mut parts: PrimaryMap<
+                    PartId,
+                    SealedItem<DefinedDataChunk<'src>, DataSymbolRef>,
+                > = PrimaryMap::new();
+
+                let part_id = parts.push(SealedItem {
+                    item_id: None,
+                    defined_entity: DefinedEntity {
+                        body: EntityBody::Copied(EntityBodyCopy {
+                            bytes: data.data,
+                            original_range: data.range.clone(),
+                            fixups: Vec::new(),
+                            filtered_relocs: CompoundBitSet::new(),
+                        }),
+                        export_as: ExportNames::new(),
+                        entity_type: ItemType {
+                            segment_id: id,
+                            alignment: pow2align,
+                        },
+                        name: Some(name.clone()),
+                    },
+                });
+                defined_items.insert(
+                    DataSymbolRef::new(id.index()),
+                    ItemPlace {
+                        offsets: Offsets {
+                            section_offset: data.range.start,
+                            va_address: va_address.location().map_or(0, |v| v.offset() as usize), // TODO
+                        },
+                        segment_id: id,
+                        part_id,
+                    },
+                );
+
+                let file_offset = data.range.start - data.data.len();
+                SealedSegment::<'src> {
+                    name,
+                    parts,
+                    pow2align,
+                    va_address,
+                    file_offset,
+                }
+            })
+            .collect();
+
+        let num_defined = defined_items.len();
+        Ok(Self {
+            segments: sealed_segments,
+            defined: defined_items,
+            external: WithStart::new(DataSymbolRef::new(num_defined), Vec::new()),
+        })
+    }
+
+    pub fn recover_from_reader(
+        reader: &crate::raw::ObjectReader<'src>,
+    ) -> anyhow::Result<(Self, FileSymbolDb)> {
+        let g = tracing::info_span!("processing_extra_linkage").entered();
+        // TODO: add undefined data symbols as well.
+        let LinkageInfo::<'src> {
+            mut file_symbol_db,
+            defined_data_symbols,
+        } = LinkageInfo::from_reader(reader);
+
+        drop(g);
+
+        let mut segments = PrimaryMap::new();
+        let mut items_place = GappedMap::new();
+
+        if defined_data_symbols.is_empty() && reader.linking.segments_info.is_empty() {
+            return Ok((
+                Self::create_from_segments(&reader.data.data_segments)?,
+                file_symbol_db,
+            ));
+        }
+
+        // Fill segments first
+        for (segment_id, segment_info) in reader.linking.segments_info.iter().enumerate() {
+            let segment_id = SegmentId::new(segment_id);
+            let name = segment_info.name.into();
+            let pow2align = segment_info.alignment.try_into().unwrap();
+            let data = &reader.data.data_segments[segment_id];
+            segments.push(SealedSegment {
+                name,
+                parts: PrimaryMap::<_, SealedItem<DefinedDataChunk<'src>, DataSymbolRef>>::new(),
+                pow2align,
+                va_address: data_kind_to_location(&data.kind),
+                file_offset: data.range.start,
+            });
+        }
+
+        let mut last_range = 0..0;
+        let mut prev_symbol_id = None;
+        let mut last_segment_id = SegmentId::from_u32(0);
+        // TODO: Copy symbols as is (without correcting indexes)
+        for (symbol_id, symbol_info, data_symbol_id) in defined_data_symbols.into_iter() {
+            let segment_id = symbol_info.segment_id;
+            // cleanup prev segment state
+            if last_segment_id != segment_id {
+                last_range = 0..0;
+                prev_symbol_id = None;
+            }
+            last_segment_id = segment_id;
+
+            let name = symbol_info.name.clone();
+            let symbol_in_data = symbol_info.range.start as usize..symbol_info.range.end as usize;
+            let segment_data = &reader.data.data_segments[segment_id];
+            let chunk = &segment_data.data[symbol_in_data.clone()];
+
+            let segment_align = reader.linking.segments_info[segment_id.index()].alignment;
+
+            #[cfg(debug_assertions)]
+            {
+                assert_eq!(
+                    file_symbol_db.symbols[symbol_id].entity,
+                    data_symbol_id.into()
+                );
+            }
+            // In bound symbol
+            if last_range.end >= symbol_in_data.end {
+                log::warn!(
+                    "Detected overlapping data symbol {}, overlaps with {prev_name}. Patching symbol db.",
+                    name,
+                    prev_name = segments[segment_id]
+                        .parts
+                        .last()
+                        .map(|(_, item)| item.defined_entity.debug_name())
+                        .unwrap_or("<unknown>"),
+                );
+                let mut item = file_symbol_db.symbols[prev_symbol_id.unwrap()];
+
+                item.offset_in_entity = symbol_in_data.start as u32 - last_range.start as u32;
+                file_symbol_db.symbols[symbol_id] = item;
+                continue;
+            }
+
+            debug_assert!(
+                last_range.end <= symbol_in_data.start,
+                "Data symbols are expected to be sorted by their offset in segment, but symbol {:?} has range {:?} that intersects with previous symbol range  {:?}",
+                symbol_id,
+                symbol_in_data,
+                last_range
+            );
+
+            // Offset in file of section segment data buffer start
+            let segment_file_offset = segment_data.range.end - segment_data.data.len();
+            let file_offset = segment_file_offset + symbol_in_data.start;
+
+            // Offset of symbol in VA space.
+            let mem_offset = symbol_in_data.start;
+
+            let field_alignment = guess_data_alignment(segment_align as u8, symbol_in_data.start);
+
+            if last_range.end < symbol_in_data.start {
+                let gap_range = last_range.end..symbol_in_data.start;
+
+                if gap_range.len() >= (1 << field_alignment) {
+                    log::error!(
+                        "Data segment has gap larger than segment alignment: {:?} > {}",
+                        gap_range,
+                        segment_align,
+                    );
+                } else {
+                    // debug alignment
+                    log::trace!(
+                        "Data segment has gap: {:?} ({} bytes) ",
+                        gap_range,
+                        gap_range.len(),
+                    );
+                }
+                // add padding item;
+                let padding = DefinedEntity::padding_symbol(gap_range.len(), segment_id);
+                let item = SealedItem {
+                    item_id: None,
+                    defined_entity: padding,
+                };
+                segments[segment_id].parts.push(item);
+            }
+
+            last_range = symbol_in_data.clone();
+            prev_symbol_id = Some(symbol_id);
+
+            let file_range = file_offset..file_offset + chunk.len();
+            assert_eq!(&reader.tmp_src[file_range.clone()], chunk);
+
+            log::trace!(
+                "Data symbol: {data_symbol_id} at {segment_id} offset: {}, size: {}, alignment: {field_alignment}, file_location:{:?}",
+                symbol_in_data.start,
+                symbol_in_data.len(),
+                file_offset,
+            );
+            let item = SealedItem {
+                item_id: Some(data_symbol_id),
+                defined_entity: DefinedEntity {
+                    body: EntityBody::Copied(EntityBodyCopy {
+                        bytes: chunk,
+                        original_range: file_range.clone(),
+                        fixups: Vec::new(),
+                        filtered_relocs: CompoundBitSet::new(),
+                    }),
+                    export_as: ExportNames::new(),
+                    entity_type: ItemType {
+                        segment_id,
+                        alignment: field_alignment,
+                    },
+                    name: Some(name.clone()),
+                },
+            };
+            let part_id = segments[segment_id].parts.push(item);
+            items_place.insert(
+                data_symbol_id,
+                ItemPlace {
+                    offsets: Offsets {
+                        section_offset: file_range.start,
+                        va_address: mem_offset, // TODO + segment offset?
+                    },
+                    segment_id,
+                    part_id,
+                },
+            );
+        }
+
+        let num_defined = items_place.len();
+        Ok((
+            Self {
+                segments,
+                defined: items_place,
+                // TODO: take from linkage info.
+                external: WithStart::new(DataSymbolRef::new(num_defined), Vec::new()),
+            },
+            file_symbol_db,
+        ))
+    }
+
+    /// Recover virtual address spaces that was used:
+    /// - merge segments that ends just after another starts
+    /// - split passive and active
+    /// - detect got based
+    /// - detect multiple memories.
+    ///
+    /// Note: can reorder segments in output
+    ///
+    /// Returns MemLayoutBuilder without items.
+    pub fn recover_vs_segments(
+        &self,
+        mut import_mem: impl FnMut(MemoryRef) -> Temp<MemoryRef>,
+    ) -> MemLayoutBuilder<'src> {
+        let mut builder = MemLayoutBuilder::new();
+
+        let mut vs_recover = VsRecover::new();
+
+        for (id, segment) in &self.segments {
+            vs_recover.add_segment(id, segment);
+        }
+        for (_, segments, vs_location) in vs_recover.iter_vs() {
+            let location = match vs_location {
+                VirtualSpaceKind::Active { owner_id, location } => VirtualSpaceKind::Active {
+                    owner_id: import_mem(owner_id),
+                    location,
+                },
+                VirtualSpaceKind::Passive => VirtualSpaceKind::Passive,
+                VirtualSpaceKind::Declared => VirtualSpaceKind::Declared,
+            };
+            let vs_id = builder.virtual_spaces.push(location);
+            for segment in segments {
+                let _ = builder.segments.push(SegmentSpec {
+                    vs_id,
+                    name: self.segments[segment].name.clone(),
+                    align: self.segments[segment].pow2align,
+                    segment_flags: SegmentFlags::from_name(&self.segments[segment].name),
+                });
+            }
+        }
+
+        builder
+    }
 }
+
 //
 // Impl for builder
 //
-
-// Align base of memory to 16 bytes, if it wasn't already aligned.
-pub const BASE_ALIGNMENT: u8 = u8::trailing_zeros(16) as u8;
-
-pub const DEFAULT_HEAP_START: SpecificLocation = SpecificLocation::ConstantOffset(0x100000);
 
 impl<'src> MemLayoutBuilder<'src> {
     /// Create default virtual space, inited as active with one segment.
     ///
     /// Return id of this segment
     pub fn try_create_base_segment(&mut self, owner_id: Temp<MemoryRef>) -> SegmentId {
-        let vs = self.try_create_base_vs(VirtualSpaceLocation {
-            owner_id,
-            location: DEFAULT_HEAP_START,
-        });
+        let vs = self.try_create_base_vs(owner_id, DEFAULT_HEAP_START);
         self.try_create_segment(vs)
     }
     pub fn push_defined(&mut self, defined: DefinedDataChunk<'src>) -> Temp<DataSymbolRef> {
@@ -127,16 +460,47 @@ impl<'src> MemLayoutBuilder<'src> {
     ///
     /// Return main active virtual space.
     ///
-    pub fn main_vs(&self) -> Option<VirtualSpaceLocation<Temp<MemoryRef>>> {
+    pub fn main_vs(&self) -> Option<VirtualSpaceKind<Temp<MemoryRef>>> {
         self.virtual_spaces
             .values()
             .copied()
-            .find(Option::is_none)
-            .flatten()
+            .find(VirtualSpaceKind::is_active)
     }
 }
 
 pub type DataSymbolsOffsets = GappedMap<DataSymbolRef, ItemPlace>;
+
+fn element_kind_to_location(element_kind: &wasmparser::ElementKind) -> VirtualSpaceKind<TableRef> {
+    match element_kind {
+        wasmparser::ElementKind::Passive => VirtualSpaceKind::Passive,
+        wasmparser::ElementKind::Declared => VirtualSpaceKind::Declared,
+        wasmparser::ElementKind::Active {
+            table_index,
+            offset_expr,
+        } => VirtualSpaceKind::Active {
+            owner_id: TableRef::from_u32(table_index.unwrap_or_default()),
+            location: SpecificLocation::try_from_const_expr(offset_expr)
+                .expect("Only const offset supported for active data segments"),
+        },
+    }
+}
+
+fn data_kind_to_location(data_kind: &wasmparser::DataKind) -> VirtualSpaceKind<MemoryRef> {
+    match data_kind {
+        wasmparser::DataKind::Passive => VirtualSpaceKind::Passive,
+        wasmparser::DataKind::Active {
+            memory_index,
+            offset_expr,
+        } => {
+            let location = SpecificLocation::try_from_const_expr(offset_expr)
+                .expect("Only const offset supported for active data segments");
+            VirtualSpaceKind::Active {
+                owner_id: MemoryRef::from_u32(*memory_index),
+                location,
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -163,113 +527,5 @@ mod tests {
             false,
         );
         insta::assert_snapshot!(file_name, print_data_format);
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SpecificLocation {
-    /// Place chunk at offset (starting from mem_start) in active memory, where offset is calculated as value of global + offset.
-    GotBased { global: GlobalRef, offset: u32 },
-    /// Place chunk at offset (starting from mem_start) in active memory.
-    ConstantOffset(u32),
-}
-
-impl SpecificLocation {
-    pub fn offset(&self) -> u32 {
-        match self {
-            SpecificLocation::GotBased { offset, .. } => *offset,
-            SpecificLocation::ConstantOffset(offset) => *offset,
-        }
-    }
-    pub fn global_ref(&self) -> Option<GlobalRef> {
-        match self {
-            SpecificLocation::GotBased { global, .. } => Some(*global),
-            SpecificLocation::ConstantOffset(_) => None,
-        }
-    }
-    pub fn with_zero_offset(&self) -> Self {
-        match self {
-            SpecificLocation::GotBased { global, .. } => SpecificLocation::GotBased {
-                global: *global,
-                offset: 0,
-            },
-            SpecificLocation::ConstantOffset(_) => SpecificLocation::ConstantOffset(0),
-        }
-    }
-    /// Decode simple offset expressions:
-    /// - `i32.const` for constant offsets
-    /// - `global.get` for GOT based offsets
-    /// - `global.get + i32.const` for GOT based offsets with constant offset.
-    pub fn try_from_const_expr(offset_expr: &wasmparser::ConstExpr) -> Result<Self> {
-        let mut reader = offset_expr.get_operators_reader();
-
-        let mut offset = None;
-        let mut got = None;
-
-        match reader.read()? {
-            wasmparser::Operator::I32Const { value } => {
-                ensure!(
-                    offset.is_none(),
-                    "Too complex expression (more than one offset)"
-                );
-                offset = Some(value);
-            }
-            wasmparser::Operator::GlobalGet { global_index } => {
-                ensure!(
-                    got.is_none(),
-                    "Too complex expression (more than one got reference)"
-                );
-                got = Some(GlobalRef::from_u32(global_index))
-            }
-            op => bail!(
-                "Too complex expression found unexpected instruction: {:?}",
-                op
-            ),
-        };
-        if got.is_some() && offset.is_some() {
-            match reader.read()? {
-                wasmparser::Operator::I32Add => {}
-                op => bail!(
-                    "Too complex expression found expected I32Add found: {:?}",
-                    op
-                ),
-            }
-        }
-        match reader.read()? {
-            wasmparser::Operator::End => {}
-            op => bail!("Expected End after const expr: {:?}", op),
-        }
-        let offset = offset.unwrap_or_default() as u32;
-        Ok(match got {
-            Some(global) => SpecificLocation::GotBased { global, offset },
-            None => SpecificLocation::ConstantOffset(offset),
-        })
-    }
-
-    pub fn add_offset(&self, offset: u32) -> Self {
-        match self {
-            SpecificLocation::GotBased {
-                global,
-                offset: base,
-            } => SpecificLocation::GotBased {
-                global: *global,
-                offset: base + offset,
-            },
-            SpecificLocation::ConstantOffset(base) => {
-                SpecificLocation::ConstantOffset(base + offset)
-            }
-        }
-    }
-    pub fn to_init_expr(&self) -> wasm_encoder::ConstExpr {
-        match self {
-            SpecificLocation::GotBased { global, offset } => {
-                wasm_encoder::ConstExpr::global_get(global.as_u32())
-                    .with_i32_const((*offset).try_into().unwrap())
-                    .with_i32_add()
-            }
-            SpecificLocation::ConstantOffset(base) => {
-                wasm_encoder::ConstExpr::i32_const((*base).try_into().unwrap())
-            }
-        }
     }
 }
