@@ -1,10 +1,11 @@
-use std::{borrow::Cow, fmt::Debug};
+use std::{borrow::Cow, fmt::Debug, io::Write};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
 use wasmparser::ElementItems;
 
 use crate::{
+    emit::modify::wasm_emitter::{self, SectionList},
     index::{GappedMap, WithStart},
     layouts::{PartId, SegmentPlacement},
     raw::{self, SegmentId},
@@ -15,12 +16,13 @@ impl_entity_index! {
     #[display = "ei"]
     pub struct ElementItemId;
 }
-todo!(Implement element build + encoding for seal);
+// TODO: 1. element builder
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealedElementSegment<'src, T> {
     /// Body of segment, containing defined entities.
     pub parts: PrimaryMap<PartId, T>,
 
+    pub kind: ElementKind<TableRef>,
     /// Name of segment.
     pub name: Cow<'src, str>,
 }
@@ -53,35 +55,106 @@ pub struct ElementLayoutSealed<'src, T> {
 }
 
 pub trait ElementType<'a>: Debug {
-    /// Provides a hint for the number of items in the element segment, allowing to pre-allocate the map capacity.
-    fn hint_size(items: &ElementItems<'a>) -> Option<u32>;
-    /// Provides a way to access each element as internal iterator of `Self` type.
-    ///
-    /// Params:
-    /// save - Internal iterator callback that handles each item
-    fn for_item(items: ElementItems<'a>, save: impl FnMut(Self)) -> Result<()>
+    fn decode(items: ElementItems<'a>) -> impl Iterator<Item = Result<Self>> + 'a
     where
         Self: Sized;
+
+    fn encode_segment_start<W>(
+        kind: ElementKind<TableRef>,
+        encoder: &mut wasm_emitter::Encoder<W>,
+    ) -> std::result::Result<(), std::io::Error>
+    where
+        Self: Sized,
+        W: Write;
+
+    fn encode_item<W>(
+        item: &Self,
+        encoder: &mut wasm_emitter::Encoder<W>,
+    ) -> std::result::Result<(), std::io::Error>
+    where
+        Self: Sized,
+        W: Write;
 }
 
-impl ElementType<'_> for FunctionRef {
-    fn hint_size(items: &ElementItems<'_>) -> Option<u32> {
-        match items {
-            ElementItems::Functions(func_indices) => Some(func_indices.count()),
-            _ => None,
-        }
-    }
-    fn for_item(items: ElementItems<'_>, mut save: impl FnMut(Self)) -> Result<()> {
+impl<'a> ElementType<'a> for FunctionRef {
+    fn decode(items: ElementItems<'a>) -> impl Iterator<Item = Result<Self>> + 'a
+    where
+        Self: Sized,
+    {
+        // Avoid boxing
+        let decoded_items;
+        let wrong_type;
+
         match items {
             ElementItems::Functions(func_indices) => {
-                for elem in func_indices.into_iter_with_offsets() {
+                decoded_items = Some(func_indices.into_iter_with_offsets().map(|elem| {
                     let (_offset, func_id) = elem?;
-                    save(FunctionRef::from_u32(func_id));
-                }
-                Ok(())
+                    Ok(FunctionRef::from_u32(func_id))
+                }));
+                wrong_type = None;
             }
-            _ => bail!("Invalid element items type for function indices"),
+            _ => {
+                decoded_items = None;
+                wrong_type = Some(std::iter::once(Err(anyhow::anyhow!(
+                    "Invalid element items type for function indices"
+                ))));
+            }
+        };
+        std::iter::chain(
+            decoded_items.into_iter().flatten(),
+            wrong_type.into_iter().flatten(),
+        )
+    }
+
+    fn encode_segment_start<W>(
+        kind: ElementKind<TableRef>,
+        encoder: &mut wasm_emitter::Encoder<W>,
+    ) -> std::result::Result<(), std::io::Error>
+    where
+        Self: Sized,
+        W: Write,
+    {
+        const FUNCREF_ELEMKIND: u8 = 0x00;
+
+        match kind {
+            ElementKind::Active {
+                table_ref,
+                location,
+            } => {
+                if table_ref.as_u32() == 0 {
+                    encoder.push_byte(0x00)?;
+                } else {
+                    encoder.push_byte(0x02)?;
+                    encoder.encode_leb_5byte(table_ref.as_u32())?;
+                }
+                encoder.encode_const_expr(&location.to_init_expr())?;
+                if table_ref.as_u32() != 0 {
+                    encoder.push_byte(FUNCREF_ELEMKIND)?;
+                }
+            }
+            ElementKind::Passive => {
+                encoder.push_byte(0x01)?;
+                encoder.push_byte(FUNCREF_ELEMKIND)?;
+            }
+            ElementKind::Declared => {
+                encoder.push_byte(0x03)?;
+                encoder.push_byte(FUNCREF_ELEMKIND)?;
+            }
         }
+
+        Ok(())
+    }
+
+    fn encode_item<W>(
+        item: &Self,
+        encoder: &mut wasm_emitter::Encoder<W>,
+    ) -> std::result::Result<(), std::io::Error>
+    where
+        Self: Sized,
+        W: Write,
+    {
+        encoder.encode_leb_5byte(item.as_u32())?;
+        Ok(())
     }
 }
 
@@ -90,7 +163,7 @@ impl<'src, T: ElementType<'src> + ReservedValue + Clone> ElementLayoutSealed<'sr
     // search all element segments for needed table_id,
     // if default_table is set, then segments with no table_index (Wasm MVP spec) are also considered.
     // Returns error if element segment uses unsupported offset expression or item type.
-    pub fn typed_from_reader(module: &raw::ObjectReader<'src>, table_id: TableRef) -> Result<Self> {
+    pub fn typed_from_reader(module: &raw::ObjectReader<'src>) -> Result<Self> {
         let mut this = ElementLayoutSealed {
             segments: PrimaryMap::new(),
             external: WithStart::default(),
@@ -100,27 +173,34 @@ impl<'src, T: ElementType<'src> + ReservedValue + Clone> ElementLayoutSealed<'sr
         for (id, element) in module.elements.iter() {
             let kind = element_kind_to_location(&element.kind);
 
-            match kind.table() {
-                Some(idx) if idx == table_id => {}
-                _ => {
-                    // TODO: support passive/declared segments as well.
-                    continue;
-                }
-            }
-
-            let mut parts = PrimaryMap::new();
-
-            T::for_item(element.items.clone(), |elem| {
-                parts.push(elem);
-            })?;
+            let parts = T::decode(element.items.clone()).collect::<Result<PrimaryMap<_, _>>>()?;
 
             let sealed_segment = SealedElementSegment {
                 parts,
+                kind,
                 name: id.to_string().into(),
             };
             this.segments.push(sealed_segment);
         }
         Ok(this)
+    }
+
+    pub fn encode<W>(&self, writer: &mut SectionList<W>) -> std::result::Result<(), std::io::Error>
+    where
+        W: Write,
+    {
+        for segment in self.segments.values() {
+            writer.item_from_encoder(|encoder| {
+                T::encode_segment_start(segment.kind, encoder)?;
+                encoder.encode_leb_5byte(segment.parts.len() as u32)?;
+                for item in segment.parts.values() {
+                    T::encode_item(item, encoder)?;
+                }
+                Ok(())
+            })?;
+        }
+
+        Ok(())
     }
 }
 

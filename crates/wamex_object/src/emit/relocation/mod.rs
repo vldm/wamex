@@ -195,6 +195,7 @@ impl<'any, 'src> RelocationState<'any, 'src> {
             }
         }
     }
+
     fn apply_relocations(&self, section: &mut [u8], relocs: &[EntityRelocationEntry]) {
         for reloc in relocs {
             self.apply_relocation(section, *reloc);
