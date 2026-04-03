@@ -1,14 +1,11 @@
-use std::{
-    borrow::Cow,
-    fmt::{Debug, Display},
-};
+use std::{borrow::Cow, fmt::Debug};
 
-use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
+use cranelift_entity::PrimaryMap;
 use itertools::Itertools;
 
 use super::*;
 use crate::{
-    index::{GappedMap, Temp, TempIndex},
+    index::{GappedMap, Temp},
     layouts::VirtualSpaceId,
     raw::SegmentId,
     typed::{BuilderState, EntityCollection, ImportedEntity},
@@ -49,7 +46,7 @@ impl SegmentFlags {
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 
-pub struct SegmentSpec<'src> {
+pub struct DataSegmentSpec<'src> {
     /// Reference to virtual space in which this segment is located.
     pub vs_id: VirtualSpaceId,
     /// Name of segment,
@@ -101,9 +98,9 @@ impl<OwnerId> DataKind<OwnerId> {
 /// A builder for layout of data or element segments, that can be used to construct `BackedLayout`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemLayoutBuilder<'src> {
-    /// - None - means that all segments within this virtual space are passive or declared.
+    /// Virtual spaces allows to group different segments within one address space.
     pub virtual_spaces: PrimaryMap<VirtualSpaceId, DataKind<Temp<MemoryRef>>>,
-    pub segments: PrimaryMap<SegmentId, SegmentSpec<'src>>,
+    pub segments: PrimaryMap<SegmentId, DataSegmentSpec<'src>>,
     // TODO: Can we add any info for ImportedEntity?
     pub items: EntityCollection<
         DataSymbolRef,
@@ -308,7 +305,7 @@ impl<'src> MemLayoutBuilder<'src> {
     }
 
     pub fn try_create_segment(&mut self, vs_id: VirtualSpaceId) -> SegmentId {
-        self.segments.push(SegmentSpec {
+        self.segments.push(DataSegmentSpec {
             vs_id,
             name: ".rodata".into(),
             align: 3,

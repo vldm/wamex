@@ -23,7 +23,8 @@ use anyhow::{Result, bail, ensure};
 
 // use elements::ElementItemId;
 pub use self::data::*;
-use crate::typed::GlobalRef;
+pub use self::elements::*;
+use crate::typed::{FunctionRef, GlobalRef};
 impl_entity_index! {
     #[display = "vs"]
     pub struct VirtualSpaceId;
@@ -33,23 +34,29 @@ impl_entity_index! {
 
 pub mod data;
 mod elements;
+mod recover;
+pub type IndirectFunctionsSealed<'src> = elements::ElementLayoutSealed<'src, FunctionRef>;
+pub type IndirectFunctionsBuilder<'src> = elements::ElementLayoutBuilder<'src, FunctionRef>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SegmentPlacement {
+pub enum SegmentPlacement<GR = GlobalRef> {
     /// Place chunk at offset (starting from mem_start) in active memory, where offset is calculated as value of global + offset.
-    GotBased { global: GlobalRef, offset: u32 },
+    GotBased { global: GR, offset: u32 },
     /// Place chunk at offset (starting from mem_start) in active memory.
     ConstantOffset(u32),
 }
 
-impl SegmentPlacement {
+impl<GR> SegmentPlacement<GR>
+where
+    GR: Copy,
+{
     pub fn offset(&self) -> u32 {
         match self {
             SegmentPlacement::GotBased { offset, .. } => *offset,
             SegmentPlacement::ConstantOffset(offset) => *offset,
         }
     }
-    pub fn global_ref(&self) -> Option<GlobalRef> {
+    pub fn global_ref(&self) -> Option<GR> {
         match self {
             SegmentPlacement::GotBased { global, .. } => Some(*global),
             SegmentPlacement::ConstantOffset(_) => None,
@@ -64,6 +71,24 @@ impl SegmentPlacement {
             SegmentPlacement::ConstantOffset(_) => SegmentPlacement::ConstantOffset(0),
         }
     }
+
+    pub fn add_offset(&self, offset: u32) -> Self {
+        match self {
+            SegmentPlacement::GotBased {
+                global,
+                offset: base,
+            } => SegmentPlacement::GotBased {
+                global: *global,
+                offset: base + offset,
+            },
+            SegmentPlacement::ConstantOffset(base) => {
+                SegmentPlacement::ConstantOffset(base + offset)
+            }
+        }
+    }
+}
+
+impl SegmentPlacement<GlobalRef> {
     /// Decode simple offset expressions:
     /// - `i32.const` for constant offsets
     /// - `global.get` for GOT based offsets
@@ -112,21 +137,6 @@ impl SegmentPlacement {
             Some(global) => SegmentPlacement::GotBased { global, offset },
             None => SegmentPlacement::ConstantOffset(offset),
         })
-    }
-
-    pub fn add_offset(&self, offset: u32) -> Self {
-        match self {
-            SegmentPlacement::GotBased {
-                global,
-                offset: base,
-            } => SegmentPlacement::GotBased {
-                global: *global,
-                offset: base + offset,
-            },
-            SegmentPlacement::ConstantOffset(base) => {
-                SegmentPlacement::ConstantOffset(base + offset)
-            }
-        }
     }
     pub fn to_init_expr(&self) -> wasm_encoder::ConstExpr {
         match self {

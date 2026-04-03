@@ -222,10 +222,12 @@ pub fn process_special_entities(
             .map(|id| ("memory", snapshot.pack_ref(id))),
     );
     // 2. if indirect table exist - add it to the list as well.
-    special_entities.push((
-        "indirect_function_table",
-        snapshot.pack_ref(info.indirect_function_table.table_id),
-    ));
+    for (table_ref, table) in info.tables.iter() {
+        let Some("__indirect_function_table") = table.name().map(|n| &**n) else {
+            continue;
+        };
+        special_entities.push(("__indirect_function_table", snapshot.pack_ref(table_ref)));
+    }
 
     // 3. add global if it is used by main module (e.g. for stack pointer)
     let global = info

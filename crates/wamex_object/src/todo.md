@@ -11,13 +11,15 @@ one created during Module::new() and other is referenced by reloc
 - [X] reloc broke code 
 - [X] sub module don't use memory_base for their variables.
 - [X] data relocs in main modue is shifted
-
+- [ ] handle data imports from main module (without got)
+ 
 # Features/low-priority:
 - [ ] process relocs
 - [ ] names sections
 - [ ] linker sections
 - [X] exports sections
-- [ ] More sections that in input (data count, tags, sart fn?) - skip empty
+- [x] More sections that in input (data count, tags, sart fn?) - skip empty
 - [ ] features in binary reader should be set from feature section
-- [ ] segment is argument for generate fn, but should be part of self, to reduce missuse. 
-- [ ] use one start fn, and emit it before finalize.
+- [x] segment is argument for generate fn, but should be part of self, to reduce missuse. 
+- [x] use one start fn, and emit it before finalize.
+- [ ] Extract new imports processing from copy-plan 

@@ -151,6 +151,16 @@ pub trait EntityModifier<'src> {
         entity: AnyEntity<'src, '_>,
     ) -> Result<Self::ExtraData, anyhow::Error>;
 
+    /// Last chance to add some entities to module
+    fn before_lock(
+        &mut self,
+        _module: &mut crate::typed::ModuleBuilder<'src>,
+        _aggregated_data: &Self::ExtraData,
+    ) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    /// Now can handle index conversion.
     fn finish(
         &self,
         module: &mut crate::typed::Module<'src>,

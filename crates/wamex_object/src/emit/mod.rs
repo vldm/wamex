@@ -11,18 +11,21 @@ use wasmparser::FuncType;
 use crate::{
     analysis::SplitProgramInfo,
     emit::{
-        modify::{OutputEntityRef, wasm_emitter},
+        modify::{
+            OutputEntityRef,
+            wasm_emitter::{self, SectionList},
+        },
         plan::OutputId,
         relocation::{FunctionInfo, ModuleLayout, resolver::OutputEntitiesResolver},
     },
     helpers::{ShiftMap, ShiftPoint},
     index::{GappedMap, TempIndex},
-    layouts::DataSymbolsOffsets,
+    layouts::{DataSymbolsOffsets, ElementItemId},
     linkage::{file_db::FileRelocs, reloc::EntityRelocationEntry},
     raw::FuncTypeId,
     typed::{
         DefinedFunction, EntityBody, EntityBodyCopy, EntityKind, FileLoader, FunctionRef, Module,
-        TableRef, elements::ElementItemId,
+        TableRef,
     },
 };
 
@@ -251,66 +254,32 @@ impl<'src> Module<'src> {
         });
     }
 
-    fn _generate_indirect_function_table(
+    fn _generate_indirect_function_table<W>(
         &self,
-        section: &mut wasm_encoder::ElementSection,
-    ) -> Result<GappedMap<FunctionRef, ElementItemId>> {
-        let func_id_table = self.indirect_function_table.table_id;
-        assert!(
-            self.tables.try_get_entity(func_id_table).is_some(),
-            "Indirect function table must be defined as a table in the module"
-        );
-
-        let func_id_table = if self.tables.len() == 1 {
-            // TODO: if multi-table disabled?
-            None // default if only one table
-        } else {
-            Some(func_id_table)
-        };
-
-        let mut result_indirect_fn_mapping = GappedMap::new();
-
-        self.indirect_function_table
-            .for_each_segment(|_segment_id, content| {
-                let mut content = content.peekable();
-                let segment_offset = content
-                    .peek()
-                    .map(|(elem_id, _)| elem_id.as_u32())
-                    .expect("BUG: iterator without items");
-
-                let element_start = self
-                    .indirect_function_table
-                    .location
-                    .add_offset(segment_offset)
-                    .to_init_expr();
-
-                let func_ids = content
-                    .map(|(elem_id, func_ref)| {
-                        result_indirect_fn_mapping.insert(*func_ref, elem_id);
-                        func_ref.as_u32()
-                    })
-                    .collect::<Vec<_>>();
-
-                Self::_generate_element_section_segment(
-                    section,
-                    &element_start,
-                    func_id_table,
-                    func_ids,
-                );
-            });
-        Ok(result_indirect_fn_mapping)
+        writer: &mut SectionList<W>,
+    ) -> Result<GappedMap<FunctionRef, ElementItemId>, std::io::Error>
+    where
+        W: Write,
+    {
+        let results = self.extra.function_elements.items_locations();
+        self.extra.function_elements.encode(writer)?;
+        Ok(results)
     }
 
     fn generate_element_section(
         &self,
         output_module: &mut wasm_encoder::Module,
     ) -> Result<GappedMap<FunctionRef, ElementItemId>> {
-        let mut section = wasm_encoder::ElementSection::new();
+        let mut result = None;
+        let adapter = wasm_emitter::SectionAdapter::new(
+            wasm_encoder::SectionId::Element.into(),
+            |section| {
+                result = Some(self._generate_indirect_function_table(section)?);
+                Ok(())
+            },
+        )?;
 
-        let res = self._generate_indirect_function_table(&mut section)?;
-
-        output_module.section(&section);
-        Ok(res)
+        Ok(result.unwrap())
     }
 
     fn generate_data_count_section(&self, output_module: &mut wasm_encoder::Module) {
@@ -615,6 +584,10 @@ pub fn split_routine_generic_test(src: &[u8]) -> anyhow::Result<Vec<(OutputId, V
         true,
     )
     .unwrap();
+    assert!(
+        split.output_modules.len() > 1,
+        "There should be more than one split module"
+    );
 
     let mut result = vec![];
     emit_split_modules(&file_loader, &split, |ident, bytes| {
@@ -640,7 +613,7 @@ mod tests {
         },
         layouts::{
             ItemType, SegmentPlacement,
-            data::{DataKind, SegmentFlags, SegmentSpec},
+            data::{DataKind, DataSegmentSpec, SegmentFlags},
         },
         raw::SegmentId,
         typed::{
@@ -673,10 +646,6 @@ mod tests {
             true,
         )
         .unwrap();
-        assert!(
-            split.output_modules.len() == 1,
-            "There should be at least one split module"
-        );
 
         dbg!(&dep_graph);
         dbg!(&split);
@@ -716,6 +685,13 @@ mod tests {
     fn split_routine_example_emit() {
         env_logger::try_init().ok();
         let src = crate::testfiles::EXAMPLE_WASM;
+        split_routine_generic_test(src).unwrap();
+    }
+
+    #[test]
+    fn split_routine_lazy_routes_emit() {
+        env_logger::try_init().ok();
+        let src = crate::testfiles::LAZY_ROUTES;
         split_routine_generic_test(src).unwrap();
     }
 
@@ -770,7 +746,7 @@ mod tests {
             location: SegmentPlacement::ConstantOffset(0),
         });
 
-        data.segments.push(SegmentSpec {
+        data.segments.push(DataSegmentSpec {
             vs_id: vs,
             name: "data".into(),
             align: 0,

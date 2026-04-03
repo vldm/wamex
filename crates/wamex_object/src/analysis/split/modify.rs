@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use cranelift_entity::{EntityRef, PrimaryMap};
+use smallvec::smallvec;
 use wasmparser::FuncType;
 
 use crate::{
@@ -20,7 +21,12 @@ use crate::{
         relocation::EntityLocation,
     },
     index::Temp,
-    typed::{EntityKind, ExportNames, FileId, FileLoader, FunctionRef, ImportedEntity},
+    layouts::ElementKind,
+    raw::SegmentId,
+    typed::{
+        EntityKind, ExportNames, FileId, FileLoader, FunctionRef, ImportedEntity,
+        snapshot::FlatEntityRef,
+    },
 };
 
 impl SplitProgramInfo {
@@ -143,14 +149,14 @@ impl SplitProgramInfo {
         )?;
 
         log::error!("fix indirect table len calculation");
-        let len = main_output
-            .module
-            .indirect_function_table
-            .items
-            .last_key()
-            .unwrap_or_default()
-            .as_u32()
-            + 1;
+        // let len = main_output
+        //     .module
+        //     .indirect_function_table
+        //     .items
+        //     .last_key()
+        //     .unwrap_or_default()
+        //     .as_u32()
+        //     + 1;
 
         // 1. add modifier that will replace SplitPoint imports to `call_indirect <exported fn>`
         // 2. add <export fn> to `OutputEntitiesResolver` and module as `external` entity.
@@ -173,6 +179,12 @@ impl SplitProgramInfo {
     }
 }
 
+// /// Add new functions to module, that should replace original
+// struct InjectFnTrampolines {
+//     pub trampolines:
+
+// }
+
 ///
 /// Convert split imports into indirect calls.
 ///
@@ -186,29 +198,34 @@ impl SplitProgramInfo {
 ///
 pub struct ConvertSplitImports {
     layout: IndirectFnLayout,
-
-    sp_imports_new_refs: Vec<Temp<FunctionRef>>,
+    // / Add new
+    // imported_fns: Vec<FlatEntityRef>
 }
 
 #[derive(Debug, Default)]
 pub struct SplitModifierResult {
     /// Track of new "external" function that should be resolved to external `call_indirect`
-    pub split_imports: SVec<(EntityLocation, Temp<FunctionRef>)>,
+    pub sp_used_imports: SVec<(EntityLocation, Temp<FunctionRef>, usize)>,
 
     /// Track of internal functions which ids should be placed in corresponding `IndirectFnLayout` entry.
-    pub split_exports: SVec<(Temp<FunctionRef>, usize)>,
+    pub sp_defined_exports: SVec<(Temp<FunctionRef>, usize)>,
 }
 impl Merge for SplitModifierResult {
     fn new() -> Self {
         Self::default()
     }
     fn merge(&mut self, other: Self) {
-        self.split_imports.extend(other.split_imports);
-        self.split_exports.extend(other.split_exports);
+        self.sp_used_imports.extend(other.sp_used_imports);
+        self.sp_defined_exports.extend(other.sp_defined_exports);
     }
 }
 
-impl EntityModifier<'_> for ConvertSplitImports {
+/// Find any used imports-exports
+///
+/// For exports - before locking add them to indirect function table. (calculate virtual space for them)
+/// For imports - add them to "external" function.
+/// and at finish: for import add them to resolver as `call_indirect` targets.
+impl EntityModifier<'_> for Option<ConvertSplitImports> {
     type ExtraData = SplitModifierResult;
     type SetupData = IndirectFnLayout;
 
@@ -220,28 +237,43 @@ impl EntityModifier<'_> for ConvertSplitImports {
     where
         Self: Sized,
     {
-        let mut sp_imports_new_refs = Vec::new();
-        // Reserve new "external" function for each split point.
-        for sp in &shared.dyn_fns {
-            let import = sp.import_func();
-            let new_ref = module.functions.push_external(ImportedEntity {
-                module: "_split".into(),
-                name: format!("_split_point_{}", import).into(),
-                entity_type: FuncType::new([], []),
-                export_as: ExportNames::new(),
-                renamed_as: None,
-            });
-            log::info!(
-                "Reserved new function for split point import: {:?} -> {:?}",
-                import,
-                new_ref
-            );
-            sp_imports_new_refs.push(new_ref);
-        }
-        Ok(Self {
-            layout: shared,
-            sp_imports_new_refs,
-        })
+        // TODO:
+        // 1. extract copy entities  from plan (make plan generic over "shared data" to allow extending)
+        // 2. in emit context pass only name (don't store plan)
+        let Some(_) = module.extra.got_info.clone() else {
+            log::debug!("Module without got info, skipping split imports conversion");
+            return Ok(None);
+        };
+
+        // let mut sp_imports_new_refs = Vec::new();
+        // // Reserve new "external" function for each split point imports.
+        // for sp in &shared.dyn_fns {
+        //     let import = sp.import_func();
+        //     let new_ref = module.functions.push_external(ImportedEntity {
+        //         module: "_split".into(),
+        //         name: format!("_split_point_{}", import).into(),
+        //         entity_type: FuncType::new([], []),
+        //         export_as: ExportNames::new(),
+        //         renamed_as: None,
+        //     });
+        //     log::info!(
+        //         "Reserved new function for split point import: {:?} -> {:?}",
+        //         import,
+        //         new_ref
+        //     );
+        //     sp_imports_new_refs.push(new_ref);
+        // }
+
+        // let new_vs = module
+        //     .extra
+        //     .function_elements
+        //     .virtual_spaces
+        //     .push(ElementKind::Active {
+        //         table_ref: Temp::from_import(0), // TODO: ensure that indirect fn table will be added later
+        //         location: crate::layouts::SegmentPlacement::ConstantOffset(offset),
+        //     });
+
+        Ok(Some(ConvertSplitImports { layout: shared }))
     }
 
     fn modify_entity(
@@ -249,43 +281,39 @@ impl EntityModifier<'_> for ConvertSplitImports {
         source_info: crate::emit::modify::SourceInfo<'_>,
         entity: crate::emit::modify::AnyEntity<'_, '_>,
     ) -> std::result::Result<Self::ExtraData, anyhow::Error> {
+        // non active
+        let Some(this) = self else {
+            return Ok(SplitModifierResult::default());
+        };
+
         let EntityKind::Function(f) = source_info.source_entity else {
             return Ok(SplitModifierResult::default());
         };
 
-        if let Some(id) = self
-            .layout
-            .dyn_fns
-            .iter()
-            .position(|sp| sp.import_func() == f)
-        {
+        if let Some(id) = this.layout.find_import_fn(f) {
             match entity {
-                crate::emit::modify::AnyEntity::Function { .. } => {
+                crate::emit::modify::AnyEntity::Function { new_ref, .. } => {
                     log::info!(
                         "Found split point import function: {:?}",
                         source_info.source_entity
                     );
-                    let new_ref = self.sp_imports_new_refs[id];
+                    // TODO: Convert imported to defined.
                     // place to add new function.
                     return Ok(SplitModifierResult {
-                        split_imports: SVec::from(vec![(
+                        sp_used_imports: smallvec![(
                             EntityLocation::from_parts(
                                 source_info.input_file,
                                 source_info.source_entity,
                             ),
                             new_ref,
-                        )]),
-                        split_exports: SVec::new(),
+                            id
+                        )],
+                        sp_defined_exports: SVec::new(),
                     });
                 }
                 _ => unreachable!("Only function imports should be in split point imports list"),
             }
-        } else if let Some(id) = self
-            .layout
-            .dyn_fns
-            .iter()
-            .position(|sp| sp.export_func() == f)
-        {
+        } else if let Some(id) = this.layout.find_export_fn(f) {
             match entity {
                 crate::emit::modify::AnyEntity::Function { new_ref, .. } => {
                     log::info!(
@@ -293,8 +321,8 @@ impl EntityModifier<'_> for ConvertSplitImports {
                         source_info.source_entity
                     );
                     return Ok(SplitModifierResult {
-                        split_imports: SVec::new(),
-                        split_exports: SVec::from(vec![(new_ref, id)]),
+                        sp_used_imports: SVec::new(),
+                        sp_defined_exports: smallvec![(new_ref, id)],
                     });
                 }
                 _ => unreachable!("Only function exports should be in split point exports list"),
@@ -308,10 +336,14 @@ impl EntityModifier<'_> for ConvertSplitImports {
         resolver: &mut crate::emit::relocation::resolver::OutputEntitiesResolver,
         aggregated_data: Self::ExtraData,
     ) -> std::result::Result<(), anyhow::Error> {
-        // Add new functions to resolver.
-        for (src, output) in aggregated_data.split_imports {
-            resolver.add_entity_mapping(src, module.functions.stable_id(output).into());
-        }
+        // non active
+        let Some(this) = self else {
+            return Ok(());
+        };
+        // // Add new functions to resolver.
+        // for (src, output) in aggregated_data.split_imports {
+        //     resolver.add_entity_mapping(src, module.functions.stable_id(output).into());
+        // }
         // fill indirect function table entries for split point exports.
         todo!();
         Ok(())
@@ -341,32 +373,27 @@ pub struct IndirectFnLayout {
     pub dyn_fns: Vec<SplitPoint>,
 }
 
-// impl IndirectFnLayout {
-//     pub fn new_raw(
-//         module: &Module,
-//         split_points: &[SplitPoint],
-//         snapshot: EntitiesSnapshot,
-//     ) -> Self {
-//         let start_dyn = module.indirect_function_table;
-//         let dyn_fns = split_points
-//             .iter()
-//             .map(|sp| sp.export_func())
-//             .map(|func| snapshot.pack_ref(func))
-//             .collect();
-//         Self {
-//             start_dyn,
-//             dyn_fns,
-//             snapshot,
-//         }
-//     }
-//     /// Return place reserved for given split point in the flat indirect functions list.
-//     pub fn get_split_point_index(&self, split_point: &SplitPoint) -> usize {
-//         let id = self.snapshot.pack_ref(split_point.export_func());
-//         self.start_dyn
-//             + self
-//                 .dyn_fns
-//                 .iter()
-//                 .position(|f| *f == id)
-//                 .expect("Split point export function not found in indirect functions layout")
-//     }
-// }
+impl IndirectFnLayout {
+    pub fn new(main_indirect_len: usize, dyn_fns: Vec<SplitPoint>) -> Self {
+        Self {
+            start_dyn: main_indirect_len,
+            dyn_fns,
+        }
+    }
+
+    /// Return index of split point import function in indirect function table.
+    pub fn find_import_fn(&self, func: FunctionRef) -> Option<usize> {
+        self.dyn_fns
+            .iter()
+            .position(|sp| sp.import_func() == func)
+            .map(|idx| self.start_dyn + idx)
+    }
+
+    /// Return index of split point export function in indirect function table.
+    pub fn find_export_fn(&self, func: FunctionRef) -> Option<usize> {
+        self.dyn_fns
+            .iter()
+            .position(|sp| sp.export_func() == func)
+            .map(|idx| self.start_dyn + idx)
+    }
+}

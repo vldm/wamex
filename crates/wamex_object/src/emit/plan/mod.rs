@@ -26,12 +26,12 @@ use crate::{
     layouts::DataSymbolRef,
     linkage::file_db::FileRelocs,
     typed::{
-        EntityKind, EntityType, ExportNames, FileId, FileLoader, GlobalRef, ImportedEntity, Module,
-        ModuleBuilder, TempEntityKind,
+        EntityKind, EntityType, ExportNames, FileId, FileLoader, FunctionRef, GlobalRef,
+        ImportedEntity, Module, ModuleBuilder, TempEntityKind,
         snapshot::{FlatEntityRef, MultiSnapshot},
     },
 };
-#[derive(Debug, Clone)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct GotInfo<T = GlobalRef> {
     pub memory_base: T,
     pub table_base: T,
@@ -266,6 +266,7 @@ impl OutputModuleCopyPlan {
         }
 
         replace_span!(&mut action_span, tracing::info_span!("lock_module"));
+        module.create_empty_indirect_fn_table();
         // after index finalization, we can make some additional transformation
         let mut module = module.into_locked();
 
@@ -316,6 +317,7 @@ impl OutputModuleCopyPlan {
                 })
             }
         };
+        log::warn!("Dep info for module: {:#?}", dyn_info);
         replace_span!(&mut action_span, tracing::info_span!("finish_modifier"));
         // resolve got entries in code modifier, and fill start function body
         // do it before copy_and_resolve_relocs to ensure that all relocs are copied into file_relocs.
@@ -328,7 +330,7 @@ impl OutputModuleCopyPlan {
 
         replace_span!(&mut action_span, tracing::info_span!("extend info"));
         // collect indirect table (used by relocs)
-        module.extend_indirect_table_from_relocs(&relocs);
+        Self::add_indirect_fns_to_segment(&mut module, relocs.list_indirect_fns())?;
 
         Ok(OutputModule {
             module,
@@ -336,6 +338,24 @@ impl OutputModuleCopyPlan {
             relocs,
             dyn_info,
         })
+    }
+
+    fn add_indirect_fns_to_segment(
+        module: &mut Module,
+        indirect_fns: Vec<FunctionRef>,
+    ) -> Result<()> {
+        let (_, segment) = module
+            .extra
+            .function_elements
+            .segments
+            .iter_mut()
+            .next()
+            .expect("There should be at least one segment in indirect functions");
+
+        segment
+            .parts
+            .extend(indirect_fns.into_iter().map(|f| f.into()));
+        Ok(())
     }
 }
 
@@ -494,6 +514,7 @@ impl<'src> EmitContext<'src> {
         Ok(())
     }
 
+    // TODO: for static modules - there might be no got.
     fn collect_dylink_data_deps(
         &self,
         ident: &OutputId,
@@ -531,7 +552,7 @@ impl<'src> EmitContext<'src> {
             };
 
             log::debug!(
-                "Importing data symbol {orig_d} from module {dep_id} with offset {extern_ref:?}"
+                "Importing data symbol {orig_d} from module {dep_id} ({dep_file}) with offset {extern_ref:?}"
             );
             imported_data.insert(
                 orig_d,

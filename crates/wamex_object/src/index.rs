@@ -446,18 +446,18 @@ impl<Idx: TempIndex> Temp<Idx> {
     #[inline]
     pub fn to_stable(self, num_imports: usize, num_defined: usize) -> Idx {
         let tag = (self.0 & (Self::DEFINED_FLAG | Self::EXTERNAL_FLAG)) >> 30;
-        match dbg!(tag) {
-            0x0 => {
+        match tag {
+            0b00 => {
                 // import
                 let import_index = self.0 & Self::MAX_VALUE;
                 Idx::from_u32(import_index)
             }
-            0x2 => {
+            0b10 => {
                 // defined
                 let defined_index = self.0 & Self::MAX_VALUE;
                 Idx::from_u32(num_imports as u32 + defined_index)
             }
-            0x1 => {
+            0b01 => {
                 // extern
                 let extern_index = self.0 & Self::MAX_VALUE;
                 Idx::from_u32(num_imports as u32 + num_defined as u32 + extern_index)

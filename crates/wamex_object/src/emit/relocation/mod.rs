@@ -52,15 +52,12 @@ use cranelift_entity::{PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 use crate::{
     emit::plan::GotInfo,
     index::GappedMap,
-    layouts::{DataSymbolRef, DataSymbolsOffsets, Offsets},
+    layouts::{DataSymbolRef, DataSymbolsOffsets, ElementItemId, Offsets},
     linkage::{
         file_db::FileRelocs,
         reloc::{Encoding, EntityAddressMode, EntityRelocationEntry, Relative, RelocationWidth},
     },
-    typed::{
-        EntityKind, FileId, FunctionRef, GlobalRef, ImportOrDefined, Module,
-        elements::ElementItemId,
-    },
+    typed::{EntityKind, FileId, FunctionRef, GlobalRef, ImportOrDefined, Module},
 };
 
 /// Composite reference to an entity in some file.

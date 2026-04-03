@@ -1,7 +1,7 @@
 use std::{fmt::Debug, ops::Range};
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
+use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap, packed_option::ReservedValue};
 
 use crate::{
     helpers::{RangeComp, cmp_range},
@@ -309,6 +309,31 @@ impl FileRelocs {
             EntityKind::DataSymbol(data) => self.get_data_relocs(data),
             _ => None,
         }
+    }
+
+    pub fn list_indirect_fns(&self) -> Vec<FunctionRef> {
+        let mut result: SecondaryMap<FunctionRef, bool> = SecondaryMap::new();
+
+        let mut visit_reloc = |reloc: &EntityRelocationEntry| {
+            if let EntityKind::Function(func_ref) = reloc.symbol_id
+                && reloc.symbol_op == EntityAddressMode::RuntimeAddr
+            {
+                result[func_ref] = true;
+            }
+        };
+        for (_, reloc) in self.iter_relocs() {
+            for reloc in reloc.iter() {
+                visit_reloc(reloc);
+            }
+        }
+        result
+            .iter()
+            .filter_map(
+                |(func_ref, is_indirect)| {
+                    if *is_indirect { Some(func_ref) } else { None }
+                },
+            )
+            .collect()
     }
     // Ensure that addend increase is only applied to valid symbol types
     fn checked_addend_increase(addend: i64, increase: u32, symbol_type: SymbolType) -> i64 {

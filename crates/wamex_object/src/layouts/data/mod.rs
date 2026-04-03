@@ -10,7 +10,7 @@ use crate::{
     SVec,
     emit::modify::wasm_emitter,
     index::{GappedMap, Temp, WithStart},
-    layouts::{PartId, SegmentPlacement},
+    layouts::{PartId, SegmentPlacement, recover::VsRecover},
     linkage::{
         LinkageInfo,
         file_db::{FileRelocs, FileSymbolDb},
@@ -219,7 +219,7 @@ impl<'src> MemLayoutSealed<'src> {
         })
     }
 
-    pub fn recover_from_reader(
+    pub fn from_reader(
         reader: &crate::raw::ObjectReader<'src>,
     ) -> anyhow::Result<(Self, FileSymbolDb)> {
         let g = tracing::info_span!("processing_extra_linkage").entered();
@@ -432,7 +432,7 @@ impl<'src> MemLayoutSealed<'src> {
             };
             let vs_id = builder.virtual_spaces.push(location);
             for segment in segments {
-                let _ = builder.segments.push(SegmentSpec {
+                let _ = builder.segments.push(DataSegmentSpec {
                     vs_id,
                     name: self.segments[segment].name.clone(),
                     align: self.segments[segment].pow2align,
@@ -460,8 +460,9 @@ impl<'src> MemLayoutBuilder<'src> {
     pub fn push_defined(&mut self, defined: DefinedDataChunk<'src>) -> Temp<DataSymbolRef> {
         self.items.push_defined(defined)
     }
+    /// Only external imports is allowed.
     pub fn push_import(&mut self, import: ImportedDataChunk<'src>) -> Temp<DataSymbolRef> {
-        self.items.push_import(import)
+        self.items.push_external(import)
     }
     pub fn push_entity(
         &mut self,
@@ -667,7 +668,7 @@ mod tests {
             location: SegmentPlacement::ConstantOffset(3), // some unaligned offset
         });
 
-        let segment_id = builder.segments.push(SegmentSpec {
+        let segment_id = builder.segments.push(DataSegmentSpec {
             vs_id,
             name: "segment1".into(),
             align: 2,
@@ -728,14 +729,14 @@ mod tests {
             location: SegmentPlacement::ConstantOffset(3), // some unaligned offset
         });
 
-        let segment1_id = builder.segments.push(SegmentSpec {
+        let segment1_id = builder.segments.push(DataSegmentSpec {
             vs_id,
             name: "segment1".into(),
             align: 2,
             segment_flags: SegmentFlags::Writable,
         });
 
-        let segment2_id = builder.segments.push(SegmentSpec {
+        let segment2_id = builder.segments.push(DataSegmentSpec {
             vs_id,
             name: "segment2".into(),
             align: 4,
