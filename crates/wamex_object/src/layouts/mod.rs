@@ -35,8 +35,8 @@ impl_entity_index! {
 pub mod data;
 mod elements;
 mod recover;
-pub type IndirectFunctionsSealed<'src> = elements::ElementLayoutSealed<'src, FunctionRef>;
-pub type IndirectFunctionsBuilder<'src> = elements::ElementLayoutBuilder<'src, FunctionRef>;
+pub type FuncLayoutSealed<'src> = elements::ElementLayoutSealed<'src, FunctionRef>;
+pub type FuncLayoutBuilder<'src> = elements::ElementLayoutBuilder<'src, FunctionRef>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SegmentPlacement<GR = GlobalRef> {

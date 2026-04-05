@@ -258,6 +258,8 @@ where
                 let loc = snapshot.unpack_ref(*import);
                 let module = &input_files.get_file(loc.file_id).module;
                 let name = module.get_name(loc.entity).to_string();
+                dbg!(&loc);
+                dbg!(&name);
                 let entity_ty = module
                     .get_type(loc.entity)
                     .expect("Entity should have type")

@@ -269,7 +269,7 @@ mod tests {
         emit::relocation::EntityLocation,
         layouts::DataSymbolRef,
         raw::FuncTypeId,
-        typed::{EntityKind, FileId, FunctionRef, LoadedFile},
+        typed::{EntityKind, FileId, FileLoader, FunctionRef, LoadedFile},
     };
     #[test]
     fn test_entity_ref_mapping() {
@@ -289,6 +289,33 @@ mod tests {
         module.extra.mem_layout.iter().for_each(|(data_ref, _)| {
             let entity_kind = EntityKind::DataSymbol(data_ref);
             let flat_ref = snapshot.pack_ref(data_ref);
+            let unpacked = snapshot.unpack_ref(flat_ref);
+            assert_eq!(entity_kind, unpacked);
+        });
+    }
+
+    #[test]
+    fn test_entity_ref_multi_mapping() {
+        let file = crate::testfiles::EXAMPLE_WASM;
+        let mut loader = FileLoader::new();
+        let id = loader
+            .load_from_bytes(file.to_vec().into_boxed_slice())
+            .unwrap();
+
+        let module = &loader.get_file(id).module;
+
+        let snapshot = loader.get_snapshot();
+
+        module.functions.iter().for_each(|(func_ref, _)| {
+            let entity_kind = EntityLocation::from_parts(id, EntityKind::Function(func_ref));
+            let flat_ref = snapshot.pack_ref(entity_kind);
+            let unpacked = snapshot.unpack_ref(flat_ref);
+            assert_eq!(entity_kind, unpacked);
+        });
+
+        module.extra.mem_layout.iter().for_each(|(data_ref, _)| {
+            let entity_kind = EntityLocation::from_parts(id, EntityKind::DataSymbol(data_ref));
+            let flat_ref = snapshot.pack_ref(entity_kind);
             let unpacked = snapshot.unpack_ref(flat_ref);
             assert_eq!(entity_kind, unpacked);
         });

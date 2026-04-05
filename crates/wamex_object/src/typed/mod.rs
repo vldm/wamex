@@ -20,7 +20,7 @@ use yoke::{Yoke, Yokeable};
 use crate::{
     emit::plan::GotInfo,
     index::Temp,
-    layouts::{self, ElementInTable, ElementSegmentSpec, IndirectFunctionsSealed, MemLayoutSealed},
+    layouts::{self, ElementInTable, ElementSegmentSpec, FuncLayoutSealed, MemLayoutSealed},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
@@ -47,7 +47,7 @@ impl_entity_index! {
 pub struct Locked<'src> {
     pub start_function: Option<FunctionRef>,
     pub mem_layout: layouts::MemLayoutSealed<'src>,
-    pub function_elements: layouts::IndirectFunctionsSealed<'src>,
+    pub function_elements: layouts::FuncLayoutSealed<'src>,
 }
 
 impl Locked<'_> {
@@ -74,7 +74,7 @@ pub struct Builder<'src> {
     /// Should have `()->void` type and can be defined or imported.
     pub start_functions: Vec<Temp<FunctionRef>>,
     pub mem_layout: layouts::MemLayoutBuilder<'src>,
-    pub function_elements: layouts::IndirectFunctionsBuilder<'src>,
+    pub function_elements: layouts::FuncLayoutBuilder<'src>,
     pub got_info: Option<GotInfo<Temp<GlobalRef>>>,
 }
 
@@ -316,7 +316,7 @@ impl<'src> Module<'src> {
 
         memories.get_entity_mut(memory_id).set_name(memory_name);
 
-        let indirect_fns = IndirectFunctionsSealed::typed_from_reader(reader)?;
+        let indirect_fns = FuncLayoutSealed::typed_from_reader(reader)?;
 
         let g = tracing::info_span!("processing_extra_linkage").entered();
 

@@ -151,6 +151,7 @@ pub struct SharedEntry<Id> {
 pub fn get_dependencies(info: &LoadedFile) -> anyhow::Result<DepGraph> {
     get_dependencies_with_filter(info, |_| true)
 }
+#[inline]
 pub fn get_dependencies_with_filter(
     info: &LoadedFile,
     mut filter: impl FnMut(&EntityKind) -> bool,
@@ -337,8 +338,13 @@ mod tests {
 
     use super::{DepGraph, DepSet};
     use crate::{
-        analysis::{debug::print_deps_inner, dep_graph::DepMiniSet, testing},
-        typed::{EntityKind, LoadedFile, Module, snapshot::FlatEntityRef},
+        analysis::{
+            debug::print_deps_inner,
+            dep_graph::{self, DepMiniSet},
+            get_dependencies, testing,
+        },
+        emit::relocation::EntityLocation,
+        typed::{EntityKind, FileLoader, LoadedFile, Module, snapshot::FlatEntityRef},
     };
 
     trait DepListExt {
@@ -836,5 +842,30 @@ mod tests {
         let mut source = prefix.join("\n");
         source.push_str(&suffix);
         eprintln!("Reduced to:\n{}", source);
+    }
+
+    #[test]
+    fn test_depgraph_multisnapshot() {
+        let file = crate::testfiles::EXAMPLE_WASM;
+        let mut loader = FileLoader::new();
+        let id = loader
+            .load_from_bytes(file.to_vec().into_boxed_slice())
+            .unwrap();
+
+        let module = &loader.get_file(id).module;
+        let snapshot = loader.get_snapshot();
+
+        let dep_graph = get_dependencies(loader.get_file(id)).unwrap();
+
+        for (entry, _) in dep_graph.nodes.iter() {
+            let unpacked_multi = snapshot.unpack_ref(entry);
+            let unpacked_single = dep_graph.snapshot().unpack_ref(entry);
+            assert_eq!(
+                unpacked_multi,
+                EntityLocation::from_parts(id, unpacked_single)
+            );
+
+            assert!(!matches!(unpacked_multi.entity, EntityKind::Type(_)));
+        }
     }
 }
