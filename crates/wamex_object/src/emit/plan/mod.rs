@@ -8,19 +8,15 @@ mod definition;
 
 use anyhow::Result;
 use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
-pub use definition::{
-    AddressingMode, CopySpec, ImportSpec, NewImportRef, OutputId, OutputModuleCopyPlan,
-    PlannedGotInfo,
-};
+pub use definition::OutputId;
 use itertools::Itertools;
 
+pub use self::definition::{AnyEntity, Merge, OutputPlan, SourceInfo};
 use crate::{
-    emit::{
-        modify::{AnyEntity, EntityModifier, Merge, SourceInfo},
-        relocation::{
-            EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
-            resolver::OutputEntitiesResolver,
-        },
+    emit,
+    emit::relocation::{
+        EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
+        resolver::OutputEntitiesResolver,
     },
     index::{GappedMap, Temp},
     layouts::DataSymbolRef,
@@ -106,9 +102,9 @@ macro_rules! replace_span {
     }};
 }
 
-impl OutputModuleCopyPlan {
+impl<'src> OutputModule<'src> {
     /// Copy virtual space and segments from input module to output module
-    pub fn copy_vs_segments<'src>(output: &mut ModuleBuilder<'src>, input_files: &'src FileLoader) {
+    pub fn copy_vs_segments(output: &mut ModuleBuilder<'src>, input_files: &'src FileLoader) {
         // TODO: merge info from all modules
         let first = input_files.get_file(FileId::from_u32(0));
         // let temp_mem =
@@ -129,47 +125,41 @@ impl OutputModuleCopyPlan {
         output.extra.mem_layout = output_layout;
     }
     /// Execute the plan and copy entities from input to output modules.
-    pub fn copy_entities<'src, M>(
-        &self,
+    pub fn apply_plan<M>(
+        mut plan: M,
         input_files: &'src FileLoader,
         snapshot: &'_ MultiSnapshot,
-        entity_modifier_setup: M::SetupData,
     ) -> Result<OutputModule<'src>>
     where
-        M: EntityModifier<'src>,
+        M: OutputPlan<'src>,
     {
-        log::info!(
-            "Applying plan for output module with {} entities and {} imports",
-            self.entities.len(),
-            self.imports.len()
-        );
-        let mut action_span = tracing::info_span!("Setup modifier").entered();
+        let mut action_span = tracing::info_span!("Setup plan").entered();
         let mut module = ModuleBuilder::new();
 
         Self::copy_vs_segments(&mut module, input_files);
 
-        let modifier = M::setup(entity_modifier_setup, self, &mut module)?;
+        plan.setup(&mut module)?;
 
-        let mut modifier_artifact = <M::ExtraData as Merge>::new();
+        let mut modifier_artifact = <M::Artifacts as Merge>::new();
 
         let mut ref_map: Vec<(EntityLocation, TempEntityKind)> = Vec::new();
 
         replace_span!(&mut action_span, tracing::info_span!("Copy entities"));
-        let copy_entities = self
-            .entities
-            .iter()
-            .map(move |(flat, extra)| {
-                let EntityLocation { file_id, entity } = snapshot.unpack_ref(*flat);
-                let loaded_file = input_files.get_file(file_id);
-                (file_id, loaded_file, entity, extra)
-            })
-            .chunk_by(|(file_id, _, _, _)| *file_id);
+        {
+            let copy_entities = plan
+                .entities_to_copy()
+                .map(move |(flat, extra)| {
+                    let EntityLocation { file_id, entity } = snapshot.unpack_ref(flat);
+                    let loaded_file = input_files.get_file(file_id);
+                    (file_id, flat, loaded_file, entity, extra)
+                })
+                .chunk_by(|(file_id, _, _, _, _)| *file_id);
 
-        for (file_id, group) in copy_entities.into_iter() {
-            let snapshot = snapshot.file_snapshot(file_id);
+            for (file_id, group) in copy_entities.into_iter() {
+                let snapshot = snapshot.file_snapshot(file_id);
 
-            for (_, file, entity_ref, copy) in group {
-                macro_rules! copy_entity {
+                for (_, flat, file, entity_ref, extra) in group {
+                    macro_rules! copy_entity {
                     ($($entity_collection:ident).+, $entity_type:ident => $id:expr) => {
                         let mut entity = file.module.$($entity_collection).+.get_entity($id).cloned();
                         assert!(!entity.is_external(), "Copying external entities looks like a bug");
@@ -178,95 +168,47 @@ impl OutputModuleCopyPlan {
                             input_file: file_id,
                             snapshot,
                             source_entity: entity_ref,
+                            source_flat: flat,
                             entity_relocs: file.relocs.get_entity_relocs($id.into()).unwrap_or_default(),
                         };
                         let any_entity = AnyEntity::$entity_type {
                             new_ref: new,
                             entity: entity.as_mut(),
                         };
-                        modifier_artifact.merge(modifier.modify_entity(source_info, any_entity)?);
+                        modifier_artifact.merge(plan.transform(source_info, any_entity, extra)?);
 
-                        copy_entity!(@add_export entity.as_mut().export_as_mut());
                         let new = module.$($entity_collection).+.push_entity(entity);
                         ref_map.push((EntityLocation::from_parts(file_id, $id.into()), new.into()));
                     };
-                    (@add_export $exports:expr) => {
-                        if let Some(new_export) = copy.export_as() {
-                            $exports.add_export(new_export.to_string().into());
+                }
+                    match entity_ref {
+                        EntityKind::Function(f) => {
+                            copy_entity!(functions, Function => f);
                         }
+                        EntityKind::Global(g) => {
+                            copy_entity!(globals, Global => g);
+                        }
+                        EntityKind::Memory(m) => {
+                            copy_entity!(memories, Memory => m);
+                        }
+                        EntityKind::Table(t) => {
+                            copy_entity!(tables, Table => t);
+                        }
+                        EntityKind::Tag(t) => {
+                            copy_entity!(tags, Tag => t);
+                        }
+                        EntityKind::DataSymbol(d) => {
+                            copy_entity!(extra.mem_layout, DataSymbol => d);
+                        }
+                        EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
                     }
-                }
-                match entity_ref {
-                    EntityKind::Function(f) => {
-                        copy_entity!(functions, Function => f);
-                    }
-                    EntityKind::Global(g) => {
-                        copy_entity!(globals, Global => g);
-                    }
-                    EntityKind::Memory(m) => {
-                        copy_entity!(memories, Memory => m);
-                    }
-                    EntityKind::Table(t) => {
-                        copy_entity!(tables, Table => t);
-                    }
-                    EntityKind::Tag(t) => {
-                        copy_entity!(tags, Tag => t);
-                    }
-                    EntityKind::DataSymbol(d) => {
-                        copy_entity!(extra.mem_layout, DataSymbol => d);
-                    }
-                    EntityKind::Type(_) => {} // type is pseudo-entity - and doesn't exist in module.
-                }
-            }
-        }
-
-        let mut new_imports: GappedMap<_, TempEntityKind> = GappedMap::new();
-        // Add imports for used symbols (even if they are defined in source).
-        for (r, import) in &self.imports {
-            macro_rules! push_import {
-                ($($entity_collection:ident).+ => $ty: expr) => {{
-                    let new_ref = module.$($entity_collection).+.push_import(ImportedEntity {
-                        module: import.module.clone().into(),
-                        name: import.name.clone().into(),
-                        entity_type: $ty.clone(),
-                        export_as: ExportNames::default(),
-                        renamed_as: None,
-                    });
-                    if let Some(entity) = import.original_entity {
-                        let location = snapshot.unpack_ref(entity);
-                        ref_map.push((location, new_ref.into()));
-                    }
-                    new_imports.insert(r, new_ref.into());
-                }};
-            }
-            match &import.ty {
-                EntityType::Function(f) => {
-                    push_import!(functions => f);
-                }
-                // stack_pointer, mb heap_base/__data_end, etc.
-                EntityType::Global(g) => {
-                    push_import!(globals => g);
-                }
-                // indirect_function_table
-                EntityType::Table(t) => {
-                    push_import!(tables => t);
-                }
-                // only one memory
-                EntityType::Memory(m) => {
-                    push_import!(memories => m);
-                }
-                // Future support
-                EntityType::Tag(m) => {
-                    push_import!(tags => m);
-                }
-                EntityType::DataSymbol(d) => {
-                    push_import!(extra.mem_layout => d);
                 }
             }
         }
 
         replace_span!(&mut action_span, tracing::info_span!("lock_module"));
         module.create_empty_indirect_fn_table();
+        plan.before_lock(&mut module, &modifier_artifact)?;
         // after index finalization, we can make some additional transformation
         let mut module = module.into_locked();
 
@@ -283,46 +225,46 @@ impl OutputModuleCopyPlan {
             file_info.add_entity_mapping(src, entity.to_stable(&module));
         }
 
-        let dyn_info = match &self.addressing {
-            AddressingMode::Static => None,
-            AddressingMode::GotRelative(g) => {
-                macro_rules! conv {
-                    ($got:expr) => {
-                        GotInfo {
-                            memory_base: conv!(@ref $got.memory_base),
-                            table_base: conv!(@ref $got.table_base),
-                        }
-                    };
-                    (@ref $e:expr) => {
-                        match new_imports.get($e)
-                            .expect("Got entry not found in imports")
-                            .to_stable(&module) {
-                            EntityKind::Global(g) => g,
-                            _ => panic!("Got entry should be global"),
-                        }
-                    };
-                }
-                let deps = g
-                    .deps
-                    .iter()
-                    .map(|(file, got)| {
-                        let got = conv!(got);
-                        (file, got)
-                    })
-                    .collect();
+        // let dyn_info = match &self.addressing {
+        //     AddressingMode::Static => None,
+        //     AddressingMode::GotRelative(g) => {
+        //         macro_rules! conv {
+        //             ($got:expr) => {
+        //                 GotInfo {
+        //                     memory_base: conv!(@ref $got.memory_base),
+        //                     table_base: conv!(@ref $got.table_base),
+        //                 }
+        //             };
+        //             (@ref $e:expr) => {
+        //                 match new_imports.get($e)
+        //                     .expect("Got entry not found in imports")
+        //                     .to_stable(&module) {
+        //                     EntityKind::Global(g) => g,
+        //                     _ => panic!("Got entry should be global"),
+        //                 }
+        //             };
+        //         }
+        //         let deps = g
+        //             .deps
+        //             .iter()
+        //             .map(|(file, got)| {
+        //                 let got = conv!(got);
+        //                 (file, got)
+        //             })
+        //             .collect();
 
-                Some(DyLinkDeps {
-                    our_got: conv!(g.our_got),
-                    deps,
-                })
-            }
-        };
-        log::warn!("Dep info for module: {:#?}", dyn_info);
+        //         Some(DyLinkDeps {
+        //             our_got: conv!(g.our_got),
+        //             deps,
+        //         })
+        //     }
+        // };
+        // log::warn!("Dep info for module: {:#?}", dyn_info);
         replace_span!(&mut action_span, tracing::info_span!("finish_modifier"));
         // resolve got entries in code modifier, and fill start function body
         // do it before copy_and_resolve_relocs to ensure that all relocs are copied into file_relocs.
 
-        modifier.finish(&mut module, &mut file_info, modifier_artifact)?;
+        plan.finish(&mut module, modifier_artifact, &mut file_info)?;
 
         replace_span!(&mut action_span, tracing::info_span!("resolve_relocs"));
         // Now copy and resolve relocs.
@@ -336,7 +278,7 @@ impl OutputModuleCopyPlan {
             module,
             resolver: file_info,
             relocs,
-            dyn_info,
+            dyn_info: None, //dyn_info,
         })
     }
 
@@ -344,13 +286,11 @@ impl OutputModuleCopyPlan {
         module: &mut Module,
         indirect_fns: Vec<FunctionRef>,
     ) -> Result<()> {
-        let (_, segment) = module
+        let segment_id = module
             .extra
-            .function_elements
-            .segments
-            .iter_mut()
-            .next()
-            .expect("There should be at least one segment in indirect functions");
+            .get_indirect_fn_segment()
+            .expect("Indirect function segment should be created.");
+        let segment = &mut module.extra.function_elements.segments[segment_id];
 
         segment
             .parts
@@ -372,9 +312,11 @@ pub struct EmitContext<'a> {
     pub input_files: &'a FileLoader,
     pub snapshot: MultiSnapshot,
     // 1. Build copy plan for each module.
-    pub output_plans: PrimaryMap<FileId, (OutputId, OutputModuleCopyPlan)>,
+    pub output_names: PrimaryMap<FileId, OutputId>,
     // 1.2. where to search entity if dynamic linking is used
     pub dylinkg_exports_map: GappedMap<FlatEntityRef, FileId>,
+
+    // The rest fields are phases of `emit_modules` pipeline.
     // 2. Build modules from copy plans.
     pub output_modules: PrimaryMap<FileId, OutputModule<'a>>,
     // 3. build writer and layout for each module.
@@ -384,48 +326,45 @@ pub struct EmitContext<'a> {
 impl<'src> EmitContext<'src> {
     pub fn new_plan(
         input_files: &'src FileLoader,
-        output_plans: PrimaryMap<FileId, (OutputId, OutputModuleCopyPlan)>,
+        output_names: PrimaryMap<FileId, OutputId>,
         exported_symbols: GappedMap<FlatEntityRef, FileId>,
     ) -> Self {
         Self {
             input_files,
             snapshot: input_files.get_snapshot(),
-            output_plans,
+            output_names,
             dylinkg_exports_map: exported_symbols,
             output_modules: PrimaryMap::new(),
             writers: PrimaryMap::new(),
             layouts: PrimaryMap::new(),
         }
     }
-    #[tracing::instrument(skip_all, name = "Copy entities")]
-    pub fn copy_entities<M>(&mut self, entity_modifier_setup: M::SetupData) -> Result<()>
-    where
-        M: EntityModifier<'src>,
-        M::SetupData: Clone,
-    {
-        let input_files = self.input_files;
-        let snapshot = &self.snapshot;
+    // #[tracing::instrument(skip_all, name = "Copy entities")]
+    // pub fn copy_entities<M>(&mut self, entity_modifier_setup: M::SetupData) -> Result<()>
+    // where
+    //     M: EntityModifier<'src>,
+    //     M::SetupData: Clone,
+    // {
+    //     let input_files = self.input_files;
+    //     let snapshot = &self.snapshot;
 
-        let mut outputs = PrimaryMap::new();
+    //     let mut outputs = PrimaryMap::new();
 
-        for (_file_id, (_name, plan)) in &self.output_plans {
-            let output =
-                plan.copy_entities::<M>(input_files, snapshot, entity_modifier_setup.clone())?;
-            outputs.push(output);
-        }
-        self.output_modules = outputs;
-        Ok(())
-    }
+    //     for (_file_id, (_name, plan)) in &self.output_plans {
+    //         let output =
+    //             plan.copy_entities::<M>(input_files, snapshot, entity_modifier_setup.clone())?;
+    //         outputs.push(output);
+    //     }
+    //     self.output_modules = outputs;
+    //     Ok(())
+    // }
 
     #[tracing::instrument(skip_all, name = "Build module layouts")]
     pub fn build_layouts(&mut self) -> Result<()> {
         let mut writers = PrimaryMap::new();
         let mut layouts = PrimaryMap::new();
         for (file, output) in &self.output_modules {
-            log::info!(
-                "Generating module {ident}",
-                ident = self.output_plans[file].0
-            );
+            log::info!("Generating module {ident}", ident = self.output_names[file]);
             let mut writer = wasm_encoder::Module::new();
             let layout = output.module.generate(&mut writer)?;
             let writer = HexDebug(writer.finish());
@@ -443,7 +382,7 @@ impl<'src> EmitContext<'src> {
         log::info!("Applying relocs for modules");
 
         for file in self.output_modules.keys() {
-            let (ident, ..) = &self.output_plans[file];
+            let ident = &self.output_names[file];
             let output_module = &self.output_modules[file];
 
             let imported_data = self.collect_dylink_data_deps(ident, output_module);
@@ -476,7 +415,7 @@ impl<'src> EmitContext<'src> {
         &self,
         mut emit_fn: impl FnMut(&OutputId, &[u8]) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        for (file, (ident, ..)) in &self.output_plans {
+        for (file, ident) in &self.output_names {
             log::info!("Emitting module {ident}");
             let bytes = &self.writers[file];
             // debug
@@ -499,7 +438,7 @@ impl<'src> EmitContext<'src> {
         emit_fn: impl FnMut(&OutputId, &[u8]) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         assert!(
-            self.output_plans.len() == self.output_modules.len(),
+            self.output_names.len() == self.output_modules.len(),
             "Output plans should be generated for all output modules before emitting"
         );
 
@@ -536,7 +475,7 @@ impl<'src> EmitContext<'src> {
                 .get(flat_ref)
                 .expect("imported symbol should be exported by some module");
 
-            let (dep_id, ..) = &self.output_plans[dep_file];
+            let dep_id = &self.output_names[dep_file];
             let dep_split_module = &self.output_modules[dep_file];
             let dep_layout = &self.layouts[dep_file];
 

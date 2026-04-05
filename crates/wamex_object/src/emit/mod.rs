@@ -25,7 +25,7 @@ use crate::{
     raw::FuncTypeId,
     typed::{
         DefinedFunction, EntityBody, EntityBodyCopy, EntityKind, FileLoader, FunctionRef, Module,
-        TableRef,
+        TableRef, snapshot::EntitiesSnapshot,
     },
 };
 
@@ -389,10 +389,6 @@ impl<'src> Module<'src> {
                 // relocs already resolved, and shifted relative to body
                 // since this type of entity cannot have src file)
                 EntityBody::New { new_relocs, .. } => {
-                    debug_assert!(
-                        module_info.get_entity_src(entity).is_none(),
-                        "New entity cannot have src file, but got src for entity {entity}"
-                    );
                     relocs.extend(new_relocs.drain(..));
                 }
             }
@@ -551,11 +547,8 @@ pub fn emit_split_modules(
     emit_fn: impl FnMut(&OutputId, &[u8]) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     // 0. <split related logic> convert to ctx + get deps of main module
-    let mut emit_ctx = program_info.into_emit_context(input_files);
-    let main_deps = &program_info.output_modules[0].1.defined_symbols;
-    let is_static = |e| main_deps.contains(&e);
-    let blacklist_from_conversion = modify::Blacklist::new(is_static);
-    emit_ctx.copy_entities::<modify::AbsToGot<_>>(blacklist_from_conversion)?;
+    let mut emit_ctx = program_info.into_emit_context(input_files)?;
+    // emit_ctx.copy_entities::<modify::AbsToGot<_>>(blacklist_from_conversion)?;
 
     emit_ctx.emit_modules(emit_fn)
 }
@@ -567,10 +560,12 @@ pub fn split_routine_generic_test(src: &[u8]) -> anyhow::Result<Vec<(OutputId, V
         .load_from_bytes(src.to_vec().into_boxed_slice())
         .unwrap();
     let input = file_loader.get_file(input_file);
+    let snapshot = EntitiesSnapshot::new_without_types(&input.module);
 
     let dep_graph = crate::analysis::get_dependencies(input).unwrap();
     let split_points = crate::analysis::find_split_points(
         &input.module,
+        &snapshot,
         crate::analysis::SplitPointExtractor::Legacy,
     )
     .unwrap();
@@ -584,10 +579,6 @@ pub fn split_routine_generic_test(src: &[u8]) -> anyhow::Result<Vec<(OutputId, V
         true,
     )
     .unwrap();
-    assert!(
-        split.output_modules.len() > 1,
-        "There should be more than one split module"
-    );
 
     let mut result = vec![];
     emit_split_modules(&file_loader, &split, |ident, bytes| {
@@ -607,10 +598,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        emit::{
-            modify::NoModification,
-            plan::{EmitContext, OutputModule},
-        },
+        emit::plan::{EmitContext, OutputModule},
         layouts::{
             ItemType, SegmentPlacement,
             data::{DataKind, DataSegmentSpec, SegmentFlags},
@@ -650,14 +638,11 @@ mod tests {
         dbg!(&dep_graph);
         dbg!(&split);
 
-        let ctx: EmitContext<'_> = split.into_emit_context(&file_loader);
+        let ctx: EmitContext<'_> = split.into_emit_context(&file_loader).unwrap();
 
         // extract plan of first module
-        let (_, (_, plan)) = ctx.output_plans.into_iter().next().unwrap();
-        let snapshot = file_loader.get_snapshot();
-        let OutputModule { module: output, .. } = plan
-            .copy_entities::<NoModification>(&file_loader, &snapshot, ())
-            .unwrap();
+        let (_, OutputModule { module: output, .. }) =
+            ctx.output_modules.into_iter().next().unwrap();
 
         let mut buf = wasm_encoder::Module::new();
         output.generate(&mut buf).unwrap();

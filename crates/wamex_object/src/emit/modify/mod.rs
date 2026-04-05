@@ -1,6 +1,6 @@
+pub use abs_to_got::AbsToGot;
 use anyhow::Result;
-pub use blacklist::Blacklist;
-pub use entity_modifier::*;
+pub use blacklist::{Blacklist, IsSet};
 
 use crate::{
     SVec,
@@ -15,7 +15,6 @@ pub mod cursor;
 // pub mod start_fn_gen;
 pub mod abs_to_got;
 mod blacklist;
-mod entity_modifier;
 pub mod wasm_emitter;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

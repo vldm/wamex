@@ -11,13 +11,10 @@ use wasmparser::{GlobalType, Operator};
 use super::FixupFromRelocs;
 use crate::{
     SVec,
-    emit::{
-        modify::{
-            Cursor, OutputEntityRef, OutputRelocationEntry, Rewrite,
-            blacklist::{Blacklist, IsSet},
-            wasm_emitter::{self, MemArgOffsets},
-        },
-        plan::{AddressingMode, OutputModuleCopyPlan},
+    emit::modify::{
+        Cursor, OutputEntityRef, OutputRelocationEntry, Rewrite,
+        blacklist::{Blacklist, IsSet},
+        wasm_emitter::{self, MemArgOffsets},
     },
     index::Temp,
     linkage::reloc::{
@@ -128,13 +125,12 @@ where
 
     fn setup(
         shared: Self::SetupData,
-        plan: &OutputModuleCopyPlan,
         module: &mut crate::typed::ModuleBuilder<'src>,
     ) -> Result<Option<Self>>
     where
         Self: Sized,
     {
-        if matches!(plan.addressing, AddressingMode::Static) {
+        if !module.extra.has_got() {
             // No need to create handler if we won't convert any symbol to got-based.
             return Ok(None);
         }

@@ -1,14 +1,18 @@
 use anyhow::Result;
 
+use super::{Blacklist, blacklist::IsSet};
 use crate::{
     emit::{
-        modify::{Rewrite, cursor::Cursor},
-        plan::OutputModuleCopyPlan,
+        modify::{Rewrite, create_fixup_for_entity, cursor::Cursor},
+        plan::{AnyEntity, SourceInfo},
         relocation::resolver::OutputEntitiesResolver,
     },
     index::Temp,
     linkage::reloc::EntityRelocationEntry,
-    typed::{FileId, snapshot::EntitiesSnapshot},
+    typed::{
+        EntityBody, FileId, ImportOrDefined,
+        snapshot::{EntitiesSnapshot, FlatEntityRef},
+    },
 };
 
 mod code;
@@ -16,6 +20,114 @@ mod data;
 
 pub use code::CodeAbsToGot;
 pub use data::DataAbsToGot;
+
+pub type Artifact = (
+    Vec<<CodeAbsToGot<fn(FlatEntityRef) -> bool> as FixupFromRelocs<'static>>::ExtraData>,
+    Vec<<DataAbsToGot<fn(FlatEntityRef) -> bool> as FixupFromRelocs<'static>>::ExtraData>,
+);
+///
+/// Convert Absolute addresses to GOT entries.
+///
+pub struct AbsToGot<F>
+where
+    Blacklist<F>: IsSet,
+{
+    code_modifier: Option<CodeAbsToGot<F>>,
+    data_modifier: Option<DataAbsToGot<F>>,
+}
+impl<F> AbsToGot<F>
+where
+    Blacklist<F>: IsSet,
+{
+    pub fn setup(
+        shared: Blacklist<F>,
+        module: &mut crate::typed::ModuleBuilder<'_>,
+    ) -> Result<Self, anyhow::Error>
+    where
+        Self: Sized,
+    {
+        let code_modifier = CodeAbsToGot::setup(shared.clone(), module)?;
+        let data_modifier = DataAbsToGot::setup(shared.clone(), module)?;
+        Ok(Self {
+            code_modifier,
+            data_modifier,
+        })
+    }
+
+    pub fn modify_entity(
+        &self,
+        source_info: SourceInfo<'_>,
+        entity: AnyEntity<'_, '_>,
+    ) -> Result<Artifact, anyhow::Error> {
+        macro_rules! handle_defined {
+            (@$v:ident $def:ident, $new_ref:expr, $modifier:expr) => {
+                match ($def.as_deref_mut(), $modifier) {
+                    (ImportOrDefined::Defined(def), Some(modifier)) => {
+                        let EntityBody::Copied(body) = &mut def.body else {
+                            panic!(
+                                "Trying to modify already modified entity {id} has body {:#?}",
+                                def.body,
+                                id = source_info.source_entity
+                            );
+                        };
+                        assert!(body.fixups.is_empty());
+                        let res = create_fixup_for_entity(
+                            body,
+                            $new_ref,
+                            (source_info.input_file, source_info.snapshot),
+                            source_info.entity_relocs,
+                            modifier,
+                        )?;
+                        handle_defined!(@$v res)
+                    }
+                    _ => Ok((Vec::new(), Vec::new())),
+                }
+            };
+            (@code $res: expr) => {
+                Ok(($res, Vec::new()))
+            };
+
+            (@data $res: expr) => {
+                Ok((Vec::new(), $res))
+            };
+        }
+
+        match entity {
+            AnyEntity::Function {
+                new_ref,
+                mut entity,
+            } => {
+                handle_defined!(@code entity, new_ref, self.code_modifier.as_ref())
+            }
+            AnyEntity::DataSymbol {
+                mut entity,
+                new_ref,
+            } => {
+                handle_defined!(@data entity, new_ref, self.data_modifier.as_ref())
+            }
+            AnyEntity::Global { .. }
+            | AnyEntity::Table { .. }
+            | AnyEntity::Memory { .. }
+            | AnyEntity::Tag { .. } => Ok((Vec::new(), Vec::new())),
+        }
+    }
+
+    pub fn finish(
+        &self,
+        module: &mut crate::typed::Module<'_>,
+        resolver: &mut OutputEntitiesResolver,
+        (aggregated_code_data, aggregated_data_data): Artifact,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(modifier) = &self.code_modifier {
+            modifier.finish(module, resolver, aggregated_code_data)?;
+        }
+        if let Some(modifier) = &self.data_modifier {
+            modifier.finish(module, resolver, aggregated_data_data)?;
+        }
+        Ok(())
+    }
+}
+
 /// Implementation of modification routine.
 /// Allows adding patches to the original code based on the original relocation entries.
 ///
@@ -34,7 +146,6 @@ pub trait FixupFromRelocs<'src> {
     ///
     fn setup(
         shared: Self::SetupData,
-        plan: &OutputModuleCopyPlan,
         module: &mut crate::typed::ModuleBuilder<'src>,
     ) -> Result<Option<Self>>
     where

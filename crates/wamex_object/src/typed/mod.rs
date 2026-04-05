@@ -26,7 +26,7 @@ use crate::{
         file_db::{self, FileRelocs},
         reloc::{EntityAddressMode, EntityRelocationEntry},
     },
-    raw::{self, ImportId},
+    raw::{self, ImportId, SegmentId},
 };
 
 mod entities;
@@ -50,6 +50,19 @@ pub struct Locked<'src> {
     pub function_elements: layouts::IndirectFunctionsSealed<'src>,
 }
 
+impl Locked<'_> {
+    /// Get segment used as indirect function table, if exist.
+    ///
+    /// Current implementation will find first active segment.
+    pub fn get_indirect_fn_segment(&self) -> Option<SegmentId> {
+        self.function_elements
+            .segments
+            .iter()
+            .find(|(_, s)| s.kind.is_active())
+            .map(|(id, _)| id)
+    }
+}
+
 /// This is one of the phases of `Module` creation.
 ///
 /// At this phase one can create new entities with temp indexes,
@@ -63,6 +76,12 @@ pub struct Builder<'src> {
     pub mem_layout: layouts::MemLayoutBuilder<'src>,
     pub function_elements: layouts::IndirectFunctionsBuilder<'src>,
     pub got_info: Option<GotInfo<Temp<GlobalRef>>>,
+}
+
+impl Builder<'_> {
+    pub fn has_got(&self) -> bool {
+        self.got_info.is_some()
+    }
 }
 
 pub trait IsLocked {

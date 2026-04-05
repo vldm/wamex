@@ -30,16 +30,16 @@ pub mod parse;
 pub struct SplitPoint {
     pub module_name: String,
     pub unique_id: String,
-    import_func: FunctionRef,
-    export_func: FunctionRef,
+    import_func: FlatEntityRef,
+    export_func: FlatEntityRef,
 }
 
 impl SplitPoint {
     pub fn new(
         module_name: String,
         unique_id: String,
-        import_func: FunctionRef,
-        export_func: FunctionRef,
+        import_func: FlatEntityRef,
+        export_func: FlatEntityRef,
     ) -> Self {
         Self {
             module_name,
@@ -48,17 +48,17 @@ impl SplitPoint {
             export_func,
         }
     }
-    pub fn import_func(&self) -> FunctionRef {
+    pub fn import_func(&self) -> FlatEntityRef {
         self.import_func
     }
-    pub fn export_func(&self) -> FunctionRef {
+    pub fn export_func(&self) -> FlatEntityRef {
         self.export_func
     }
 }
 
 /// Content plan for a single emitted module.
 #[derive(Default, Clone)]
-pub struct OutputModuleInfo {
+pub struct SplitModuleInfo {
     pub defined_symbols: BTreeSet<FlatEntityRef>,
     pub imports: MiniSet<FlatEntityRef>,
     pub exports: MiniSet<FlatEntityRef>,
@@ -67,7 +67,7 @@ pub struct OutputModuleInfo {
     pub dependencies: BTreeMap<SplitModuleIdentifier, MiniSet<FlatEntityRef>>,
 }
 
-impl Debug for OutputModuleInfo {
+impl Debug for SplitModuleInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "OutputModuleInfo {{")?;
         Self::fmt_table(f, "defined_symbols", self.defined_symbols.iter())?;
@@ -79,8 +79,8 @@ impl Debug for OutputModuleInfo {
     }
 }
 
-impl OutputModuleInfo {
-    pub fn need_export(&self, symbol: &FlatEntityRef, input_func_id: FunctionRef) -> bool {
+impl SplitModuleInfo {
+    pub fn need_export(&self, symbol: &FlatEntityRef, input_func_id: FlatEntityRef) -> bool {
         // if any module linked to current function
         let static_export = self.exports.contains(symbol);
         // Or it is linked indirectly via split points
@@ -282,7 +282,7 @@ impl SplitModuleIdentifier {
 
 #[derive(Debug, Default)]
 pub struct SplitProgramInfo {
-    pub output_modules: Vec<(SplitModuleIdentifier, OutputModuleInfo)>,
+    pub output_modules: Vec<(SplitModuleIdentifier, SplitModuleInfo)>,
     pub symbol_output_module: SecondaryMap<FlatEntityRef, usize>,
 }
 
@@ -307,7 +307,7 @@ pub fn compute_split_modules(
     for (module_name, entry_points) in split_points_by_module.iter() {
         let mut roots = DepSet::new();
         for entry_point in entry_points.iter() {
-            roots.insert(snapshot.pack_ref(entry_point.export_func()));
+            roots.insert(entry_point.export_func());
         }
         let split_functions = find_reachable_deps(dep_graph, &roots);
         named_modules.push(NamedGraph::new(
@@ -318,7 +318,7 @@ pub fn compute_split_modules(
 
     let mut shared_deps = NamedGraph::calculate_shared_modules(&mut named_modules, dep_graph);
 
-    let mut split_module_contents = Vec::<(SplitModuleIdentifier, OutputModuleInfo)>::new();
+    let mut split_module_contents = Vec::<(SplitModuleIdentifier, SplitModuleInfo)>::new();
 
     split_module_contents.extend(named_modules.into_iter().map(|named_graph| {
         let imports = named_graph.imports().clone();
@@ -329,7 +329,7 @@ pub fn compute_split_modules(
         let id = SplitModuleIdentifier::Single(named_graph.module);
         (
             id,
-            OutputModuleInfo {
+            SplitModuleInfo {
                 defined_symbols: named_graph.reachable,
                 dependencies: BTreeMap::new(),
                 imports,
@@ -359,7 +359,7 @@ pub fn compute_split_modules(
         let dependencies = calculate_deps(&shared_deps, &id, &shared.imports, Some(shared_index));
         split_module_contents.push((
             id,
-            OutputModuleInfo {
+            SplitModuleInfo {
                 defined_symbols: shared.shared_deps.clone(),
                 exports: shared.exports.clone(),
                 imports: shared.imports.clone(),
@@ -489,10 +489,11 @@ mod tests {
         let info = LoadedFile::from_wasm_bytes(wasm_bytes).expect("Failed to parse wasm file");
 
         // todo: snapshot entities.
+        let snapshot = EntitiesSnapshot::new_without_types(&info.module);
 
         let dep_graph = crate::analysis::dep_graph::get_dependencies(&info)
             .expect("Failed to get dependencies");
-        let split_points = find_split_points(&info.module, SplitPointExtractor::Legacy)
+        let split_points = find_split_points(&info.module, &snapshot, SplitPointExtractor::Legacy)
             .expect("Failed to find split points");
 
         let wbg_descriptors = wbg_closures(&info.module, &dep_graph);

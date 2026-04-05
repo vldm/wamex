@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, fmt::Debug};
 use anyhow::Context;
 
 use super::SplitPoint;
-use crate::typed::Module;
+use crate::typed::{Module, snapshot::EntitiesSnapshot};
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SplitPointExtractor {
     /// Use regexp and `_wasm_split_` prefix to identify split points.
@@ -49,7 +49,11 @@ where
 pub(crate) const SPLIT_IMPORT_POSTFIX: &str = "00_import_";
 pub(crate) const SPLIT_EXPORT_POSTFIX: &str = "00_export_";
 
-fn find_split_points_with_prefix(info: &Module, prefix: &str) -> anyhow::Result<Vec<SplitPoint>> {
+fn find_split_points_with_prefix(
+    info: &Module,
+    snapshot: &EntitiesSnapshot,
+    prefix: &str,
+) -> anyhow::Result<Vec<SplitPoint>> {
     let import_map = parse_entries(
         prefix,
         SPLIT_IMPORT_POSTFIX,
@@ -65,6 +69,9 @@ fn find_split_points_with_prefix(info: &Module, prefix: &str) -> anyhow::Result<
             let export_func = export_map
                 .remove(&key)
                 .with_context(|| format!("No corresponding export for split import {key:?}"))?;
+            let import_func = snapshot.pack_ref(import_func);
+            let export_func = snapshot.pack_ref(export_func);
+
             Ok(SplitPoint::new(key.0, key.1, import_func, export_func))
         })
         .collect::<anyhow::Result<Vec<SplitPoint>>>()?;
@@ -80,23 +87,30 @@ fn find_split_points_with_prefix(info: &Module, prefix: &str) -> anyhow::Result<
     Ok(split_points)
 }
 
-pub fn find_split_points_legacy(info: &Module) -> anyhow::Result<Vec<SplitPoint>> {
-    find_split_points_with_prefix(info, "__wasm_split_00")
+pub fn find_split_points_legacy(
+    info: &Module,
+    snapshot: &EntitiesSnapshot,
+) -> anyhow::Result<Vec<SplitPoint>> {
+    find_split_points_with_prefix(info, snapshot, "__wasm_split_00")
 }
 
 pub(crate) const WAMEX_ENTRY_PREFIX: &str = "__wamex_00";
 
-fn find_split_points_wamex(info: &Module) -> anyhow::Result<Vec<SplitPoint>> {
-    find_split_points_with_prefix(info, WAMEX_ENTRY_PREFIX)
+fn find_split_points_wamex(
+    info: &Module,
+    snapshot: &EntitiesSnapshot,
+) -> anyhow::Result<Vec<SplitPoint>> {
+    find_split_points_with_prefix(info, snapshot, WAMEX_ENTRY_PREFIX)
 }
 
 #[tracing::instrument(skip_all)]
 pub fn find_split_points(
     info: &Module,
+    snapshot: &EntitiesSnapshot,
     split_point_type: SplitPointExtractor,
 ) -> anyhow::Result<Vec<SplitPoint>> {
     match split_point_type {
-        SplitPointExtractor::Legacy => find_split_points_legacy(info),
-        SplitPointExtractor::Wamex => find_split_points_wamex(info),
+        SplitPointExtractor::Legacy => find_split_points_legacy(info, snapshot),
+        SplitPointExtractor::Wamex => find_split_points_wamex(info, snapshot),
     }
 }

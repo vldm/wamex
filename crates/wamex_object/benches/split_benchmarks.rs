@@ -10,7 +10,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use wamex_object::{
     ObjectReader, analysis,
     emit::emit_split_modules,
-    typed::{FileLoader, LoadedFile, Module},
+    typed::{FileLoader, LoadedFile, Module, snapshot::EntitiesSnapshot},
 };
 
 fn load_lazy_routes_wasm() -> Vec<u8> {
@@ -81,9 +81,10 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
         let lazy_routes_wasm = load_lazy_routes_wasm();
         let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
         let info = LoadedFile::from_raw_module(module).unwrap();
+        let snapshot = EntitiesSnapshot::new_without_types(&info.module);
         let dep_graph = analysis::get_dependencies(&info).unwrap();
         let wbg_fns = analysis::wbg_closures(&info.module, &dep_graph);
-        let split_points = analysis::find_split_points_legacy(&info.module).unwrap();
+        let split_points = analysis::find_split_points_legacy(&info.module, &snapshot).unwrap();
         b.iter(|| {
             let split_program_info = analysis::compute_split_modules(
                 black_box(&info.module),
@@ -100,9 +101,10 @@ fn benchmark_compute_split_modules(c: &mut Criterion) {
         let lazy_routes_wasm = load_lazy_routes_wasm();
         let module = ObjectReader::parse(&lazy_routes_wasm).unwrap();
         let info = LoadedFile::from_raw_module(module).unwrap();
+        let snapshot = EntitiesSnapshot::new_without_types(&info.module);
         let dep_graph = analysis::get_dependencies(&info).unwrap();
         let wbg_fns = analysis::wbg_closures(&info.module, &dep_graph);
-        let split_points = analysis::find_split_points_legacy(&info.module).unwrap();
+        let split_points = analysis::find_split_points_legacy(&info.module, &snapshot).unwrap();
         b.iter(|| {
             let split_program_info = analysis::compute_split_modules(
                 black_box(&info.module),
@@ -127,7 +129,8 @@ fn benchmark_emit_modules(c: &mut Criterion) {
         let info = file_loader.get_file(file_id);
         let dep_graph = analysis::get_dependencies(info).unwrap();
         let wbg_fns = analysis::wbg_closures(&info.module, &dep_graph);
-        let split_points = analysis::find_split_points_legacy(&info.module).unwrap();
+        let snapshot = EntitiesSnapshot::new_without_types(&info.module);
+        let split_points = analysis::find_split_points_legacy(&info.module, &snapshot).unwrap();
         let split_program_info = analysis::compute_split_modules(
             &info.module,
             &dep_graph,

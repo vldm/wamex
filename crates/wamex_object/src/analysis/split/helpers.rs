@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use wamex_types::map_vec::MiniSet;
 
-use super::{ModuleIdentifier, OutputModuleInfo, SplitModuleIdentifier, SplitPoint};
+use super::{ModuleIdentifier, SplitModuleIdentifier, SplitModuleInfo, SplitPoint};
 use crate::{
     analysis::dep_graph::{DepGraph, DepSet, SharedEntry},
     typed::{
@@ -94,11 +94,11 @@ pub fn main_roots(
 
     // After adding imports/exports - remove those that are corresponding to split points
     for split_point in split_points.iter() {
-        roots.remove(&snapshot.pack_ref(split_point.export_func()));
+        roots.remove(&split_point.export_func());
 
         // remove import fn as well - because it might be used by other module, and not used by main,
         // let find_reachable_deps do the job.
-        roots.remove(&snapshot.pack_ref(split_point.import_func()));
+        roots.remove(&split_point.import_func());
     }
 
     // Add wasm-bindgen descriptors - to make sure that they will be emited into main module.
@@ -111,8 +111,8 @@ pub fn main_roots(
 
 // Merge shared modules with main module.
 pub fn merge_shared_with_main(
-    (main_id, main): &mut (SplitModuleIdentifier, OutputModuleInfo),
-    regular_modules: &[(SplitModuleIdentifier, OutputModuleInfo)],
+    (main_id, main): &mut (SplitModuleIdentifier, SplitModuleInfo),
+    regular_modules: &[(SplitModuleIdentifier, SplitModuleInfo)],
     shared: &mut Vec<SharedEntry<ModuleIdentifier>>,
 ) -> anyhow::Result<()> {
     assert_eq!(
@@ -198,8 +198,8 @@ pub fn merge_shared_with_main(
 pub fn process_special_entities(
     info: &Module,
     snapshot: &EntitiesSnapshot,
-    (main_id, main): &mut (SplitModuleIdentifier, OutputModuleInfo),
-    regular_modules: &mut [(SplitModuleIdentifier, OutputModuleInfo)],
+    (main_id, main): &mut (SplitModuleIdentifier, SplitModuleInfo),
+    regular_modules: &mut [(SplitModuleIdentifier, SplitModuleInfo)],
     shared: &mut [SharedEntry<ModuleIdentifier>],
 ) -> anyhow::Result<()> {
     assert_eq!(

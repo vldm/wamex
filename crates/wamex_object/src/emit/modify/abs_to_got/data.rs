@@ -16,7 +16,6 @@ use crate::{
             blacklist::{Blacklist, IsSet},
             wasm_emitter::Encoder,
         },
-        plan::{AddressingMode, OutputModuleCopyPlan},
         relocation::{EntityLocation, resolver::OutputEntitiesResolver},
     },
     index::Temp,
@@ -228,13 +227,12 @@ where
 
     fn setup(
         shared: Self::SetupData,
-        plan: &OutputModuleCopyPlan,
         module: &mut crate::typed::ModuleBuilder<'src>,
     ) -> Result<Option<Self>>
     where
         Self: Sized,
     {
-        if matches!(plan.addressing, AddressingMode::Static) {
+        if !module.extra.has_got() {
             // No need to create handler if we won't convert any symbol to got-based.
             return Ok(None);
         }
