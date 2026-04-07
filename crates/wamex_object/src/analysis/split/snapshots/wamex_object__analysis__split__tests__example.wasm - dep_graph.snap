@@ -642,8 +642,6 @@ expression: dep_graph_output
   -> 766 data[0:115268+28]  <".Lanon.51aa6f4db30a08e7412a135b574a635e.25"> (size=28)
   -> 767 data[0:115296+16]  <".Lanon.51aa6f4db30a08e7412a135b574a635e.26"> (size=16)
   -> 817 data[0:116336+16]  <".Lanon.850abc7070cad3aaf54fc18349b11383.2"> (size=16)
-  -> 839 <type0>
-  -> 840 <type1>
 
 28 func[28] <"std::sync::poison::mutex::Mutex<T>::lock::h21f886f1174a0319"> (size=112)
   <-P 27 func[27] <"wasm_split::ensure_loaded::{{closure}}::ha5d82907191a17ce"> (size=1228)
@@ -682,7 +680,6 @@ expression: dep_graph_output
   <-P 101 func[101] <"async_once_cell::with_lock::hf1ee30519e479ed2"> (size=122)
   -> 89 func[89] <"alloc::raw_vec::RawVecInner<A>::deallocate::he8bc1682703b1be6"> (size=118)
   -> 709 <__indirect_function_table>
-  -> 841 <type2>
 
 31 func[31] <"alloc::raw_vec::RawVec<T,A>::grow_one::h0755801e3521229c"> (size=243)
   <-P 27 func[27] <"wasm_split::ensure_loaded::{{closure}}::ha5d82907191a17ce"> (size=1228)
@@ -718,9 +715,6 @@ expression: dep_graph_output
   -> 706 <__stack_pointer>
   -> 709 <__indirect_function_table>
   -> 826 data[0:116520+26]  <".Lanon.6543075fd68f4d6599bf6aebcc45076e.0"> (size=26)
-  -> 840 <type1>
-  -> 841 <type2>
-  -> 842 <type3>
 
 36 func[36] <"alloc::rc::Rc<T,A>::drop_slow::hf01073cf31767f50"> (size=79)
   <-P 27 func[27] <"wasm_split::ensure_loaded::{{closure}}::ha5d82907191a17ce"> (size=1228)
@@ -728,7 +722,6 @@ expression: dep_graph_output
   <-P 704 func[704] <"__wasm_split_load_callback"> (size=97)
   -> 53 func[53] <"__rustc[79a240ffca3c5d2f]::__rust_dealloc"> (size=112)
   -> 709 <__indirect_function_table>
-  -> 841 <type2>
 
 37 func[37] <"core::mem::drop::h7f682309996eac29"> (size=58)
   <-P 27 func[27] <"wasm_split::ensure_loaded::{{closure}}::ha5d82907191a17ce"> (size=1228)
@@ -976,7 +969,6 @@ expression: dep_graph_output
   -> 709 <__indirect_function_table>
   -> 769 data[0:115328+38]  <".Lanon.51aa6f4db30a08e7412a135b574a635e.29"> (size=38)
   -> 770 data[0:115368+16]  <".Lanon.51aa6f4db30a08e7412a135b574a635e.30"> (size=16)
-  -> 841 <type2>
 
 62 func[62] <"core::ops::function::FnOnce::call_once{{vtable.shim}}::hdb806480babc8434"> (size=176)
   <-P 729 data[0:114572+20]  <".Lanon.8353eafc0686ece12291357d89b43616.3"> (size=20)
@@ -1010,8 +1002,6 @@ expression: dep_graph_output
   <-P 110 func[110] <"<core::cell::BorrowError as core::fmt::Display>::fmt::h656ef206c92d3360"> (size=18)
   <-P 111 func[111] <"<core::cell::BorrowMutError as core::fmt::Display>::fmt::hbb3292f24f1d586f"> (size=18)
   -> 709 <__indirect_function_table>
-  -> 843 <type4>
-  -> 844 <type5>
 
 67 func[67] <"__wasm_split_00static_str00_export_776d8e51aac0782b17e57d45872c52d7_static_str"> (size=40)
   -> 29 func[29] <"dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8"> (size=4957)
@@ -1132,8 +1122,6 @@ expression: dep_graph_output
   <-P 118 func[118] <"core::fmt::Write::write_fmt::h2f95486555028088"> (size=31)
   -> 706 <__stack_pointer>
   -> 709 <__indirect_function_table>
-  -> 843 <type4>
-  -> 844 <type5>
 
 83 func[83] <"core::result::unwrap_failed::h83f5069e4f517ac9"> (size=143)
   <-P 41 func[41] <"<async_once_cell::QuickInitGuard as core::ops::drop::Drop>::drop::h57d7b78401cc0fea"> (size=292)
@@ -1148,7 +1136,6 @@ expression: dep_graph_output
   <-P 750 data[0:114936+16]  <".Lanon.79b81406656296db68a0b7034c081fc6.41"> (size=16)
   -> 709 <__indirect_function_table>
   -> 744 data[0:114844+5]  <".Lanon.79b81406656296db68a0b7034c081fc6.2"> (size=5)
-  -> 844 <type5>
 
 85 func[85] <"core::ptr::drop_in_place<alloc::string::String>::h58b386670e9fd7a3"> (size=32)
   <-P 745 data[0:114852+24]  <".Lanon.79b81406656296db68a0b7034c081fc6.7"> (size=24)
@@ -1193,7 +1180,6 @@ expression: dep_graph_output
   -> 759 data[0:115138+10]  <".Lanon.51aa6f4db30a08e7412a135b574a635e.16"> (size=10)
   -> 760 data[0:115148+8]  <".Lanon.51aa6f4db30a08e7412a135b574a635e.18"> (size=8)
   -> 761 data[0:115156+5]  <".Lanon.51aa6f4db30a08e7412a135b574a635e.20"> (size=5)
-  -> 844 <type5>
 
 92 func[92] <"<bool as core::fmt::Debug>::fmt::h77532519fa8c6cbc"> (size=15)
   <-P 91 func[91] <"<&T as core::fmt::Debug>::fmt::h61c41d29e55a25bc"> (size=269)
@@ -1211,8 +1197,6 @@ expression: dep_graph_output
   -> 790 data[0:115699+2]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.261"> (size=2)
   -> 791 data[0:115701+3]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.262"> (size=3)
   -> 792 data[0:115704+2]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.263"> (size=2)
-  -> 843 <type4>
-  -> 844 <type5>
 
 94 func[94] <"core::fmt::num::<impl core::fmt::Debug for usize>::fmt::hb041f9c4e8f4ee42"> (size=644)
   <-P 91 func[91] <"<&T as core::fmt::Debug>::fmt::h61c41d29e55a25bc"> (size=269)
@@ -1233,15 +1217,12 @@ expression: dep_graph_output
   -> 709 <__indirect_function_table>
   -> 793 data[0:115706+1]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.267"> (size=1)
   -> 794 data[0:115707+2]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.268"> (size=2)
-  -> 844 <type5>
 
 97 func[97] <"core::fmt::Formatter::pad_integral::h4ada957bfa3d7062"> (size=638)
   <-P 94 func[94] <"core::fmt::num::<impl core::fmt::Debug for usize>::fmt::hb041f9c4e8f4ee42"> (size=644)
   <-P 95 func[95] <"<*mut T as core::fmt::Debug>::fmt::h6dc6c3d0c495d6c8"> (size=233)
   -> 105 func[105] <"core::fmt::Formatter::pad_integral::write_prefix::h2ab7eaf03dfcbbed"> (size=73)
   -> 709 <__indirect_function_table>
-  -> 843 <type4>
-  -> 844 <type5>
 
 98 func[98] <"<bool as core::fmt::Display>::fmt::hbce3ae6568c4572c"> (size=45)
   <-P 92 func[92] <"<bool as core::fmt::Debug>::fmt::h77532519fa8c6cbc"> (size=15)
@@ -1283,7 +1264,6 @@ expression: dep_graph_output
   -> 772 data[0:115398+5]  <".Lanon.51aa6f4db30a08e7412a135b574a635e.34"> (size=5)
   -> 793 data[0:115706+1]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.267"> (size=1)
   -> 794 data[0:115707+2]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.268"> (size=2)
-  -> 844 <type5>
 
 104 func[104] <"__rustc[79a240ffca3c5d2f]::rust_begin_unwind"> (size=56)
   <-P 80 func[80] <"core::panicking::panic_fmt::h95bef13e22b90182"> (size=54)
@@ -1293,8 +1273,6 @@ expression: dep_graph_output
 105 func[105] <"core::fmt::Formatter::pad_integral::write_prefix::h2ab7eaf03dfcbbed"> (size=73)
   <-P 97 func[97] <"core::fmt::Formatter::pad_integral::h4ada957bfa3d7062"> (size=638)
   -> 709 <__indirect_function_table>
-  -> 843 <type4>
-  -> 844 <type5>
 
 106 func[106] <"core::panicking::assert_failed_inner::hbc821832ff9b282b"> (size=387)
   <-P 90 func[90] <"core::panicking::assert_failed::h38eb03705053ebb7"> (size=58)
@@ -1313,7 +1291,6 @@ expression: dep_graph_output
   <-P 83 func[83] <"core::result::unwrap_failed::h83f5069e4f517ac9"> (size=143)
   <-P 106 func[106] <"core::panicking::assert_failed_inner::hbc821832ff9b282b"> (size=387)
   -> 709 <__indirect_function_table>
-  -> 843 <type4>
 
 108 func[108] <"<core::fmt::Arguments as core::fmt::Display>::fmt::h51c4f049cf1ece41"> (size=20)
   <-P 106 func[106] <"core::panicking::assert_failed_inner::hbc821832ff9b282b"> (size=387)
@@ -1364,14 +1341,11 @@ expression: dep_graph_output
   <-P 787 data[0:115668+24]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.258"> (size=24)
   -> 709 <__indirect_function_table>
   -> 788 data[0:115692+4]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.259"> (size=4)
-  -> 844 <type5>
 
 117 func[117] <"<core::fmt::builders::PadAdapter as core::fmt::Write>::write_char::hd1e2df70e1b29341"> (size=96)
   <-P 787 data[0:115668+24]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.258"> (size=24)
   -> 709 <__indirect_function_table>
   -> 788 data[0:115692+4]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.259"> (size=4)
-  -> 843 <type4>
-  -> 844 <type5>
 
 118 func[118] <"core::fmt::Write::write_fmt::h2f95486555028088"> (size=31)
   <-P 787 data[0:115668+24]  <".Lanon.7eca65ef36bb00ab9406ec06b65577ca.258"> (size=24)
@@ -2094,7 +2068,6 @@ expression: dep_graph_output
   -> 709 <__indirect_function_table>
   -> 802 data[0:115976+16]  <".Lanon.1ff6891908093a1fe44a9c9d4c56e10b.1"> (size=16)
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 845 <type6>
 
 173 func[173] <"__wbindgen_describe___wbg_forEach_dacccf1786d50f5f"> (size=130)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -2109,7 +2082,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 846 <type7>
 
 175 func[175] <"__wbindgen_describe___wbg_includes_4d64b03cd650dd50"> (size=80)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -2141,7 +2113,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 847 <type8>
 
 182 func[182] <"__wbindgen_describe___wbg_of_894f51209b51cdf4"> (size=70)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -2196,7 +2167,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 843 <type4>
 
 194 func[194] <"__wbindgen_describe___wbg_splice_34dcf13caf5e72d4"> (size=84)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -2530,7 +2500,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 842 <type3>
 
 273 func[273] <"__wbindgen_describe___wbg_get_4e6b9f81dda2b9d8"> (size=72)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -3171,7 +3140,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 846 <type7>
 
 420 func[420] <"__wbindgen_describe___wbg_byteLength_c17240808edf2660"> (size=56)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -3233,7 +3201,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 846 <type7>
 
 434 func[434] <"__wbindgen_describe___wbg_byteLength_4b0c4d002b6b9d03"> (size=56)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -3564,7 +3531,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 848 <type9>
 
 513 func[513] <"__wbindgen_describe___wbg_byteLength_7314dcd3963f6228"> (size=56)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -3625,7 +3591,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 849 <type10>
 
 527 func[527] <"__wbindgen_describe___wbg_byteLength_9b3b854b1d662581"> (size=56)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -3687,7 +3652,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 850 <type11>
 
 541 func[541] <"__wbindgen_describe___wbg_byteLength_1224d74e3e3127bd"> (size=56)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -3816,14 +3780,12 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 851 <type12>
 
 567 func[567] <"wasm_bindgen::convert::closures::invoke3_mut::h4b953e2c292f0a45"> (size=48)
   <-P 165 func[165] <"<&mut T as wasm_bindgen::describe::WasmDescribe>::describe::h564e1d7e3b1b99aa"> (size=76)
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 847 <type8>
 
 568 func[568] <"__wbindgen_describe___wbg_construct_8bab24d23d9a96ef"> (size=70)
   -> 7 func[7] <"wasm_bindgen::__wbindgen_describe::h61a994b93b07dc42"> (size=0)
@@ -4273,7 +4235,6 @@ expression: dep_graph_output
   -> 834 data[2:116635+4]  <"std::panicking::panic_count::GLOBAL_PANIC_COUNT::h8ac90f3d55706855"> (size=4)
   -> 836 data[2:117091+4]  <"std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.0"> (size=4)
   -> 837 data[2:117095+1]  <"std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.1"> (size=1)
-  -> 840 <type1>
 
 663 func[663] <"__rustc[79a240ffca3c5d2f]::rust_panic"> (size=3)
   <-P 662 func[662] <"std::panicking::rust_panic_with_hook::h040aa1598efd68d7"> (size=153)
@@ -4288,7 +4249,6 @@ expression: dep_graph_output
   -> 706 <__stack_pointer>
   -> 709 <__indirect_function_table>
   -> 808 data[0:116136+11]  <".Lanon.34e2a803857b49632d1110a535995711.103"> (size=11)
-  -> 844 <type5>
 
 666 func[666] <"std::sys::backtrace::__rust_end_short_backtrace::h5e5c59d3dbd07730"> (size=11)
   <-P 104 func[104] <"__rustc[79a240ffca3c5d2f]::rust_begin_unwind"> (size=56)
@@ -4324,7 +4284,6 @@ expression: dep_graph_output
   -> 815 data[0:116312+8]  <".Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.9"> (size=8)
   -> 816 data[0:116320+16]  <".Lanon.d1cbb9e125cb8d89af7486d0a3beeb3f.10"> (size=16)
   -> 827 data[1:116554+28]  <"wasm_bindgen::externref::HEAP_SLAB::h4a3669ba03799398"> (size=28)
-  -> 841 <type2>
 
 671 func[671] <"core::ptr::drop_in_place<core::result::Result<(),core::cell::Cell<wasm_bindgen::externref::Slab>>>::hc6123c2479069e5d"> (size=33)
   <-P 670 func[670] <"<once_cell::unsync::Lazy<T,F> as core::ops::deref::Deref>::deref::h6644cb9f239593f5"> (size=360)
@@ -4374,7 +4333,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 840 <type1>
 
 682 func[682] <"std::sys::thread_local::no_threads::LazyStorage<T>::initialize::hb198e292a1c7ee78"> (size=608)
   <-P 44 func[44] <"wasm_bindgen_futures::task::singlethread::Task::spawn::h891806e444e79b53"> (size=147)
@@ -4415,7 +4373,6 @@ expression: dep_graph_output
   <-P 696 func[696] <"<dyn core::ops::function::FnMut<(A,)>+Output = R as wasm_bindgen::closure::WasmClosure>::describe::destroy::h943753811d8fd634"> (size=20)
   -> 53 func[53] <"__rustc[79a240ffca3c5d2f]::__rust_dealloc"> (size=112)
   -> 709 <__indirect_function_table>
-  -> 841 <type2>
 
 686 func[686] <"wasm_bindgen_futures::queue::Queue::schedule_task::hc185ccc7bc638d99"> (size=218)
   <-P 44 func[44] <"wasm_bindgen_futures::task::singlethread::Task::spawn::h891806e444e79b53"> (size=147)
@@ -4456,7 +4413,6 @@ expression: dep_graph_output
   -> 709 <__indirect_function_table>
   -> 819 data[0:116368+16]  <".Lanon.850abc7070cad3aaf54fc18349b11383.8"> (size=16)
   -> 825 data[0:116504+16]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.5"> (size=16)
-  -> 843 <type4>
 
 691 func[691] <"core::ptr::drop_in_place<core::option::Option<wasm_bindgen_futures::task::singlethread::Inner>>::hec3ee511ca1e37e7"> (size=102)
   <-P 44 func[44] <"wasm_bindgen_futures::task::singlethread::Task::spawn::h891806e444e79b53"> (size=147)
@@ -4464,7 +4420,6 @@ expression: dep_graph_output
   <-P 692 func[692] <"alloc::rc::Rc<T,A>::drop_slow::hd5c55890b614016e"> (size=56)
   -> 53 func[53] <"__rustc[79a240ffca3c5d2f]::__rust_dealloc"> (size=112)
   -> 709 <__indirect_function_table>
-  -> 841 <type2>
 
 692 func[692] <"alloc::rc::Rc<T,A>::drop_slow::hd5c55890b614016e"> (size=56)
   <-P 684 func[684] <"alloc::rc::Rc<T,A>::drop_slow::hfd96c1a6e646f832"> (size=294)
@@ -4489,7 +4444,6 @@ expression: dep_graph_output
   -> 45 func[45] <"wasm_bindgen::throw_str::h79bfa6c54192c470"> (size=13)
   -> 709 <__indirect_function_table>
   -> 822 data[0:116416+50]  <".Lanon.d8aea96bde7621720d8eebb0a9215221.0"> (size=50)
-  -> 840 <type1>
 
 696 func[696] <"<dyn core::ops::function::FnMut<(A,)>+Output = R as wasm_bindgen::closure::WasmClosure>::describe::destroy::h943753811d8fd634"> (size=20)
   <-P 694 func[694] <"wasm_bindgen::closure::Closure<T>::wrap::describe::h1f5765ee711a6b80"> (size=94)
@@ -4530,7 +4484,6 @@ expression: dep_graph_output
 704 func[704] <"__wasm_split_load_callback"> (size=97)
   -> 36 func[36] <"alloc::rc::Rc<T,A>::drop_slow::hf01073cf31767f50"> (size=79)
   -> 709 <__indirect_function_table>
-  -> 841 <type2>
 
 705 func[705] <"memcmp"> (size=74)
   <-P 46 func[46] <"wasm_bindgen_futures::future_to_promise::{{closure}}::{{closure}}::hf8b48fabfb2e0c9e"> (size=1434)
@@ -5126,76 +5079,3 @@ expression: dep_graph_output
   <-P 57 func[57] <"js_sys::Function::call1::hd57248792da1491f"> (size=70)
   <-P 633 func[633] <"std::sys::thread_local::no_threads::LazyStorage<T>::initialize::h4f7002aa5f3f7bb7"> (size=604)
   <-P 680 func[680] <"__wbindgen_exn_store"> (size=20)
-
-839 <type0>
-  <-P 27 func[27] <"wasm_split::ensure_loaded::{{closure}}::ha5d82907191a17ce"> (size=1228)
-
-840 <type1>
-  <-P 27 func[27] <"wasm_split::ensure_loaded::{{closure}}::ha5d82907191a17ce"> (size=1228)
-  <-P 35 func[35] <"<wasm_split::SplitLoaderFuture as core::future::future::Future>::poll::h23c6e3099f00b525"> (size=327)
-  <-P 662 func[662] <"std::panicking::rust_panic_with_hook::h040aa1598efd68d7"> (size=153)
-  <-P 681 func[681] <"wasm_bindgen::convert::closures::invoke1_mut::hd1a74001708cb998"> (size=44)
-  <-P 695 func[695] <"<dyn core::ops::function::FnMut<(A,)>+Output = R as wasm_bindgen::closure::WasmClosure>::describe::invoke::h8666a9951175ca27"> (size=44)
-
-841 <type2>
-  <-P 30 func[30] <"core::ptr::drop_in_place<core::option::Option<alloc::vec::Vec<core::task::wake::Waker>>>::h43156b5ad0e71cfd"> (size=103)
-  <-P 35 func[35] <"<wasm_split::SplitLoaderFuture as core::future::future::Future>::poll::h23c6e3099f00b525"> (size=327)
-  <-P 36 func[36] <"alloc::rc::Rc<T,A>::drop_slow::hf01073cf31767f50"> (size=79)
-  <-P 61 func[61] <"<async_once_cell::QueueHead as core::ops::drop::Drop>::drop::h7992b46f9eb4cff0"> (size=230)
-  <-P 670 func[670] <"<once_cell::unsync::Lazy<T,F> as core::ops::deref::Deref>::deref::h6644cb9f239593f5"> (size=360)
-  <-P 685 func[685] <"core::ptr::drop_in_place<alloc::boxed::Box<dyn core::ops::function::FnMut<(wasm_bindgen::JsValue,)>+Output = ()>>::h3c782d2769856525"> (size=60)
-  <-P 691 func[691] <"core::ptr::drop_in_place<core::option::Option<wasm_bindgen_futures::task::singlethread::Inner>>::hec3ee511ca1e37e7"> (size=102)
-  <-P 704 func[704] <"__wasm_split_load_callback"> (size=97)
-
-842 <type3>
-  <-P 35 func[35] <"<wasm_split::SplitLoaderFuture as core::future::future::Future>::poll::h23c6e3099f00b525"> (size=327)
-  <-P 272 func[272] <"wasm_bindgen::convert::closures::invoke2_mut::h2556a9672893fdf5"> (size=46)
-
-843 <type4>
-  <-P 66 func[66] <"core::fmt::Formatter::pad::hd19c0bc035513691"> (size=1071)
-  <-P 82 func[82] <"core::fmt::write::hb85a3dd9b171f7ca"> (size=653)
-  <-P 93 func[93] <"core::fmt::builders::DebugStruct::field::hf5f0e10c0d23e50d"> (size=425)
-  <-P 97 func[97] <"core::fmt::Formatter::pad_integral::h4ada957bfa3d7062"> (size=638)
-  <-P 105 func[105] <"core::fmt::Formatter::pad_integral::write_prefix::h2ab7eaf03dfcbbed"> (size=73)
-  <-P 107 func[107] <"<&T as core::fmt::Debug>::fmt::h72573d4c59e2292e"> (size=28)
-  <-P 117 func[117] <"<core::fmt::builders::PadAdapter as core::fmt::Write>::write_char::hd1e2df70e1b29341"> (size=96)
-  <-P 193 func[193] <"wasm_bindgen::convert::closures::invoke1_mut::hcd57c69cff56432c"> (size=44)
-  <-P 690 func[690] <"wasm_bindgen_futures::queue::QueueState::run_all::h47ad66020c546356"> (size=403)
-
-844 <type5>
-  <-P 66 func[66] <"core::fmt::Formatter::pad::hd19c0bc035513691"> (size=1071)
-  <-P 82 func[82] <"core::fmt::write::hb85a3dd9b171f7ca"> (size=653)
-  <-P 84 func[84] <"<core::fmt::Error as core::fmt::Debug>::fmt::h7dde34acca5f97cb"> (size=34)
-  <-P 91 func[91] <"<&T as core::fmt::Debug>::fmt::h61c41d29e55a25bc"> (size=269)
-  <-P 93 func[93] <"core::fmt::builders::DebugStruct::field::hf5f0e10c0d23e50d"> (size=425)
-  <-P 96 func[96] <"core::fmt::builders::DebugStruct::finish::h111fe3070a9c5829"> (size=139)
-  <-P 97 func[97] <"core::fmt::Formatter::pad_integral::h4ada957bfa3d7062"> (size=638)
-  <-P 103 func[103] <"<async_once_cell::QuickInitGuard as core::fmt::Debug>::fmt::h1035a711cfb7884a"> (size=279)
-  <-P 105 func[105] <"core::fmt::Formatter::pad_integral::write_prefix::h2ab7eaf03dfcbbed"> (size=73)
-  <-P 116 func[116] <"<core::fmt::builders::PadAdapter as core::fmt::Write>::write_str::h0e98855b968ab952"> (size=607)
-  <-P 117 func[117] <"<core::fmt::builders::PadAdapter as core::fmt::Write>::write_char::hd1e2df70e1b29341"> (size=96)
-  <-P 665 func[665] <"<std::thread::local::AccessError as core::fmt::Debug>::fmt::h61557c28914c1fe4"> (size=102)
-
-845 <type6>
-  <-P 172 func[172] <"wasm_bindgen::convert::closures::invoke3_mut::h0072925685958a8b"> (size=188)
-
-846 <type7>
-  <-P 174 func[174] <"wasm_bindgen::convert::closures::invoke3_mut::h246e5313dcbfdd5c"> (size=48)
-  <-P 419 func[419] <"wasm_bindgen::convert::closures::invoke3_mut::h2df57963bdcedcbf"> (size=48)
-  <-P 433 func[433] <"wasm_bindgen::convert::closures::invoke3_mut::h71078c96f517ee56"> (size=48)
-
-847 <type8>
-  <-P 181 func[181] <"wasm_bindgen::convert::closures::invoke3_mut::hf59559632ae23775"> (size=48)
-  <-P 567 func[567] <"wasm_bindgen::convert::closures::invoke3_mut::h4b953e2c292f0a45"> (size=48)
-
-848 <type9>
-  <-P 512 func[512] <"wasm_bindgen::convert::closures::invoke3_mut::h43c2837aea1a4e10"> (size=48)
-
-849 <type10>
-  <-P 526 func[526] <"wasm_bindgen::convert::closures::invoke3_mut::h0cc55e509ddaa622"> (size=48)
-
-850 <type11>
-  <-P 540 func[540] <"wasm_bindgen::convert::closures::invoke3_mut::h1e4386a3091e9cde"> (size=48)
-
-851 <type12>
-  <-P 566 func[566] <"wasm_bindgen::convert::closures::invoke4_mut::he154e46fbe25eb66"> (size=50)

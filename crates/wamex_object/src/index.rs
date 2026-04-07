@@ -466,6 +466,21 @@ impl<Idx: TempIndex> Temp<Idx> {
         }
     }
 }
+impl<T> Default for Temp<T> {
+    fn default() -> Self {
+        Self(u32::MAX, std::marker::PhantomData)
+    }
+}
+
+impl<T> ReservedValue for Temp<T> {
+    fn reserved_value() -> Self {
+        Self(u32::MAX, std::marker::PhantomData)
+    }
+
+    fn is_reserved_value(&self) -> bool {
+        self.0 == u32::MAX
+    }
+}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct WithStart<Idx, Val> {

@@ -11,14 +11,17 @@ use wasmparser::FuncType;
 
 use crate::{
     SVec,
-    analysis::{SplitModuleInfo, SplitPoint, SplitProgramInfo},
+    analysis::{SplitModuleIdentifier, SplitModuleInfo, SplitPoint, SplitProgramInfo},
     emit::{
         modify::{AbsToGot, Blacklist, IsSet, abs_to_got},
-        plan::{AnyEntity, EmitContext, GotInfo, Merge, OutputModule, OutputPlan},
+        plan::{AnyEntity, DyLinkInfo, EmitContext, GotInfo, Merge, OutputModule, OutputPlan},
         relocation::EntityLocation,
     },
     index::Temp,
-    layouts::{ElementItemId, ElementKind},
+    layouts::{
+        ElementInTable, ElementItemId, ElementKind, ElementSegmentSpec, SegmentPlacement,
+        VirtualSpaceId,
+    },
     typed::{
         EntityBody, EntityType, ExportNames, FileId, FileLoader, FunctionRef, GlobalRef,
         ImportOrDefined, ImportedEntity, Module, TableRef, TempEntityKind,
@@ -36,9 +39,7 @@ enum GotConverter<F>
 where
     Blacklist<F>: IsSet,
 {
-    Static {
-        split_points: Vec<SplitPoint>,
-    },
+    Static,
     NotInitted {
         blacklist: Blacklist<F>,
         main_layout: IndirectFnLayout,
@@ -61,7 +62,7 @@ struct TrampolineCalculated {
     sp_index: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TrampolineDeclared {
     flat_entity: FlatEntityRef,
     src_location: EntityLocation,
@@ -73,14 +74,14 @@ struct TrampolineDeclared {
     extra: ExtraExport,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct TrampolineCreated {
     // Function ref of created trampoline
     defined_func: Temp<FunctionRef>,
     src_ref: FlatEntityRef,
 }
 
-enum TrampolineState {
+enum TrampolinesState {
     Declared {
         // List of external used split points, that should be called as `call_indirect` instructions
         // (so we need to create trampolines for them and link with original `FlatEntityRef` for relocations).
@@ -121,7 +122,7 @@ where
 
     // List of external used split points, that should be called as `call_indirect` instructions
     // (so we need to create trampolines for them and link with original `FlatEntityRef` for relocations).
-    trampoline_fns: TrampolineState,
+    trampoline_fns: TrampolinesState,
 
     /// Track of newly created entities that have reference to input modules
     tmp_refs: Vec<(EntityLocation, TempEntityKind)>,
@@ -162,9 +163,7 @@ impl SplitModulePlan<fn(FlatEntityRef) -> bool> {
             snapshot,
             input_files,
             info,
-            GotConverter::Static {
-                split_points: split_points.clone(),
-            },
+            GotConverter::Static,
             dep_info,
             |r| split_points.iter().any(|sp| sp.import_func() == r),
         )
@@ -178,15 +177,20 @@ where
     pub fn new_submodule(
         snapshot: &snapshot::MultiSnapshot,
         input_files: &FileLoader,
-        info: &SplitModuleInfo,
+        (id, info): &(SplitModuleIdentifier, SplitModuleInfo),
         dep_info: &SecondaryMap<FlatEntityRef, usize>,
         split_points: Vec<SplitPoint>,
         blacklist: Blacklist<F>,
         static_layout: IndirectFnLayout,
     ) -> Self {
-        assert!(
-            !info.split_points.is_empty(),
-            "Submodule should have at least one split point"
+        let dynamic = if !info.split_points.is_empty() {
+            "dynamic"
+        } else {
+            "static"
+        };
+        log::debug!(
+            "Creating plan for {dynamic} module {id} with {} split points",
+            info.split_points.len()
         );
         Self::new_inner(
             snapshot,
@@ -258,8 +262,6 @@ where
                 let loc = snapshot.unpack_ref(*import);
                 let module = &input_files.get_file(loc.file_id).module;
                 let name = module.get_name(loc.entity).to_string();
-                dbg!(&loc);
-                dbg!(&name);
                 let entity_ty = module
                     .get_type(loc.entity)
                     .expect("Entity should have type")
@@ -271,7 +273,7 @@ where
         Self {
             entities,
             static_imports,
-            trampoline_fns: TrampolineState::Declared {
+            trampoline_fns: TrampolinesState::Declared {
                 trampoline_fns: dyn_import_fns,
             },
             is_main: got_converter,
@@ -283,7 +285,7 @@ where
     /// Create trampoline function without body
     /// - body will be filled on finish with call_indirect to static index.
     ///
-    fn create_trampoline(
+    fn declare_trampoline(
         trampoline: &TrampolineDeclared,
         module: &mut crate::typed::ModuleBuilder<'_>,
     ) -> TrampolineCreated {
@@ -304,6 +306,79 @@ where
             src_ref: trampoline.flat_entity,
             defined_func: new_defined_ref,
         }
+    }
+
+    /// Add segment with initialisation of exported split points.
+    fn add_export_init_segment(
+        module: &mut crate::typed::ModuleBuilder<'_>,
+        sp_exports: &[Export],
+    ) {
+        // Get first virtual space
+        // Add virtual space with this table ref,
+        let vs = module
+            .extra
+            .get_indirect_fn_vs()
+            .expect("Indirect function table should be created");
+
+        let function_elements = &mut module.extra.function_elements;
+        let vs = &function_elements.virtual_spaces[vs];
+        let table_ref = vs.table().expect("Virtual space should be active");
+
+        for Export {
+            defined_ref,
+            sp_index,
+        } in sp_exports.iter()
+        {
+            log::trace!(
+                "Adding export init for split point {defined_ref} with index {sp_index} in indirect function table"
+            );
+
+            let location = SegmentPlacement::ConstantOffset(*sp_index as u32);
+            // adding as new virtual space will prevent it future merging.
+            let new_space = function_elements.virtual_spaces.push(ElementKind::Active {
+                table_ref,
+                location,
+            });
+            let new_segment = function_elements.segments.push(ElementSegmentSpec {
+                vs_id: new_space,
+                name: format!("export_init_{sp_index}").into(),
+            });
+            function_elements.items.push(ElementInTable {
+                segment_id: new_segment,
+                item: *defined_ref,
+            })
+        }
+    }
+    fn fill_trampolines(
+        &self,
+        trampolines: &TrampolinesState,
+        module: &mut crate::typed::Module<'_>,
+        main_layout: &IndirectFnLayout,
+    ) -> Result<()> {
+        let TrampolinesState::Created { trampoline_fns } = trampolines else {
+            panic!("Trampolines should be create before finish");
+        };
+        let indirect_fn_segment = module
+            .extra
+            .get_indirect_fn_segment()
+            .expect("Indirect function segment should be created");
+
+        let table_index = match module.extra.function_elements.segments[indirect_fn_segment].kind {
+            ElementKind::Active { table_ref, .. } => table_ref,
+            _ => panic!("Indirect function segment should be active"),
+        };
+
+        // Fill bodies with call_indirect to corresponding index in indirect function table.
+        let fill = main_layout.calculate_trampolines(trampoline_fns.clone());
+        for trampoline in fill {
+            Self::add_trampoline_body(
+                module,
+                module.functions.stable_id(trampoline.external_ref),
+                trampoline.sp_index,
+                table_index,
+            )?;
+        }
+        Ok(())
     }
     ///
     /// Fill trampoline body with call_indirect to corresponding split point index.
@@ -374,7 +449,7 @@ where
             self.tmp_refs.push((*loc, tmp_ref));
         }
         match &mut self.is_main {
-            GotConverter::Static { .. } => {}
+            GotConverter::Static => {}
             GotConverter::Initted { .. } => {
                 panic!("Called setup for already initted module")
             }
@@ -395,7 +470,7 @@ where
         };
 
         match self.trampoline_fns {
-            TrampolineState::Declared { ref trampoline_fns } => {
+            TrampolinesState::Declared { ref trampoline_fns } => {
                 let created_trampolines = trampoline_fns
                     .iter()
                     .map(|trampoline| {
@@ -404,13 +479,13 @@ where
                             src_location = trampoline.src_location,
                             extra = trampoline.extra
                         );
-                        let t = Self::create_trampoline(trampoline, module);
+                        let t = Self::declare_trampoline(trampoline, module);
                         // push ref to preserve original relocation targets.
                         self.tmp_refs.push((trampoline.src_location, TempEntityKind::Function(t.defined_func)));
                         t
                     })
                     .collect();
-                self.trampoline_fns = TrampolineState::Created {
+                self.trampoline_fns = TrampolinesState::Created {
                     trampoline_fns: created_trampolines,
                 };
             }
@@ -430,6 +505,7 @@ where
     ) -> anyhow::Result<Self::Artifacts> {
         let mut split_res = SplitModuleResult::new();
 
+        // Process extra data
         if let ExtraExport::AddExport(name) = &extra_data {
             match &mut entity {
                 AnyEntity::Function { entity, .. } => {
@@ -453,90 +529,68 @@ where
             }
         }
 
+        let GotConverter::Initted {
+            main_layout,
+            sp_exports,
+            converter,
+        } = &self.is_main
+        else {
+            return Ok(split_res);
+        };
+
+        // Convert to got
+        split_res
+            .abs_to_got_res
+            .merge(converter.modify_entity(source_info, entity.reborrow())?);
+
+        // find export split points
         let AnyEntity::Function {
             new_ref: fn_ref, ..
         } = entity
         else {
             return Ok(split_res);
         };
-
-        if let GotConverter::Initted {
-            main_layout,
-            sp_exports,
-            converter,
-        } = &self.is_main
-        {
-            // Convert to got
-            let res = converter.modify_entity(source_info, entity)?;
-            split_res.abs_to_got_res.merge(res);
-            // find export split points
-            if sp_exports.contains(&source_info.source_flat) {
-                split_res.sp_defined_exports.push(Export {
-                    defined_ref: fn_ref,
-                    sp_index: main_layout
-                        .find_export_fn(source_info.source_flat)
-                        .expect("Exported split point should be in main layout"),
-                });
-            }
+        if sp_exports.contains(&source_info.source_flat) {
+            split_res.sp_defined_exports.push(Export {
+                defined_ref: fn_ref,
+                sp_index: main_layout
+                    .find_export_fn(source_info.source_flat)
+                    .expect("Exported split point should be in main layout"),
+            });
         }
 
         Ok(split_res)
     }
     fn before_lock(
         &mut self,
-        _module: &mut crate::typed::ModuleBuilder<'src>,
-        _aggregated_data: &Self::Artifacts,
+        module: &mut crate::typed::ModuleBuilder<'src>,
+        aggregated_data: &Self::Artifacts,
     ) -> anyhow::Result<()> {
+        Self::add_export_init_segment(module, &aggregated_data.sp_defined_exports);
         Ok(())
     }
     fn finish(
-        self,
+        &mut self,
         module: &mut crate::typed::Module<'src>,
         artifacts: Self::Artifacts,
         resolver: &mut crate::emit::relocation::resolver::OutputEntitiesResolver,
     ) -> anyhow::Result<()> {
-        for (loc, tmp_ref) in self.tmp_refs {
+        for (loc, tmp_ref) in &self.tmp_refs {
             let tmp_ref = tmp_ref.to_stable(module);
-            resolver.add_entity_mapping(loc, tmp_ref);
+            resolver.add_entity_mapping(*loc, tmp_ref);
         }
 
-        let TrampolineState::Created { trampoline_fns } = self.trampoline_fns else {
-            panic!("Trampolines should be create before finish");
-        };
-
-        match self.is_main {
+        match &self.is_main {
             GotConverter::Initted {
                 main_layout,
                 converter,
-                sp_exports,
+                ..
             } => {
                 converter.finish(module, resolver, artifacts.abs_to_got_res)?;
-                // TODO: generate segment of elements with sp_exports initialisation
 
-                let indirect_fn_segment = module
-                    .extra
-                    .get_indirect_fn_segment()
-                    .expect("Indirect function segment should be created");
-
-                let table_index =
-                    match module.extra.function_elements.segments[indirect_fn_segment].kind {
-                        ElementKind::Active { table_ref, .. } => table_ref,
-                        _ => panic!("Indirect function segment should be active"),
-                    };
-
-                // Fill bodies with call_indirect to corresponding index in indirect function table.
-                let fill = main_layout.calculate_trampolines(trampoline_fns);
-                for trampoline in fill {
-                    Self::add_trampoline_body(
-                        module,
-                        module.functions.stable_id(trampoline.external_ref),
-                        trampoline.sp_index,
-                        table_index,
-                    )?;
-                }
+                self.fill_trampolines(&self.trampoline_fns, module, main_layout)?;
             }
-            GotConverter::Static { split_points } => {
-                log::error!("Implement main trampoines calculation");
+            GotConverter::Static => {
                 return Ok(());
             }
             _ => panic!("Plan is not initted"),
@@ -573,7 +627,7 @@ impl SplitProgramInfo {
                 .collect(),
         );
 
-        let main = SplitModulePlan::new_main(
+        let mut main_plan = SplitModulePlan::new_main(
             &snapshot,
             input_files,
             main_info,
@@ -581,17 +635,32 @@ impl SplitProgramInfo {
             split_points.clone(),
         );
 
-        let output = OutputModule::<'src>::apply_plan(main, input_files, &snapshot)?;
+        let mut output = OutputModule::<'src>::from_copy_plan(
+            &mut main_plan,
+            input_files,
+            &snapshot,
+            DyLinkInfo::Static,
+        )?;
 
-        // 1. extract indirect fn layout from main module.
+        // extract indirect fn layout from main module.
         let indirect_fn_layout =
             IndirectFnLayout::from_module(&output.module, split_points.clone());
+
+        // Fill sp imports for main module
+        main_plan.fill_trampolines(
+            &main_plan.trampoline_fns,
+            &mut output.module,
+            &indirect_fn_layout,
+        )?;
+
+        // Now we can add main module to the ctx.
         ctx.output_modules.push(output);
-        // 2. emit other modules
+
+        // emit other modules
         let is_static = |flat| main_info.defined_symbols.contains(&flat);
 
-        for (id, info) in &self.output_modules[1..] {
-            let plan = SplitModulePlan::new_submodule(
+        for info in &self.output_modules[1..] {
+            let mut plan = SplitModulePlan::new_submodule(
                 &snapshot,
                 input_files,
                 info,
@@ -601,7 +670,25 @@ impl SplitProgramInfo {
                 indirect_fn_layout.clone(),
             );
 
-            let output = OutputModule::<'src>::apply_plan(plan, input_files, &snapshot)?;
+            // TODO: optimize this.
+            let used_modules = info
+                .1
+                .dependencies
+                .keys()
+                .map(|id| {
+                    self.output_modules
+                        .iter()
+                        .position(|(module_id, _)| module_id == id)
+                        .expect("Dependency module should be in output modules")
+                })
+                .map(FileId::new)
+                .collect();
+            let output = OutputModule::<'src>::from_copy_plan(
+                &mut plan,
+                input_files,
+                &snapshot,
+                DyLinkInfo::Dynamic { used_modules },
+            )?;
             ctx.output_modules.push(output);
         }
         Ok(ctx)
@@ -674,7 +761,6 @@ impl IndirectFnLayout {
         &self,
         trampolines: SVec<TrampolineCreated>,
     ) -> SVec<TrampolineCalculated> {
-        dbg!(&self);
         trampolines
             .into_iter()
             .map(|trampoline| {

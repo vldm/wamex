@@ -52,13 +52,13 @@ where
 /// Extra information needed for perfom dynamic linking.
 ///
 #[derive(Debug, Clone)]
-pub struct DyLinkDeps<Ref: Clone + Default + ReservedValue = GlobalRef> {
+pub struct DyLinkGots<Ref: Clone + Default + ReservedValue = GlobalRef> {
     pub our_got: GotInfo<Ref>,
     /// Information about GOT entries with output file id, as defined in `EmitContext::output_plans`.
     pub deps: GappedMap<FileId, GotInfo<Ref>>,
 }
 
-impl<Ref: Clone + Default + ReservedValue> ReservedValue for DyLinkDeps<Ref> {
+impl<Ref: Clone + Default + ReservedValue> ReservedValue for DyLinkGots<Ref> {
     fn reserved_value() -> Self {
         Self {
             our_got: GotInfo::reserved_value(),
@@ -70,11 +70,16 @@ impl<Ref: Clone + Default + ReservedValue> ReservedValue for DyLinkDeps<Ref> {
     }
 }
 
+pub enum DyLinkInfo {
+    Static,
+    Dynamic { used_modules: Vec<FileId> },
+}
+
 #[derive(Debug)]
 pub struct OutputModule<'src> {
     pub module: Module<'src>,
     pub resolver: OutputEntitiesResolver,
-    pub dyn_info: Option<DyLinkDeps>,
+    pub dyn_info: Option<DyLinkGots>,
     pub relocs: FileRelocs,
 }
 
@@ -125,10 +130,11 @@ impl<'src> OutputModule<'src> {
         output.extra.mem_layout = output_layout;
     }
     /// Execute the plan and copy entities from input to output modules.
-    pub fn apply_plan<M>(
-        mut plan: M,
+    pub fn from_copy_plan<M>(
+        plan: &mut M,
         input_files: &'src FileLoader,
         snapshot: &'_ MultiSnapshot,
+        dylink: DyLinkInfo,
     ) -> Result<OutputModule<'src>>
     where
         M: OutputPlan<'src>,
@@ -137,6 +143,45 @@ impl<'src> OutputModule<'src> {
         let mut module = ModuleBuilder::new();
 
         Self::copy_vs_segments(&mut module, input_files);
+
+        let mut tmp_dylink = None;
+        if let DyLinkInfo::Dynamic { used_modules } = dylink {
+            let memory_base = module
+                .globals
+                .push_import(crate::typed::ImportedGlobal::memory_base());
+            let table_base = module
+                .globals
+                .push_import(crate::typed::ImportedGlobal::table_base());
+            module.extra.got_info = Some(GotInfo {
+                memory_base,
+                table_base,
+            });
+            tmp_dylink = Some(DyLinkGots {
+                our_got: GotInfo {
+                    memory_base,
+                    table_base,
+                },
+                // add global import for each dep
+                deps: used_modules
+                    .iter()
+                    .map(|file| {
+                        (
+                            *file,
+                            GotInfo {
+                                memory_base: module.globals.push_import(
+                                    crate::typed::ImportedGlobal::memory_base()
+                                        .with_module(file.to_string().into()),
+                                ),
+                                table_base: module.globals.push_import(
+                                    crate::typed::ImportedGlobal::table_base()
+                                        .with_module(file.to_string().into()),
+                                ),
+                            },
+                        )
+                    })
+                    .collect(),
+            });
+        }
 
         plan.setup(&mut module)?;
 
@@ -207,6 +252,7 @@ impl<'src> OutputModule<'src> {
         }
 
         replace_span!(&mut action_span, tracing::info_span!("lock_module"));
+        // Try to add indirect table after copying (if it wasn't imported).
         module.create_empty_indirect_fn_table();
         plan.before_lock(&mut module, &modifier_artifact)?;
         // after index finalization, we can make some additional transformation
@@ -225,41 +271,33 @@ impl<'src> OutputModule<'src> {
             file_info.add_entity_mapping(src, entity.to_stable(&module));
         }
 
-        // let dyn_info = match &self.addressing {
-        //     AddressingMode::Static => None,
-        //     AddressingMode::GotRelative(g) => {
-        //         macro_rules! conv {
-        //             ($got:expr) => {
-        //                 GotInfo {
-        //                     memory_base: conv!(@ref $got.memory_base),
-        //                     table_base: conv!(@ref $got.table_base),
-        //                 }
-        //             };
-        //             (@ref $e:expr) => {
-        //                 match new_imports.get($e)
-        //                     .expect("Got entry not found in imports")
-        //                     .to_stable(&module) {
-        //                     EntityKind::Global(g) => g,
-        //                     _ => panic!("Got entry should be global"),
-        //                 }
-        //             };
-        //         }
-        //         let deps = g
-        //             .deps
-        //             .iter()
-        //             .map(|(file, got)| {
-        //                 let got = conv!(got);
-        //                 (file, got)
-        //             })
-        //             .collect();
+        let dyn_info = tmp_dylink.map(|got_info| {
+            macro_rules! conv {
+                    ($got:expr) => {
+                        GotInfo {
+                            memory_base: conv!(@ref $got.memory_base),
+                            table_base: conv!(@ref $got.table_base),
+                        }
+                    };
+                    (@ref $e:expr) => {
+                        module.globals.stable_id($e)
+                    };
+                }
+            let deps = got_info
+                .deps
+                .iter()
+                .map(|(file, got)| {
+                    let got = conv!(got);
+                    (file, got)
+                })
+                .collect();
 
-        //         Some(DyLinkDeps {
-        //             our_got: conv!(g.our_got),
-        //             deps,
-        //         })
-        //     }
-        // };
-        // log::warn!("Dep info for module: {:#?}", dyn_info);
+            DyLinkGots {
+                our_got: conv!(got_info.our_got),
+                deps,
+            }
+        });
+        log::warn!("Dep info for module: {:#?}", dyn_info);
         replace_span!(&mut action_span, tracing::info_span!("finish_modifier"));
         // resolve got entries in code modifier, and fill start function body
         // do it before copy_and_resolve_relocs to ensure that all relocs are copied into file_relocs.
@@ -278,7 +316,7 @@ impl<'src> OutputModule<'src> {
             module,
             resolver: file_info,
             relocs,
-            dyn_info: None, //dyn_info,
+            dyn_info,
         })
     }
 
@@ -308,18 +346,18 @@ pub struct HexDebug(pub Vec<u8>);
 ///
 #[derive(derive_more::Debug)]
 pub struct EmitContext<'a> {
+    // Static arguments
     #[debug("input_files: <FileLoader>")]
     pub input_files: &'a FileLoader,
     pub snapshot: MultiSnapshot,
-    // 1. Build copy plan for each module.
+    // module information
     pub output_names: PrimaryMap<FileId, OutputId>,
-    // 1.2. where to search entity if dynamic linking is used
+    // 1. where to search entity if dynamic linking is used
     pub dylinkg_exports_map: GappedMap<FlatEntityRef, FileId>,
-
-    // The rest fields are phases of `emit_modules` pipeline.
     // 2. Build modules from copy plans.
     pub output_modules: PrimaryMap<FileId, OutputModule<'a>>,
-    // 3. build writer and layout for each module.
+
+    // The result of `emit_modules` pipeline.
     pub writers: PrimaryMap<FileId, HexDebug>,
     pub layouts: PrimaryMap<FileId, ModuleLayout>,
 }
@@ -493,19 +531,22 @@ impl<'src> EmitContext<'src> {
             log::debug!(
                 "Importing data symbol {orig_d} from module {dep_id} ({dep_file}) with offset {extern_ref:?}"
             );
-            imported_data.insert(
-                orig_d,
-                ImportedDataDep {
-                    output_location: extern_ref.offsets,
-                    got_entry: Some(output_module.dyn_info.as_ref()
-                        .expect("Dynamic info should be present for module with imported data symbols")
-                        .deps
-                        .get(dep_file)
-                        .map(|entry| entry.memory_base)
-                        .expect("Memory base should be present for imported data symbols")
-                    ),
-                },
-            );
+            let imported_dep = ImportedDataDep {
+                output_location: extern_ref.offsets,
+                got_entry: output_module
+                    .dyn_info
+                    .as_ref()
+                    .expect("Dynamic info should be present for module with imported data symbols")
+                    .deps
+                    .get(dep_file)
+                    .map(|entry| entry.memory_base),
+            };
+
+            // Only main module can be imported as static.
+            if imported_dep.got_entry.is_some() && dep_file.as_u32() != 0 {
+                log::error!("Using module {dep_id} data symbol, but no imported got entry found.");
+            }
+            imported_data.insert(orig_d, imported_dep);
         }
         imported_data
     }

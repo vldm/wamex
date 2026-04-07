@@ -51,6 +51,21 @@ impl<'src, T> ElementLayoutBuilder<'src, T> {
             items: Vec::new(),
         }
     }
+    pub fn map_elements<U>(self, map_item: impl Fn(T) -> U) -> ElementLayoutBuilder<'src, U> {
+        let items = self
+            .items
+            .into_iter()
+            .map(|item| ElementInTable {
+                item: map_item(item.item),
+                segment_id: item.segment_id,
+            })
+            .collect();
+        ElementLayoutBuilder {
+            virtual_spaces: self.virtual_spaces,
+            segments: self.segments,
+            items,
+        }
+    }
     pub fn seal(
         self,
         map_table: impl Fn(Temp<TableRef>) -> TableRef,

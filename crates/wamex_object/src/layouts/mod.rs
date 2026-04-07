@@ -24,7 +24,10 @@ use anyhow::{Result, bail, ensure};
 // use elements::ElementItemId;
 pub use self::data::*;
 pub use self::elements::*;
-use crate::typed::{FunctionRef, GlobalRef};
+use crate::{
+    index::Temp,
+    typed::{FunctionRef, GlobalRef},
+};
 impl_entity_index! {
     #[display = "vs"]
     pub struct VirtualSpaceId;
@@ -36,7 +39,7 @@ pub mod data;
 mod elements;
 mod recover;
 pub type FuncLayoutSealed<'src> = elements::ElementLayoutSealed<'src, FunctionRef>;
-pub type FuncLayoutBuilder<'src> = elements::ElementLayoutBuilder<'src, FunctionRef>;
+pub type FuncLayoutBuilder<'src> = elements::ElementLayoutBuilder<'src, Temp<FunctionRef>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SegmentPlacement<GR = GlobalRef> {

@@ -5,7 +5,7 @@ expression: split_info_output
 === Split Program Structure ===
 
 Module #0: main
-  Defined symbols: 845
+  Defined symbols: 832
     0 <__wasm_split_00string_from_static00_import_17997317cc392c52ed3bea15880aab65_string_from_static>
     1 <__wasm_split_00static_str00_import_776d8e51aac0782b17e57d45872c52d7_static_str>
     2 <wasm_bindgen::__wbindgen_string_new::hf591ae4d10501fb5>
@@ -838,19 +838,6 @@ Module #0: main
     836 <std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.0>
     837 <std::panicking::panic_count::LOCAL_PANIC_COUNT::{{closure}}::VAL::hc178d7b40cce1a73.1>
     838 <wasm_bindgen::__rt::GLOBAL_EXNDATA::h0d1201b0e0d41664.0>
-    839 <type0>
-    840 <type1>
-    841 <type2>
-    842 <type3>
-    843 <type4>
-    844 <type5>
-    845 <type6>
-    846 <type7>
-    847 <type8>
-    848 <type9>
-    849 <type10>
-    850 <type11>
-    851 <type12>
   Exports: 5
     29 <dlmalloc::dlmalloc::Dlmalloc<A>::malloc::h6dc9611e5a260cc8>
     69 <alloc::raw_vec::handle_error::hffd4f9c6873ec0fb>

@@ -11,6 +11,7 @@ use crate::{
     layouts,
     linkage::reloc::EntityRelocationEntry,
     raw::{self, FunctionWithBody},
+    typed::{MEM_BASE_NAME, TABLE_BASE_NAME},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -89,6 +90,46 @@ pub type DefinedGlobal<'src> = DefinedEntity<'src, wasmparser::GlobalType>; // b
 pub type DefinedMemory<'src> = WithoutBody<'src, wasmparser::MemoryType>;
 pub type DefinedTag<'src> = WithoutBody<'src, wasmparser::TagType>;
 pub type DefinedDataChunk<'src> = DefinedEntity<'src, layouts::ItemType>; // body - bytes in memory
+
+impl<'src> ImportedGlobal<'src> {
+    pub fn memory_base() -> Self {
+        let mut this = Self {
+            module: "__wamex".into(),
+            name: MEM_BASE_NAME.into(),
+            entity_type: wasmparser::GlobalType {
+                content_type: wasmparser::ValType::I32,
+                mutable: false,
+                shared: false,
+            },
+            renamed_as: None,
+            export_as: ExportNames::default(),
+        };
+        this.export_as.add_export(MEM_BASE_NAME.into());
+        this
+    }
+
+    pub fn table_base() -> Self {
+        let mut this = Self {
+            module: "__wamex".into(),
+            name: TABLE_BASE_NAME.into(),
+            entity_type: wasmparser::GlobalType {
+                content_type: wasmparser::ValType::I32,
+                mutable: false,
+                shared: false,
+            },
+            renamed_as: None,
+            export_as: ExportNames::new(),
+        };
+        this.export_as.add_export(TABLE_BASE_NAME.into());
+        this
+    }
+
+    pub fn with_module(self, name: Cow<'src, str>) -> Self {
+        let mut this = self;
+        this.module = name;
+        this
+    }
+}
 
 impl<'src, Any> WithExtraInfo<'src> for ImportedEntity<'src, Any> {
     fn export_as(&self) -> &ExportNames<'src> {

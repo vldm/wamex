@@ -149,7 +149,7 @@ pub struct SharedEntry<Id> {
 
 #[tracing::instrument(skip_all)]
 pub fn get_dependencies(info: &LoadedFile) -> anyhow::Result<DepGraph> {
-    get_dependencies_with_filter(info, |_| true)
+    get_dependencies_with_filter(info, |e| !e.is_type())
 }
 #[inline]
 pub fn get_dependencies_with_filter(
@@ -458,8 +458,8 @@ mod tests {
         // indirect_fn -> switchtable -> func1 -> data1
         //                             -> func2 -> data2
         //                             -> func3 -> data3
-        assert_eq!(reachability_graph.len(), 11); // root + <switchtable> +  3 data + 3 funcs +
-        // + global (__stack_pointer) + type (for switchtable) + table (for switchtable)
+        assert_eq!(reachability_graph.len(), 10); // root + <switchtable> +  3 data + 3 funcs +
+        // + global (__stack_pointer) + table (for switchtable)
     }
 
     thread_local! {
@@ -852,7 +852,6 @@ mod tests {
             .load_from_bytes(file.to_vec().into_boxed_slice())
             .unwrap();
 
-        let module = &loader.get_file(id).module;
         let snapshot = loader.get_snapshot();
 
         let dep_graph = get_dependencies(loader.get_file(id)).unwrap();

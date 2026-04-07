@@ -20,7 +20,9 @@ use yoke::{Yoke, Yokeable};
 use crate::{
     emit::plan::GotInfo,
     index::Temp,
-    layouts::{self, ElementInTable, ElementSegmentSpec, FuncLayoutSealed, MemLayoutSealed},
+    layouts::{
+        self, ElementInTable, ElementSegmentSpec, FuncLayoutSealed, MemLayoutSealed, VirtualSpaceId,
+    },
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
@@ -34,6 +36,7 @@ pub mod snapshot;
 const INDIRECT_TABLE_NAME: &str = "__indirect_function_table";
 
 const MEM_BASE_NAME: &str = "__memory_base";
+const TABLE_BASE_NAME: &str = "__table_base";
 
 impl_entity_index! {
     #[display = "file"]
@@ -48,6 +51,7 @@ pub struct Locked<'src> {
     pub start_function: Option<FunctionRef>,
     pub mem_layout: layouts::MemLayoutSealed<'src>,
     pub function_elements: layouts::FuncLayoutSealed<'src>,
+    pub got_info: Option<GotInfo<GlobalRef>>,
 }
 
 impl Locked<'_> {
@@ -79,6 +83,16 @@ pub struct Builder<'src> {
 }
 
 impl Builder<'_> {
+    /// Get virtual space used as indirect function table, if exist.
+    ///
+    /// Current implementation will find first active virtual space.
+    pub fn get_indirect_fn_vs(&self) -> Option<VirtualSpaceId> {
+        self.function_elements
+            .virtual_spaces
+            .iter()
+            .find(|(_, s)| s.is_active())
+            .map(|(id, _)| id)
+    }
     pub fn has_got(&self) -> bool {
         self.got_info.is_some()
     }
@@ -333,6 +347,8 @@ impl<'src> Module<'src> {
                 start_function: reader.code.start_func,
                 mem_layout,
                 function_elements: indirect_fns,
+                // TODO: fill got info based on name/init expression of data/elements
+                got_info: None,
             },
         };
 
@@ -514,6 +530,16 @@ impl<'src> Module<'src> {
             .find(|(_, e)| e.name().is_some_and(|n| n == name))?;
         Some(global.0)
     }
+
+    pub fn extend_indirect_table_from_relocs(&mut self, file_relocs: &FileRelocs) {
+        let existing_segment = self.extra.get_indirect_fn_segment().expect("No segment found for indirect function table, call create_empty_indirect_fn_table first");
+
+        let result = file_relocs.list_indirect_fns().into_iter();
+
+        self.extra.function_elements.segments[existing_segment]
+            .parts
+            .extend(result);
+    }
 }
 
 impl<'src> ModuleBuilder<'src> {
@@ -540,6 +566,8 @@ impl<'src> ModuleBuilder<'src> {
 
     ///
     /// Creates new indirect function table if it doesn't exist.
+    ///
+    /// With create virtual space and table acording to got info.
     ///
     pub fn create_empty_indirect_fn_table(&mut self) -> crate::index::Temp<TableRef> {
         let indirect_fns = &mut self.extra.function_elements;
@@ -646,6 +674,7 @@ impl<'src> ModuleBuilder<'src> {
                 .to_stable(fn_imports, fn_defined)
         });
 
+        let functions = self.functions.into_finished();
         let globals = self.globals.into_finished();
         let extra = Locked {
             start_function,
@@ -653,18 +682,26 @@ impl<'src> ModuleBuilder<'src> {
                 5, // TODO: Make it less fragile (currently it relies on the fact that we use 5byte encoding for count)
                 |temp| memories.stable_id(temp),
             ),
-            function_elements: self.extra.function_elements.seal(
-                |temp| tables.stable_id(temp),
-                |temp| globals.stable_id(temp),
-            ),
+            function_elements: self
+                .extra
+                .function_elements
+                .map_elements(|temp| functions.stable_id(temp))
+                .seal(
+                    |temp| tables.stable_id(temp),
+                    |temp| globals.stable_id(temp),
+                ),
+            got_info: self.extra.got_info.map(|got_info| GotInfo {
+                memory_base: globals.stable_id(got_info.memory_base),
+                table_base: globals.stable_id(got_info.table_base),
+            }),
         };
 
         Module {
             tables,
             memories,
+            functions,
             globals,
             extra,
-            functions: self.functions.into_finished(),
             tags: self.tags.into_finished(),
         }
     }
@@ -687,31 +724,6 @@ impl<'src> ModuleBuilder<'src> {
             export_as: ExportNames::default(),
         }
     }
-
-    pub fn extend_indirect_table_from_relocs(&mut self, file_relocs: &FileRelocs) {
-        let vs_id = self.extra.function_elements.virtual_spaces.iter().next()
-        .map(|(id, _)| id)
-        .expect("No virtual space found for indirect fns (call create_empty_indirect_fn_table first)");
-
-        let new_segment = self
-            .extra
-            .function_elements
-            .segments
-            .push(ElementSegmentSpec {
-                vs_id,
-                name: "indirect_function_table".into(),
-            });
-
-        let result = file_relocs
-            .list_indirect_fns()
-            .into_iter()
-            .map(|func_ref| ElementInTable {
-                item: func_ref,
-                segment_id: new_segment,
-            });
-
-        self.extra.function_elements.items.extend(result);
-    }
 }
 
 #[cfg(test)]
@@ -723,7 +735,9 @@ mod tests {
     use crate::{
         index::Temp,
         layouts::ItemType,
-        typed::{DefinedDataChunk, EntityBody, ExportNames, ImportedFunction, ModuleBuilder},
+        typed::{
+            DefinedDataChunk, EntityBody, ExportNames, ImportedFunction, Module, ModuleBuilder,
+        },
     };
 
     // 1. open example.wasm with `InputObject::from_wasm_bytes`
@@ -735,31 +749,12 @@ mod tests {
         println!("Reading wasm file: {}", file);
         let wasm_bytes = std::fs::read(file).unwrap();
         let file = LoadedFile::from_wasm_bytes(&wasm_bytes).unwrap();
-        let input_object = file.module;
+        let mut input_object = file.module;
         assert_eq!(input_object.extra.mem_layout.item_places().len(), 127);
         assert_eq!(input_object.functions.len(), 706);
 
-        let mut indirect_fns = input_object
-            .extra
-            .function_elements
-            .segments
-            .iter()
-            .flat_map(|(_, segment)| segment.parts.iter())
-            .map(|(_id, func_ref)| *func_ref)
-            .collect::<Vec<_>>();
-        indirect_fns.sort();
-        let len = indirect_fns.len();
-        indirect_fns.dedup();
-        assert_eq!(len, indirect_fns.len(),);
-
-        // recover indirect fns in new module
-        let mut recovered_fns = {
-            let mut temp_builder = ModuleBuilder::new();
-            temp_builder.create_empty_indirect_fn_table();
-            temp_builder.extend_indirect_table_from_relocs(&file.relocs);
-            let recovered = temp_builder.into_locked();
-            recovered
-                .extra
+        let get_indirect_fns = |i: &Module| {
+            i.extra
                 .function_elements
                 .segments
                 .iter()
@@ -767,6 +762,22 @@ mod tests {
                 .map(|(_id, func_ref)| *func_ref)
                 .collect::<Vec<_>>()
         };
+        let mut indirect_fns = get_indirect_fns(&input_object);
+        indirect_fns.sort();
+        let len = indirect_fns.len();
+        indirect_fns.dedup();
+        assert_eq!(len, indirect_fns.len(),);
+
+        input_object
+            .extra
+            .function_elements
+            .segments
+            .iter_mut()
+            .for_each(|(_, segment)| segment.parts.clear());
+
+        assert_eq!(get_indirect_fns(&input_object).len(), 0);
+        input_object.extend_indirect_table_from_relocs(&file.relocs);
+        let mut recovered_fns = get_indirect_fns(&input_object);
 
         assert_eq!(len, recovered_fns.len());
         // order might differ, but the content should be the same

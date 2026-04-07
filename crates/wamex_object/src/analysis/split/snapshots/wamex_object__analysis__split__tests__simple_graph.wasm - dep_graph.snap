@@ -21,7 +21,6 @@ expression: dep_graph_output
   -> 5 <__stack_pointer>
   -> 8 <__indirect_function_table>
   -> 13 data[0:528+12]  <".Lswitch.table.indirect_fn"> (size=12)
-  -> 14 <type0>
 
 4 func[4] <"no_inline_fn"> (size=143)
   -> 0 func[0] <"hello_world"> (size=20)
@@ -56,6 +55,3 @@ expression: dep_graph_output
   -> 0 func[0] <"hello_world"> (size=20)
   -> 1 func[1] <"version"> (size=20)
   -> 2 func[2] <"constant"> (size=20)
-
-14 <type0>
-  <-P 3 func[3] <"indirect_fn"> (size=95)

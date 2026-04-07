@@ -223,15 +223,6 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                         .to_external()
                         .is_some()
                     {
-                        // log::error!("reloc {reloc:?}");
-                        // search for location in external module.
-
-                        // TODO: absolute addr for main module
-                        if !matches!(reloc.relation, Relative::Got) {
-                            log::error!(
-                                "Relocation for imported data should be handled by one of modify::* modules and have Relative::Got relation"
-                            );
-                        }
                         self.imported_data
                             .get(d)
                             .expect("Cannot find imported data symbol for relocation: {reloc:?}")
@@ -259,13 +250,29 @@ impl<'any, 'src> RelocationState<'any, 'src> {
                                 .memory_base
                             }
                             _ => {
-                                // if defined then it's our got entry.
+                                // if imported - find it's got.
                                 let imported_data = &self.imported_data.get(d).unwrap_or_else(|| {
                                     panic!("Cannot find imported data symbol for relocation: {reloc:?}")
                                 });
+                                // TODO: find why module that was processed by got converter wasn't found in used_modules.
                                 &imported_data
                                     .got_entry
                                     .expect("GOT entry must exist for relocation with base")
+                            }
+                        };
+                        got.as_u32()
+                    }
+                    EntityKind::Function(f) => {
+                        let got = match self.current_module.functions.get_entity(f) {
+                            ImportOrDefined::Defined(_) => {
+                                // if defined then it's our got entry.
+                                &self.current_got
+                                .as_ref()
+                                .expect("Current module doesn't have GOT, but relocation requires it")
+                                .memory_base
+                            }
+                            _ => {
+                                panic!("Got based relocation for func {f:?} not implemented.")
                             }
                         };
                         got.as_u32()

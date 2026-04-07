@@ -40,7 +40,9 @@ pub trait OutputPlan<'src> {
         extra_data: Self::ExtraData,
     ) -> anyhow::Result<Self::Artifacts>;
 
-    /// Allows to perform some finalization steps before module is emitted.
+    ///
+    /// Allows to perform some final push before module is emitted.
+    ///
     fn before_lock(
         &mut self,
         module: &mut crate::typed::ModuleBuilder<'src>,
@@ -48,7 +50,7 @@ pub trait OutputPlan<'src> {
     ) -> anyhow::Result<()>;
 
     fn finish(
-        self,
+        &mut self,
         module: &mut crate::typed::Module<'src>,
         aggregated_data: Self::Artifacts,
         resolver: &mut crate::emit::relocation::resolver::OutputEntitiesResolver,

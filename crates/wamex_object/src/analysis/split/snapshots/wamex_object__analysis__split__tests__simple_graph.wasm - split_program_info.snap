@@ -5,7 +5,7 @@ expression: split_info_output
 === Split Program Structure ===
 
 Module #0: main
-  Defined symbols: 15
+  Defined symbols: 14
     0 <hello_world>
     1 <version>
     2 <constant>
@@ -20,7 +20,6 @@ Module #0: main
     11 <.Lanon.40cffdd5158028b640e87266bd095959.1>
     12 <.Lanon.40cffdd5158028b640e87266bd095959.2>
     13 <.Lswitch.table.indirect_fn>
-    14 <type0>
   Exports: 3
     5 <__stack_pointer>
     8 <__indirect_function_table>
