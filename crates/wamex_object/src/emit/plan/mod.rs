@@ -13,19 +13,16 @@ use itertools::Itertools;
 
 pub use self::definition::{AnyEntity, Merge, OutputPlan, SourceInfo};
 use crate::{
-    emit::{
-        self,
-        relocation::{
-            EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
-            resolver::OutputEntitiesResolver,
-        },
+    emit::relocation::{
+        EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
+        resolver::OutputEntitiesResolver,
     },
-    index::{GappedMap, Temp},
+    index::GappedMap,
     layouts::DataSymbolRef,
     linkage::file_db::FileRelocs,
     typed::{
-        EntityKind, EntityType, ExportNames, FileId, FileLoader, FunctionRef, GlobalRef,
-        ImportOrDefined, ImportedEntity, MemoryRef, Module, ModuleBuilder, TempEntityKind,
+        EntityKind, ExportNames, FileId, FileLoader, FunctionRef, GlobalRef, MemoryRef, Module,
+        ModuleBuilder, TempEntityKind,
         snapshot::{FlatEntityRef, MultiSnapshot},
     },
 };

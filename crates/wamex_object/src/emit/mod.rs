@@ -67,6 +67,7 @@ impl<'src> Module<'src> {
         let data_mapping = self.generate_data_section(output_module)?;
         let data_range = data_start..output_module.len();
 
+        self.generate_names_section(output_module)?;
         // // self.generate_wasm_bindgen_sections(output_module);
         // // Names + Linking + Relocations
         // self.generate_compiler_tools_sections(output_module, code_relocs, data_relocs)?;
@@ -278,6 +279,7 @@ impl<'src> Module<'src> {
                 Ok(())
             },
         )?;
+        output_module.section(&adapter);
 
         Ok(result.unwrap())
     }
@@ -351,6 +353,42 @@ impl<'src> Module<'src> {
         output_module.section(&adapter);
 
         Ok(self.extra.mem_layout.item_places().clone())
+    }
+    pub fn generate_names_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
+        let mut section = wasm_encoder::NameSection::new();
+
+        use crate::typed::WithExtraInfo;
+        macro_rules! dump_entities {
+            ($kind:ident) => {
+                let mut name_map = wasm_encoder::NameMap::new();
+                for (id, entity) in self.$kind.defined_iter() {
+                    if let Some(name) = entity.name() {
+                        name_map.append(id.as_u32(), name);
+                    }
+                }
+                section.$kind(&name_map);
+            };
+        }
+        dump_entities!(functions);
+        dump_entities!(memories);
+        dump_entities!(globals);
+        {
+            let mut name_map = wasm_encoder::NameMap::new();
+            for (id, entity) in self.extra.function_elements.segments.iter() {
+                name_map.append(id.as_u32(), &entity.name);
+            }
+            section.elements(&name_map);
+        }
+        {
+            let mut name_map = wasm_encoder::NameMap::new();
+            for (id, entity) in self.extra.mem_layout.segments.iter() {
+                name_map.append(id.as_u32(), &entity.name);
+            }
+            section.data(&name_map);
+        }
+        dump_entities!(tags);
+        output_module.section(&section);
+        Ok(())
     }
 
     /// Copy relocs to new FileRelocs.

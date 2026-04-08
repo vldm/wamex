@@ -340,7 +340,7 @@ mod tests {
     use crate::{
         analysis::{
             debug::print_deps_inner,
-            dep_graph::{self, DepMiniSet},
+            dep_graph::{ DepMiniSet},
             get_dependencies, testing,
         },
         emit::relocation::EntityLocation,
