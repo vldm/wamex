@@ -24,8 +24,8 @@ struct MyMetrics {
     pub instructions: SystemPerfMetric,
 
     #[raw_end_fn(MyMetrics::calculate_ipc)]
-    #[config(show_spread = false, show_baseline = false)]
-    pub ipc: u64,
+    #[config(show_spread = false, show_baseline = false, aggregation = profiler::metrics::MetricAggregation::Max)]
+    pub ipc: f64,
 
     #[hidden]
     #[new(&ALLOCATOR)]
@@ -41,11 +41,11 @@ impl MyMetrics {
         let mem = &result.4;
         mem.alloced_bytes
     }
-    fn calculate_ipc(result: &<MyMetrics as Metrics>::Result) -> u64 {
+    fn calculate_ipc(result: &<MyMetrics as Metrics>::Result) -> f64 {
         let cycles = result.0;
         let instructions = result.2;
 
-        instructions.checked_div(cycles).unwrap_or_default()
+        instructions as f64 / cycles as f64
     }
 }
 

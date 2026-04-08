@@ -13,17 +13,19 @@ use itertools::Itertools;
 
 pub use self::definition::{AnyEntity, Merge, OutputPlan, SourceInfo};
 use crate::{
-    emit,
-    emit::relocation::{
-        EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
-        resolver::OutputEntitiesResolver,
+    emit::{
+        self,
+        relocation::{
+            EntityLocation, ImportedDataDep, ModuleLayout, RelocationState,
+            resolver::OutputEntitiesResolver,
+        },
     },
     index::{GappedMap, Temp},
     layouts::DataSymbolRef,
     linkage::file_db::FileRelocs,
     typed::{
         EntityKind, EntityType, ExportNames, FileId, FileLoader, FunctionRef, GlobalRef,
-        ImportedEntity, Module, ModuleBuilder, TempEntityKind,
+        ImportOrDefined, ImportedEntity, MemoryRef, Module, ModuleBuilder, TempEntityKind,
         snapshot::{FlatEntityRef, MultiSnapshot},
     },
 };
@@ -109,24 +111,53 @@ macro_rules! replace_span {
 
 impl<'src> OutputModule<'src> {
     /// Copy virtual space and segments from input module to output module
-    pub fn copy_vs_segments(output: &mut ModuleBuilder<'src>, input_files: &'src FileLoader) {
+    pub fn copy_vs_segments(
+        output: &mut ModuleBuilder<'src>,
+        input_files: &'src FileLoader,
+        is_pic: bool,
+    ) {
         // TODO: merge info from all modules
         let first = input_files.get_file(FileId::from_u32(0));
-        // let temp_mem =
-        //     output.memories.push_import(MemoryType {
-        //         minimum: 0,
-        //         memory64: false,
-        //         shared: false,
-        //         page_size_log2: None,
-        //         maximum: None,
-        //     }.into());
+        let mem = first
+            .module
+            .memories
+            .try_get_entity(MemoryRef::from_u32(0))
+            .map(|m| *m.get_type())
+            .unwrap_or_else(|| {
+                log::error!(
+                    "Expected at least one memory in source module, {:?}",
+                    first.module.memories
+                );
+                wasmparser::MemoryType {
+                    initial: 0,
+                    memory64: false,
+                    shared: false,
+                    page_size_log2: None,
+                    maximum: None,
+                }
+            });
 
-        log::error!("Need to create memory");
+        let mem_id = if is_pic {
+            output.memories.push_import(crate::typed::ImportedMemory {
+                entity_type: mem,
+                name: "memory".into(),
+                module: "env".into(),
+                export_as: ExportNames::default(),
+                renamed_as: None,
+            })
+        } else {
+            let mut export = ExportNames::default();
+            export.add_export("memory".into());
+            output.memories.push_defined(crate::typed::WithoutBody {
+                entity_type: mem,
+                name: Some("memory".into()),
+                export_as: export,
+            })
+        };
+
+        //TODO: Handle multiple memories.
         let module = &first.module;
-        let output_layout = module
-            .extra
-            .mem_layout
-            .recover_vs_segments(|_| Temp::from_defined(0));
+        let output_layout = module.extra.mem_layout.recover_vs_segments(|_| mem_id);
         output.extra.mem_layout = output_layout;
     }
     /// Execute the plan and copy entities from input to output modules.
@@ -142,7 +173,11 @@ impl<'src> OutputModule<'src> {
         let mut action_span = tracing::info_span!("Setup plan").entered();
         let mut module = ModuleBuilder::new();
 
-        Self::copy_vs_segments(&mut module, input_files);
+        Self::copy_vs_segments(
+            &mut module,
+            input_files,
+            matches!(dylink, DyLinkInfo::Dynamic { .. }),
+        );
 
         let mut tmp_dylink = None;
         if let DyLinkInfo::Dynamic { used_modules } = dylink {
@@ -169,12 +204,14 @@ impl<'src> OutputModule<'src> {
                             *file,
                             GotInfo {
                                 memory_base: module.globals.push_import(
-                                    crate::typed::ImportedGlobal::memory_base()
-                                        .with_module(file.to_string().into()),
+                                    crate::typed::ImportedGlobal::module_memory_base(
+                                        &file.to_string(),
+                                    ),
                                 ),
                                 table_base: module.globals.push_import(
-                                    crate::typed::ImportedGlobal::table_base()
-                                        .with_module(file.to_string().into()),
+                                    crate::typed::ImportedGlobal::module_table_base(
+                                        &file.to_string(),
+                                    ),
                                 ),
                             },
                         )
@@ -330,9 +367,7 @@ impl<'src> OutputModule<'src> {
             .expect("Indirect function segment should be created.");
         let segment = &mut module.extra.function_elements.segments[segment_id];
 
-        segment
-            .parts
-            .extend(indirect_fns.into_iter().map(|f| f.into()));
+        segment.parts.extend(indirect_fns);
         Ok(())
     }
 }

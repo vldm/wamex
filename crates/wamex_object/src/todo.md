@@ -22,4 +22,8 @@ one created during Module::new() and other is referenced by reloc
 - [ ] features in binary reader should be set from feature section
 - [x] segment is argument for generate fn, but should be part of self, to reduce missuse. 
 - [x] use one start fn, and emit it before finalize.
-- [ ] Extract new imports processing from copy-plan 
+- [x] Extract new imports processing from copy-plan 
+
+
+# Next to research:
+- Modifier that either remove entry, or create new non related to processed entry. e.g. (replace import fn by defined, create trampoline, replace const data offsets with global var, etc.).

@@ -345,7 +345,7 @@ pub fn compute_split_modules(
             merge_shared_with_main(&mut main[0], rest, &mut shared_deps)?;
         }
 
-        process_special_entities(info, &snapshot, &mut main[0], rest, &mut shared_deps)?;
+        // process_special_entities(info, &snapshot, &mut main[0], rest, &mut shared_deps)?;
     }
 
     // add deps for single modules.

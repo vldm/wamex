@@ -147,8 +147,8 @@ where
     }
 
     pub fn encode_leb_any_size(&mut self, v: u32) -> Result<(), std::io::Error> {
-        let (buf, _) = leb128fmt::encode_u32(v).unwrap();
-        self.push_bytes(&buf)?;
+        let (buf, pos) = leb128fmt::encode_u32(v).unwrap();
+        self.push_bytes(&buf[..pos])?;
         Ok(())
     }
 
@@ -161,8 +161,8 @@ where
     }
 
     pub fn encode_sleb_any_size(&mut self, v: i32) -> Result<(), std::io::Error> {
-        let (buf, _) = leb128fmt::encode_s32(v).unwrap();
-        self.push_bytes(&buf)?;
+        let (buf, pos) = leb128fmt::encode_s32(v).unwrap();
+        self.push_bytes(&buf[..pos])?;
         Ok(())
     }
 
@@ -244,18 +244,20 @@ where
         self.push_byte(0x6a)?;
         Ok(())
     }
-
     /// Encode memarg, return offset to memory_index
     fn encode_memarg32(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
+        const MEM_ARG_FLAG: u32 = 1 << 6;
+        debug_assert!(m.align < MEM_ARG_FLAG);
+
         if m.memory_index == 0 {
-            let _ = self.encode_leb_5byte(m.align)?;
+            self.encode_leb_any_size(m.align)?;
             let offset = self.encode_leb_5byte(m.offset.try_into().unwrap())?;
             Ok(MemArgOffsets {
                 offset,
                 memory_index: None,
             })
         } else {
-            let _ = self.encode_leb_5byte(m.align | (1 << 6))?;
+            self.encode_leb_any_size(m.align | MEM_ARG_FLAG)?;
             let idx = self.encode_leb_5byte(m.memory_index)?;
             let offset = self.encode_leb_5byte(m.offset.try_into().unwrap())?;
             Ok(MemArgOffsets {

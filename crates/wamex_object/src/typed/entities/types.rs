@@ -124,10 +124,32 @@ impl<'src> ImportedGlobal<'src> {
         this
     }
 
-    pub fn with_module(self, name: Cow<'src, str>) -> Self {
-        let mut this = self;
-        this.module = name;
-        this
+    pub fn module_table_base(name: &str) -> Self {
+        Self {
+            module: "__wamex".into(),
+            name: format!("__{}_{}", name, TABLE_BASE_NAME).into(),
+            entity_type: wasmparser::GlobalType {
+                content_type: wasmparser::ValType::I32,
+                mutable: false,
+                shared: false,
+            },
+            renamed_as: None,
+            export_as: ExportNames::new(),
+        }
+    }
+
+    pub fn module_memory_base(name: &str) -> Self {
+        Self {
+            module: "__wamex".into(),
+            name: format!("__{}_{}", name, MEM_BASE_NAME).into(),
+            entity_type: wasmparser::GlobalType {
+                content_type: wasmparser::ValType::I32,
+                mutable: false,
+                shared: false,
+            },
+            renamed_as: None,
+            export_as: ExportNames::new(),
+        }
     }
 }
 

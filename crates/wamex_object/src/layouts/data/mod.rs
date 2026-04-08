@@ -620,6 +620,7 @@ fn data_segment_header_len(location: DataKind<MemoryRef>) -> usize {
 fn data_segment_header_start(
     location: DataKind<MemoryRef>,
 ) -> Result<SVec<u8, 32>, std::io::Error> {
+    log::error!("data_segment_header_start: {location:?}");
     Ok(match location {
         DataKind::Passive => {
             // passive segment

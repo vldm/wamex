@@ -165,7 +165,7 @@ where
 
         let _ = encoder.i32_store(wasm_encoder::MemArg {
             offset: 0,
-            align: 3, // i32 - addr/index
+            align: 2, // i32 - addr/index
             memory_index,
         })?;
         Ok(())

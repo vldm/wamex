@@ -188,7 +188,7 @@ where
         } else {
             "static"
         };
-        log::debug!(
+        log::info!(
             "Creating plan for {dynamic} module {id} with {} split points",
             info.split_points.len()
         );
