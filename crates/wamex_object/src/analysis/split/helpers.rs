@@ -4,7 +4,7 @@
 //! - merging shared with main modules
 //! - processing special entities (memory, indirect table, stack pointer)
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Deref};
 
 use wamex_types::map_vec::MiniSet;
 
@@ -101,6 +101,19 @@ pub fn main_roots(
         roots.remove(&split_point.import_func());
     }
 
+    // Also remove special entities that added automatically during copy (memory_base, stack_pointer)
+
+    for entity in info.memories.iter_active_ids() {
+        roots.remove(&snapshot.pack_ref(entity));
+    }
+    for (table_ref, table) in info.tables.iter() {
+        if table.name().map(Deref::deref) == Some("__indirect_function_table") {
+            roots.remove(&snapshot.pack_ref(table_ref));
+        }
+    }
+    if let Some(global) = info.find_global_id_by_name("__stack_pointer") {
+        roots.remove(&snapshot.pack_ref(global));
+    }
     // Add wasm-bindgen descriptors - to make sure that they will be emited into main module.
     for descriptor in wbg_descriptors {
         roots.insert(*descriptor);
