@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use cranelift_entity::{EntityRef, SecondaryMap};
-use smallvec::{SmallVec, smallvec};
+use smallvec::smallvec;
 use wasmparser::FuncType;
 
 use crate::{
@@ -14,18 +14,15 @@ use crate::{
     analysis::{SplitModuleIdentifier, SplitModuleInfo, SplitPoint, SplitProgramInfo},
     emit::{
         modify::{AbsToGot, Blacklist, IsSet, abs_to_got},
-        plan::{AnyEntity, DyLinkInfo, EmitContext, GotInfo, Merge, OutputModule, OutputPlan},
+        plan::{AnyEntity, DyLinkInfo, EmitContext, Merge, OutputModule, OutputPlan},
         relocation::EntityLocation,
     },
     index::Temp,
-    layouts::{
-        ElementInTable, ElementItemId, ElementKind, ElementSegmentSpec, SegmentPlacement,
-        VirtualSpaceId,
-    },
+    layouts::{ElementInTable, ElementKind, ElementSegmentSpec, SegmentPlacement},
     typed::{
-        EntityBody, EntityType, ExportNames, FileId, FileLoader, FunctionRef, GlobalRef,
-        ImportOrDefined, ImportedEntity, Module, TableRef, TempEntityKind,
-        snapshot::{self, FlatEntityRef, MultiSnapshot},
+        EntityBody, EntityType, ExportNames, FileId, FileLoader, FunctionRef, ImportOrDefined,
+        ImportedEntity, Module, TableRef, TempEntityKind,
+        snapshot::{self, FlatEntityRef},
     },
 };
 

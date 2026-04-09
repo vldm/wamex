@@ -9,24 +9,21 @@
 use std::{borrow::Cow, fmt::Debug};
 
 use anyhow::{Result, bail};
-use cranelift_entity::{PrimaryMap, SecondaryMap};
+use cranelift_entity::PrimaryMap;
 pub use entities::*;
 use itertools::chain;
 use log::warn;
 use smallvec::smallvec;
-use wasmparser::{ElementItems, TableType, TypeRef};
+use wasmparser::{TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
     emit::plan::GotInfo,
     index::Temp,
-    layouts::{
-        self, ElementInTable, ElementSegmentSpec, FuncLayoutSealed, MemLayoutSealed, VirtualSpaceId,
-    },
+    layouts::{self, ElementSegmentSpec, FuncLayoutSealed, MemLayoutSealed, VirtualSpaceId},
     linkage::{
         LinkageInfo,
         file_db::{self, FileRelocs},
-        reloc::{EntityAddressMode, EntityRelocationEntry},
     },
     raw::{self, ImportId, SegmentId},
 };
@@ -387,19 +384,6 @@ impl<'src> Module<'src> {
             })
     }
 
-    pub(crate) fn read_const_expr(offset_expr: &wasmparser::ConstExpr<'_>) -> Result<i32> {
-        let mut reader = offset_expr.get_operators_reader();
-
-        let val = match reader.read()? {
-            wasmparser::Operator::I32Const { value } => Ok(value),
-            op => bail!("Expected only I32.const operator, found: {:?}", op),
-        };
-        match reader.read()? {
-            wasmparser::Operator::End => {}
-            op => bail!("Expected End after I32.const: {:?}", op),
-        }
-        val
-    }
     /// Get entity name
     pub fn get_name(&self, entity: EntityKind) -> Cow<'src, str> {
         let debug_name = match entity {
@@ -411,7 +395,6 @@ impl<'src> Module<'src> {
             EntityKind::DataSymbol(d) => self.extra.mem_layout.get_entity(d).name().cloned(),
             EntityKind::Type(_) => None, // types don't have names in name section
         };
-
         debug_name.unwrap_or_else(|| format!("{entity}").into())
     }
     /// Get entity type

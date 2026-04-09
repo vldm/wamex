@@ -15,7 +15,7 @@ use super::dep_graph::{DepGraph, DepMiniSet, DepSet, NamedGraph, find_reachable_
 use crate::{
     analysis::dep_graph::SharedEntry,
     typed::{
-        FunctionRef, Module,
+        Module,
         snapshot::{EntitiesSnapshot, FlatEntityRef},
     },
 };

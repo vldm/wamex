@@ -46,3 +46,4 @@ one created during Module::new() and other is referenced by reloc
 
 # Next to research:
 - Modifier that either remove entry, or create new non related to processed entry. e.g. (replace import fn by defined, create trampoline, replace const data offsets with global var, etc.).
+- Make modifiers more composable: Split, AbsToGot, Demangle, SplitData? ExtractOffsetsToGlobal? allow user to combine them.
