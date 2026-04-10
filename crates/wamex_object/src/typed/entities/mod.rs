@@ -1,7 +1,11 @@
-use std::fmt::{Debug, Display};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+};
 
-use cranelift_entity::packed_option::ReservedValue;
+use cranelift_entity::{PrimaryMap, packed_option::ReservedValue};
 use derive_more::{Display, From};
+use wasmparser::FuncType;
 
 use crate::{
     index::{Temp, TempIndex},

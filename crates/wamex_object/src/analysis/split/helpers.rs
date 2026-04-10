@@ -102,7 +102,6 @@ pub fn main_roots(
     }
 
     // Also remove special entities that added automatically during copy (memory_base, stack_pointer)
-
     for entity in info.memories.iter_active_ids() {
         roots.remove(&snapshot.pack_ref(entity));
     }
@@ -114,6 +113,7 @@ pub fn main_roots(
     if let Some(global) = info.find_global_id_by_name("__stack_pointer") {
         roots.remove(&snapshot.pack_ref(global));
     }
+    
     // Add wasm-bindgen descriptors - to make sure that they will be emited into main module.
     for descriptor in wbg_descriptors {
         roots.insert(*descriptor);

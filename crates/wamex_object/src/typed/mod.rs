@@ -14,7 +14,7 @@ pub use entities::*;
 use itertools::chain;
 use log::warn;
 use smallvec::smallvec;
-use wasmparser::{TableType, TypeRef};
+use wasmparser::{FuncType, TableType, TypeRef};
 use yoke::{Yoke, Yokeable};
 
 use crate::{
@@ -25,7 +25,7 @@ use crate::{
         LinkageInfo,
         file_db::{self, FileRelocs},
     },
-    raw::{self, ImportId, SegmentId},
+    raw::{self, FuncTypeId, ImportId, SegmentId},
 };
 
 mod entities;
@@ -178,6 +178,11 @@ impl<'src> LoadedFile<'src> {
             module,
         })
     }
+
+    #[doc(hidden)]
+    pub fn raw_reader(&self) -> &raw::ObjectReader<'src> {
+        &self.wasm_reader
+    }
 }
 
 pub type ModuleBuilder<'src> = ModuleGeneric<'src, Builder<'src>>;
@@ -209,8 +214,24 @@ pub struct ModuleGeneric<
     pub globals: entities::Globals<'src, LockedState>,
     pub tags: entities::Tags<'src, LockedState>,
 
-    // extra information that depend on state (data layout, indirect functions, start_functions)
+    /// Extra information that depend on state (data layout, indirect functions, start_functions)
+    /// It is extracted in phase, because during build we don't have stable indexes.
+    /// 
+    /// Checkout [`Locked`] and [`Builder`] for details.
+    //
     pub extra: Phase,
+
+    ///
+    /// Types used by functions or elements table.
+    ///
+    /// For sealed module - it is just copy of types from original module, that preserves original order.
+    /// For builder - it only containes extra types that used either by elements table without corresponding function.
+    ///
+    /// Most of function types are placed directly in function entities. And deduplicated during emitting.
+    /// But some of elements may be not imported/defined and use functions from external modules.
+    /// Also for type relocations, we need to provide preserve original order of types.
+    ///
+    pub extra_types: PrimaryMap<FuncTypeId, FuncType>,
 }
 
 impl<'src> Module<'src> {
@@ -347,6 +368,7 @@ impl<'src> Module<'src> {
                 // TODO: fill got info based on name/init expression of data/elements
                 got_info: None,
             },
+            extra_types: reader.types.clone(),
         };
 
         Ok((this, file_symbol_db_new))
@@ -544,6 +566,7 @@ impl<'src> ModuleBuilder<'src> {
             tags: entities::Tags::default(),
             tables: entities::Tables::default(),
             extra: Builder::default(),
+            extra_types: PrimaryMap::new(),
         }
     }
 
@@ -685,6 +708,7 @@ impl<'src> ModuleBuilder<'src> {
             functions,
             globals,
             extra,
+            extra_types: self.extra_types,
             tags: self.tags.into_finished(),
         }
     }

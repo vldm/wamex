@@ -19,6 +19,7 @@ use crate::{
     },
     index::Temp,
     layouts::{ElementInTable, ElementKind, ElementSegmentSpec, SegmentPlacement},
+    raw::FuncTypeId,
     typed::{
         EntityBody, EntityType, ExportNames, FileId, FileLoader, FunctionRef, ImportOrDefined,
         ImportedEntity, Module, TableRef, TempEntityKind,
@@ -63,7 +64,7 @@ struct TrampolineCalculated {
 struct TrampolineDeclared {
     flat_entity: FlatEntityRef,
     src_location: EntityLocation,
-    src_type: EntityType,
+    src_type: FuncType,
 
     // Name of trampoline, used for debug purposes.
     name: String,
@@ -238,11 +239,15 @@ where
                     .get_type(loc.entity)
                     .expect("Entity should have type")
                     .clone();
+                let func_type = match entity_ty {
+                    EntityType::Function(ty) => ty,
+                    _ => panic!("Only function split points are supported"),
+                };
                 dyn_import_fns.push(TrampolineDeclared {
                     flat_entity: defined,
                     name,
                     src_location: loc,
-                    src_type: entity_ty,
+                    src_type: func_type,
                     extra,
                 });
             } else {
@@ -293,7 +298,7 @@ where
         let new_defined_ref = module
             .functions
             .push_defined(crate::typed::DefinedFunction {
-                entity_type: FuncType::new([], []),
+                entity_type: trampoline.src_type.clone(),
                 body: EntityBody::new_empty(smallvec![]),
                 name: Some(trampoline.name.clone().into()),
                 export_as,
@@ -388,14 +393,22 @@ where
     ) -> anyhow::Result<()> {
         match module.functions.get_entity_mut(trampoline_ref) {
             ImportOrDefined::Defined(d) => {
+                let EntityBody::New {
+                    new_bytes,
+                    new_relocs,
+                } = &mut d.body
+                else {
+                    panic!("Trampoline body should be new");
+                };
+                // TODO: add relocs
+                let type_id = module.extra_types.push(d.entity_type.clone());
                 let mut func = wasm_encoder::Function::new(vec![]);
                 func.instructions()
                     .i32_const(sp_index as i32)
-                    // TODO: resolve type_index
-                    .call_indirect(table_index.as_u32(), 0)
+                    .call_indirect(table_index.as_u32(), type_id.as_u32())
                     .end();
 
-                d.body = EntityBody::new_empty(func.into_raw_body().into());
+                *new_bytes = func.into_raw_body().into();
             }
             _ => panic!("Trampoline should be defined"),
         }
@@ -572,11 +585,13 @@ where
         artifacts: Self::Artifacts,
         resolver: &mut crate::emit::relocation::resolver::OutputEntitiesResolver,
     ) -> anyhow::Result<()> {
+        // Save link between input entities and created imports.
         for (loc, tmp_ref) in &self.tmp_refs {
             let tmp_ref = tmp_ref.to_stable(module);
             resolver.add_entity_mapping(*loc, tmp_ref);
         }
 
+        // TODO: Can we move it into setup/before_lock? to reduce steps.
         match &self.is_main {
             GotConverter::Initted {
                 main_layout,

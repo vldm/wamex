@@ -175,6 +175,8 @@ impl<'src> OutputModule<'src> {
             input_files,
             matches!(dylink, DyLinkInfo::Dynamic { .. }),
         );
+        // Try to add indirect table after copying (if it wasn't imported).
+        module.create_empty_indirect_fn_table();
 
         let mut tmp_dylink = None;
         if let DyLinkInfo::Dynamic { used_modules } = dylink {
@@ -286,8 +288,6 @@ impl<'src> OutputModule<'src> {
         }
 
         replace_span!(&mut action_span, tracing::info_span!("lock_module"));
-        // Try to add indirect table after copying (if it wasn't imported).
-        module.create_empty_indirect_fn_table();
         plan.before_lock(&mut module, &modifier_artifact)?;
         // after index finalization, we can make some additional transformation
         let mut module = module.into_locked();

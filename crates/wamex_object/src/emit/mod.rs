@@ -357,11 +357,10 @@ impl<'src> Module<'src> {
     pub fn generate_names_section(&self, output_module: &mut wasm_encoder::Module) -> Result<()> {
         let mut section = wasm_encoder::NameSection::new();
 
-        use crate::typed::WithExtraInfo;
         macro_rules! dump_entities {
             ($kind:ident) => {
                 let mut name_map = wasm_encoder::NameMap::new();
-                for (id, entity) in self.$kind.defined_iter() {
+                for (id, entity) in self.$kind.iter() {
                     if let Some(name) = entity.name() {
                         name_map.append(id.as_u32(), name);
                     }
