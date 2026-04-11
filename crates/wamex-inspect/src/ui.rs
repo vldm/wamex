@@ -51,7 +51,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 fn render_status(app: &App) -> Paragraph<'static> {
     let summary = app.summary();
     let scene = app.current_scene().header_title();
-    let spans = if let Some(error) = &summary.validation_error {
+    let mut spans = if let Some(error) = &summary.validation_error {
         vec![
             Span::styled("INVALID ", theme::status_error()),
             Span::raw(format!("{}  |  {}", scene, error)),
@@ -62,6 +62,11 @@ fn render_status(app: &App) -> Paragraph<'static> {
             Span::raw(format!("{}  |  {}", scene, app.path().display())),
         ]
     };
+
+    if let Some(notice) = app.status_notice() {
+        spans.push(Span::raw("  |  "));
+        spans.push(Span::styled(notice, theme::accent(crate::Accent::Warning)));
+    }
 
     Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
 }

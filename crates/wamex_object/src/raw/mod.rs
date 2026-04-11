@@ -1,6 +1,6 @@
 //! A thin layer over wasmparser that provide array like access to wasm file sections.
 
-use std::fmt::Debug;
+use std::{borrow::Cow, fmt::Debug, ops::Range};
 
 use anyhow::{Result, anyhow, bail};
 use cranelift_entity::{EntityRef, PrimaryMap};
@@ -10,7 +10,10 @@ use wasm_encoder::CustomSection;
 use wasmparser::{BinaryReader, FromReader, Payload, SectionLimited};
 pub use wasmparser::{Element, Export, FuncType, Global, Import, MemoryType, Table, TagType};
 
-use crate::{index::IndexedSection, typed::FunctionRef};
+use crate::{
+    index::{IndexedSection, SectionId},
+    typed::FunctionRef,
+};
 
 pub mod code;
 pub mod data;
@@ -29,6 +32,16 @@ pub use target_features::TargetFeatures;
 
 type Ind<T> = IndexedSection<T>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SectionHeader<'a> {
+    pub index: usize,
+    pub id: SectionId,
+    pub name: Cow<'a, str>,
+    pub raw_start: usize,
+    pub content_range: Range<usize>,
+    pub count: Option<usize>,
+}
+
 /// Lossless representation of wasm object, without preprocessing
 /// that can pass round-trip test without any loss. After round-trip section will have canonical order.
 ///
@@ -37,6 +50,7 @@ type Ind<T> = IndexedSection<T>;
 /// By design it is inflated version of `wasmparser::Parser` with all sections traversed and stored in corresponding fields.
 #[derive(Default)]
 pub struct ObjectReader<'a> {
+    pub section_headers: Vec<SectionHeader<'a>>,
     // parsed sections
     pub types: PrimaryMap<FuncTypeId, FuncType>,
     pub imports: PrimaryMap<ImportId, Import<'a>>,
@@ -50,8 +64,8 @@ pub struct ObjectReader<'a> {
     // Should be only one memory ?
     pub memories: PrimaryMap<DefinedMemoryId, MemoryType>,
     // code and data is only interested section for relocation application
-    pub code: Ind<CodeSection<'a>>,
-    pub data: Ind<DataSection<'a>>,
+    pub code: CodeSection<'a>,
+    pub data: DataSection<'a>,
 
     // Custom sections
     // section "name"
@@ -86,64 +100,109 @@ impl<'a> ObjectReader<'a> {
 
         let parser = wasmparser::Parser::new(0);
         let mut parser = parser.parse_all(wasm);
+        let mut prev_end = 4; // MAGIC_NUMBER + VERSION
+        macro_rules! push_section_header {
+            ($id:ident, $reader:expr) => {
+                module.section_headers.push(section_header(
+                    section_index,
+                    wasm_encoder::SectionId::$id as SectionId,
+                    stringify!($id),
+                    $reader.range(),
+                    Some($reader.count() as usize),
+                    prev_end,
+                ));
+                prev_end = $reader.range().end;
+            };
+            (@range $id:ident, $range:expr, $count:expr) => {
+                module.section_headers.push(section_header(
+                    section_index,
+                    wasm_encoder::SectionId::$id as SectionId,
+                    stringify!($id),
+                    $range.clone(),
+                    $count,
+                    prev_end,
+                ));
+                prev_end = $range.end;
+            };
+            (@custom $name:expr, $reader:expr) => {
+                module.section_headers.push(section_header(
+                    section_index,
+                    wasm_encoder::SectionId::Custom as SectionId,
+                    format!("C({})", $name),
+                    $reader.range(),
+                    None,
+                    prev_end,
+                ));
+                prev_end = $reader.range().end;
+            };
+        }
         for payload in &mut parser {
             match payload? {
                 Payload::TypeSection(reader) => {
+                    push_section_header!(Type, reader);
                     module.types = reader
                         .into_iter_err_on_gc_types()
                         .collect::<Result<PrimaryMap<_, _>, _>>()?;
                 }
                 Payload::ImportSection(reader) => {
+                    push_section_header!(Import, reader);
                     module.imports = read_map(reader)?;
                 }
                 Payload::TableSection(reader) => {
+                    push_section_header!(Table, reader);
                     module.tables = read_map(reader)?;
                 }
                 Payload::MemorySection(reader) => {
+                    push_section_header!(Memory, reader);
                     module.memories = read_map(reader)?;
                 }
                 Payload::TagSection(reader) => {
+                    push_section_header!(Tag, reader);
                     module.tags = read_map(reader)?;
                 }
                 Payload::GlobalSection(reader) => {
+                    push_section_header!(Global, reader);
                     module.globals = read_map(reader)?;
                 }
                 Payload::ElementSection(reader) => {
+                    push_section_header!(Element, reader);
                     module.elements = read_map(reader)?;
                 }
                 Payload::FunctionSection(reader) => {
+                    push_section_header!(Function, reader);
                     function_types = reader
                         .into_iter()
                         .map(|t| t.map(FuncTypeId::from_u32))
                         .collect::<Result<Vec<_>, _>>()?;
                 }
                 Payload::ExportSection(reader) => {
+                    push_section_header!(Export, reader);
                     module.exports = read_map(reader)?;
                 }
-                Payload::StartSection { func, .. } => {
+                Payload::StartSection { func, range, .. } => {
+                    push_section_header!(@range Start, range, None);
                     code_start = Some(FunctionRef::from_u32(func));
                 }
-                Payload::DataCountSection { count, .. } => {
+                Payload::DataCountSection { count, range, .. } => {
+                    push_section_header!(@range DataCount, range, None);
                     data_count = Some(count as usize);
                 }
                 Payload::DataSection(reader) => {
-                    let starting_offset = reader.range().start;
+                    push_section_header!(Data, reader);
 
                     let data = DataSection {
                         data_segments: read_map(reader)?,
                     };
-                    module.data = Ind {
-                        section_payload: data,
-                        section_index,
-                        starting_offset,
-                    };
+                    module.data = data;
                 }
                 // process after loop
                 Payload::CodeSectionStart { range, count, .. } => {
+                    push_section_header!(@range Code, range, Some(count as usize));
                     code_reader_header = Some((range.start, section_index, count));
                 }
                 Payload::CustomSection(reader) => {
                     let name = reader.name();
+                    push_section_header!(@custom name, reader);
                     if name == "name" {
                         let name_reader = wasmparser::NameSectionReader::new(BinaryReader::new(
                             reader.data(),
@@ -204,12 +263,12 @@ impl<'a> ObjectReader<'a> {
             bail!("Unexpected trailing data");
         }
         if let Some(data_count) = data_count
-            && data_count != module.data.section_payload.data_segments.len()
+            && data_count != module.data.data_segments.len()
         {
             bail!(
                 "Data count mismatch: {} != {}",
                 data_count,
-                module.data.section_payload.data_segments.len()
+                module.data.data_segments.len()
             );
         }
 
@@ -220,9 +279,37 @@ impl<'a> ObjectReader<'a> {
             function_types,
             &module.types,
             code_reader_header,
-        )?;
+        )?
+        .section_payload;
 
         Ok(module)
+    }
+
+    pub fn code_starting_offset(&self) -> usize {
+        self.section_headers
+            .iter()
+            .find(|h| h.id == wasm_encoder::SectionId::Code as SectionId)
+            .map(|h| h.content_range.start)
+            .unwrap_or(0)
+    }
+    pub fn data_starting_offset(&self) -> usize {
+        self.section_headers
+            .iter()
+            .find(|h| h.id == wasm_encoder::SectionId::Data as SectionId)
+            .map(|h| h.content_range.start)
+            .unwrap_or(0)
+    }
+    pub fn code_section_index(&self) -> usize {
+        self.section_headers
+            .iter()
+            .position(|h| h.id == wasm_encoder::SectionId::Code as SectionId)
+            .unwrap_or(usize::MAX)
+    }
+    pub fn data_section_index(&self) -> usize {
+        self.section_headers
+            .iter()
+            .position(|h| h.id == wasm_encoder::SectionId::Data as SectionId)
+            .unwrap_or(usize::MAX)
     }
 }
 
@@ -232,6 +319,24 @@ where
     T: FromReader<'lf>,
 {
     reader.into_iter().collect::<Result<PrimaryMap<_, _>, _>>()
+}
+
+fn section_header<'a>(
+    index: usize,
+    id: SectionId,
+    name: impl Into<Cow<'a, str>>,
+    range: Range<usize>,
+    count: Option<usize>,
+    prev_end: usize,
+) -> SectionHeader<'a> {
+    SectionHeader {
+        index,
+        id,
+        name: name.into(),
+        content_range: range,
+        count,
+        raw_start: prev_end,
+    }
 }
 
 trait CustomSectionReader<'a> {

@@ -46,20 +46,21 @@ impl SectionKind {
         }
     }
 
-    pub fn canonical_ids(self) -> &'static [SectionId] {
-        match self {
-            SectionKind::Types => &[1],
-            SectionKind::Imports => &[2],
-            SectionKind::Functions => &[3, 10],
-            SectionKind::Tables => &[4],
-            SectionKind::Memories => &[5],
-            SectionKind::Globals => &[6],
-            SectionKind::Exports => &[7],
-            SectionKind::Start => &[8],
-            SectionKind::Elements => &[9],
-            SectionKind::Data => &[11, 12],
-            SectionKind::Tags => &[13],
-        }
+    pub fn canonical_ids(self) -> SectionId {
+        let x = match self {
+            SectionKind::Types => wasm_encoder::SectionId::Type,
+            SectionKind::Imports => wasm_encoder::SectionId::Import,
+            SectionKind::Functions => wasm_encoder::SectionId::Function,
+            SectionKind::Tables => wasm_encoder::SectionId::Table,
+            SectionKind::Memories => wasm_encoder::SectionId::Memory,
+            SectionKind::Globals => wasm_encoder::SectionId::Global,
+            SectionKind::Exports => wasm_encoder::SectionId::Export,
+            SectionKind::Start => wasm_encoder::SectionId::Start,
+            SectionKind::Elements => wasm_encoder::SectionId::Element,
+            SectionKind::Data => wasm_encoder::SectionId::Data,
+            SectionKind::Tags => wasm_encoder::SectionId::Tag,
+        };
+        x as SectionId
     }
 
     pub fn canonical_label(self) -> &'static str {
@@ -78,46 +79,54 @@ impl SectionKind {
         }
     }
 
-    pub fn contains_section_id(self, section_id: SectionId) -> bool {
-        self.canonical_ids().contains(&section_id)
+    pub fn from_section_id(section_id: SectionId) -> Option<Self> {
+        SectionKind::ALL
+            .into_iter()
+            .find(|kind| kind.is_raw_eq(section_id))
+    }
+
+    pub fn is_raw_eq(self, section_id: SectionId) -> bool {
+        match self {
+            SectionKind::Functions => {
+                section_id == self.canonical_ids()
+                    || section_id == wasm_encoder::SectionId::Code as SectionId
+            }
+            SectionKind::Data => {
+                section_id == self.canonical_ids()
+                    || section_id == wasm_encoder::SectionId::DataCount as SectionId
+            }
+            _ => self.canonical_ids() == section_id,
+        }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SectionDetailMode {
     Raw,
-    StructuredShort,
-    StructuredDetailed,
+    Structured,
 }
 
 impl SectionDetailMode {
-    pub const ALL: [SectionDetailMode; 3] = [
-        SectionDetailMode::Raw,
-        SectionDetailMode::StructuredShort,
-        SectionDetailMode::StructuredDetailed,
-    ];
+    pub const ALL: [SectionDetailMode; 2] = [SectionDetailMode::Raw, SectionDetailMode::Structured];
 
     pub fn title(self) -> &'static str {
         match self {
             SectionDetailMode::Raw => "Raw",
-            SectionDetailMode::StructuredShort => "Structured short",
-            SectionDetailMode::StructuredDetailed => "Structured detailed",
+            SectionDetailMode::Structured => "Structured",
         }
     }
 
     pub fn next(self) -> Self {
         match self {
-            SectionDetailMode::Raw => SectionDetailMode::StructuredShort,
-            SectionDetailMode::StructuredShort => SectionDetailMode::StructuredDetailed,
-            SectionDetailMode::StructuredDetailed => SectionDetailMode::Raw,
+            SectionDetailMode::Raw => SectionDetailMode::Structured,
+            SectionDetailMode::Structured => SectionDetailMode::Raw,
         }
     }
 
     pub fn tab_index(self) -> usize {
         match self {
             SectionDetailMode::Raw => 0,
-            SectionDetailMode::StructuredShort => 1,
-            SectionDetailMode::StructuredDetailed => 2,
+            SectionDetailMode::Structured => 1,
         }
     }
 }

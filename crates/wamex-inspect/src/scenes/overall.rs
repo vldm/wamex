@@ -4,22 +4,31 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
+use super::helpers::{content_height, content_width, truncate_text};
 use crate::{App, theme};
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(8)])
-        .split(area);
+// Print in human-friendly format, and full bytes in parens.
+fn format_bytes_len(bytes: usize) -> String {
+    let with_units = if bytes >= 1 << 30 {
+        format!("{:.2} GB", bytes as f64 / (1 << 30) as f64)
+    } else if bytes >= 1 << 20 {
+        format!("{:.2} MB", bytes as f64 / (1 << 20) as f64)
+    } else if bytes >= 1 << 10 {
+        format!("{:.2} KB", bytes as f64 / (1 << 10) as f64)
+    } else {
+        format!("{} B", bytes)
+    };
+    format!("{} ({})", with_units, bytes)
+}
 
-    let summary = app.summary();
+fn metadata_widget(path: &std::path::Path, summary: &crate::RawSummary) -> Paragraph<'static> {
     let meta = vec![
-        Line::from(format!("file: {}", app.path().display())),
-        Line::from(format!("size: {} bytes", summary.file_size)),
+        Line::from(format!("file: {}", path.display())),
+        Line::from(format!("size: {}", format_bytes_len(summary.file_size))),
         Line::from(format!("features: {}", summary.target_features)),
     ];
 
-    let meta_widget = Paragraph::new(meta)
+    Paragraph::new(meta)
         .block(
             Block::default()
                 .title("Metadata")
@@ -27,33 +36,40 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 .borders(Borders::ALL)
                 .border_style(theme::border(false)),
         )
-        .wrap(Wrap { trim: false });
-    frame.render_widget(meta_widget, chunks[0]);
+        .wrap(Wrap { trim: false })
+}
+//
+// Render raw sections view as in `wasm-objdump -h`
+//
+fn sections_raw(app: &App, area: Rect) -> Paragraph<'static> {
+    let sections = app.raw_sections();
+    let len = sections.len();
 
-    let section_lines = app
-        .summary()
-        .section_rows
+    let width = content_width(area);
+    let viewport = content_height(area);
+    app.set_overall_viewport(viewport);
+    let scroll = app.overall_scroll();
+    let end = (scroll + viewport).min(len);
+
+    let section_lines = sections
         .iter()
         .enumerate()
-        .map(|(idx, row)| {
+        .skip(scroll)
+        .take(end.saturating_sub(scroll))
+        .map(|(idx, block)| {
             let style = if idx == app.overall_selected() {
                 theme::selection()
             } else {
                 Style::default().fg(Color::White)
             };
-
-            Line::from(vec![
-                Span::styled(
-                    format!("[{:>5}] {:<10}", row.kind.canonical_label(), row.title),
-                    style,
-                ),
-                Span::styled(format!(" {:>5}  ", row.count), style),
-                Span::styled(row.note.clone(), style),
-            ])
+            Line::from(Span::styled(
+                truncate_text(&app.raw_section_title(block), width),
+                style,
+            ))
         })
         .collect::<Vec<_>>();
 
-    let section_widget = Paragraph::new(section_lines)
+    Paragraph::new(section_lines)
         .block(
             Block::default()
                 .title("Sections")
@@ -61,6 +77,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 .borders(Borders::ALL)
                 .border_style(theme::border(true)),
         )
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+}
+
+pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(8)])
+        .split(area);
+
+    let meta_widget = metadata_widget(app.path(), app.summary());
+    frame.render_widget(meta_widget, chunks[0]);
+
+    let section_widget = sections_raw(app, chunks[1]);
     frame.render_widget(section_widget, chunks[1]);
 }

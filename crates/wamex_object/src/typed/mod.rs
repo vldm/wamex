@@ -8,7 +8,7 @@
 
 use std::{borrow::Cow, fmt::Debug};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use cranelift_entity::PrimaryMap;
 pub use entities::*;
 use itertools::chain;
@@ -216,7 +216,7 @@ pub struct ModuleGeneric<
 
     /// Extra information that depend on state (data layout, indirect functions, start_functions)
     /// It is extracted in phase, because during build we don't have stable indexes.
-    /// 
+    ///
     /// Checkout [`Locked`] and [`Builder`] for details.
     //
     pub extra: Phase,
@@ -248,13 +248,7 @@ impl<'src> Module<'src> {
 
         let functions = entities::Functions::new_raw(
             imports.0,
-            reader
-                .code
-                .section_payload
-                .defined_funcs
-                .values()
-                .map(Into::into)
-                .collect(),
+            reader.code.defined_funcs.values().map(Into::into).collect(),
         )
         .into_finished()
         .extend_with_info(

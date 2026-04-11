@@ -23,14 +23,9 @@
 //! unlike in `walrus` this information imported and defined entities are stored in different index spaces, so they don't need to be "relocated" during build.
 //!
 
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-};
+use std::borrow::Cow;
 
 use cranelift_entity::{EntityRef, PrimaryMap, packed_option::ReservedValue};
-use wasmparser::FuncType;
 
 use super::{FunctionRef, GlobalRef, MemoryRef, TableRef, TagRef, types::ExportEntry};
 use crate::{

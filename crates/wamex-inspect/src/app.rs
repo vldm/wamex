@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     collections::HashMap,
     ops::Range,
     path::{Path, PathBuf},
@@ -64,10 +65,12 @@ pub struct DetailView {
 }
 
 #[derive(Clone, Debug)]
-struct RawSectionBlock {
-    canonical_id: SectionId,
+pub struct RawSectionBlock {
+    section_index: usize,
+    section_id: SectionId,
     name: String,
     range: Range<usize>,
+    count: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,7 +86,7 @@ pub struct RawSummary {
     pub file_size: usize,
     pub target_features: String,
     pub validation_error: Option<String>,
-    pub section_rows: Vec<SectionSummary>,
+    pub structural_rows: Vec<SectionSummary>,
 }
 
 struct SourceFile {
@@ -102,8 +105,15 @@ pub struct App {
     section_mode: SectionDetailMode,
     show_help: bool,
     should_quit: bool,
+
     overall_selected: usize,
+    overall_scroll: usize,
+    overall_viewport: Cell<usize>,
+
     section_selected: usize,
+    section_scroll: usize,
+    section_viewport: Cell<usize>,
+
     detail_scroll: usize,
 }
 
@@ -111,13 +121,13 @@ impl App {
     pub fn load(path: PathBuf) -> anyhow::Result<Self> {
         let bytes = std::fs::read(&path)?;
         let file_size = bytes.len();
-        let raw_sections = collect_raw_sections(&bytes)?;
         let mut loader = FileLoader::new();
         let file_id = loader.load_from_bytes(bytes.clone().into_boxed_slice())?;
 
         let validation_error = validate_wasm(&bytes);
 
         let loaded = loader.get_file(file_id);
+        let raw_sections = collect_raw_sections(loaded.raw_reader());
         let summary = RawSummary::from_parts(loaded, validation_error, file_size);
 
         Ok(Self {
@@ -131,11 +141,15 @@ impl App {
             },
             current_scene: Scene::OverallView,
             scene_stack: Vec::new(),
-            section_mode: SectionDetailMode::StructuredShort,
+            section_mode: SectionDetailMode::Structured,
             show_help: false,
             should_quit: false,
             overall_selected: 0,
+            overall_scroll: 0,
+            overall_viewport: Cell::new(0),
             section_selected: 0,
+            section_scroll: 0,
+            section_viewport: Cell::new(0),
             detail_scroll: 0,
         })
     }
@@ -212,8 +226,26 @@ impl App {
         self.overall_selected
     }
 
+    pub fn overall_scroll(&self) -> usize {
+        self.overall_scroll
+    }
+
+    /// Called by the renderer to record the visible height of the overview list.
+    pub fn set_overall_viewport(&self, h: usize) {
+        self.overall_viewport.set(h);
+    }
+
     pub fn section_selected(&self) -> usize {
         self.section_selected
+    }
+
+    pub fn section_scroll(&self) -> usize {
+        self.section_scroll
+    }
+
+    /// Called by the renderer to record the visible height of the section list.
+    pub fn set_section_viewport(&self, h: usize) {
+        self.section_viewport.set(h);
     }
 
     pub fn detail_scroll(&self) -> usize {
@@ -221,11 +253,91 @@ impl App {
     }
 
     pub fn default_section_kind(&self) -> SectionKind {
-        self.summary()
-            .section_rows
-            .get(self.overall_selected)
-            .map(|row| row.kind)
+        self.selected_overall_section_kind()
+            .or_else(|| {
+                self.source
+                    .raw_sections
+                    .iter()
+                    .find_map(|block| SectionKind::from_section_id(block.section_id))
+            })
             .unwrap_or(SectionKind::Types)
+    }
+
+    pub fn current_section_kind(&self) -> SectionKind {
+        match self.current_scene {
+            Scene::SectionDetail(kind) => kind,
+            Scene::OverallView => self.default_section_kind(),
+        }
+    }
+
+    pub fn structured_section_summary(&self, kind: SectionKind) -> Option<&SectionSummary> {
+        self.summary()
+            .structural_rows
+            .iter()
+            .find(|row| row.kind == kind)
+    }
+
+    pub fn structured_preview_entries(&self, kind: SectionKind) -> Vec<ListEntry> {
+        self.section_entries(kind)
+    }
+
+    pub fn status_notice(&self) -> Option<String> {
+        let Scene::SectionDetail(kind) = self.current_scene else {
+            return None;
+        };
+
+        if self.section_mode != SectionDetailMode::Structured {
+            return None;
+        }
+
+        self.section_notice(kind).map(str::to_owned)
+    }
+
+    pub fn section_notice(&self, kind: SectionKind) -> Option<&'static str> {
+        if self.is_partial_section(kind) {
+            Some("imports/exports here are structural only; raw sections may contain more detail")
+        } else {
+            None
+        }
+    }
+
+    pub fn is_partial_section(&self, kind: SectionKind) -> bool {
+        matches!(kind, SectionKind::Imports | SectionKind::Exports)
+    }
+
+    pub fn raw_section_title(&self, block: &RawSectionBlock) -> String {
+        let size = block.range.end.saturating_sub(block.range.start);
+        format!(
+            "[{:>2}] {:<32}  0x{:08x}..0x{:08x}  size: {}{}",
+            block.section_id,
+            block.name,
+            block.range.start,
+            block.range.end,
+            format_size_len(size),
+            block
+                .count
+                .map(|count| format!("  count: {count}"))
+                .unwrap_or_default(),
+        )
+    }
+
+    pub(crate) fn raw_sections(&self) -> &[RawSectionBlock] {
+        &self.source.raw_sections
+    }
+
+    pub fn raw_preview(&self, kind: SectionKind) -> Option<RawBlockView> {
+        self.raw_blocks(kind).into_iter().nth(self.section_selected)
+    }
+
+    pub fn section_label(&self, kind: SectionKind) -> String {
+        format!("[{}] {}", kind.canonical_label(), kind.title())
+    }
+
+    pub fn section_selected_len(&self, kind: SectionKind) -> usize {
+        match self.section_mode {
+            SectionDetailMode::Raw => self.raw_blocks(kind).len(),
+            SectionDetailMode::Structured => self.section_entries(kind).len(),
+        }
     }
 
     pub fn section_entries(&self, kind: SectionKind) -> Vec<ListEntry> {
@@ -248,16 +360,13 @@ impl App {
         self.source
             .raw_sections
             .iter()
-            .filter(|block| kind.contains_section_id(block.canonical_id))
+            .filter(|block| kind.is_raw_eq(block.section_id))
             .map(|block| RawBlockView {
-                title: format!(
-                    "[{:02}] {}  bytes=0x{:x}..0x{:x}",
-                    block.canonical_id,
-                    block.name,
+                title: self.raw_section_title(block),
+                rows: plain_hexdump_rows(
+                    &self.source.bytes[block.range.clone()],
                     block.range.start,
-                    block.range.end,
                 ),
-                rows: plain_hexdump_rows(&self.source.bytes[block.range.clone()], block.range.start),
             })
             .collect()
     }
@@ -273,7 +382,9 @@ impl App {
             InspectTarget::Data(_) => "Data bytes".to_owned(),
         });
         let dump_note = match entry.inspect_target {
-            Some(InspectTarget::Function(_)) => Some("Disassembly later; showing body bytes for now.".to_owned()),
+            Some(InspectTarget::Function(_)) => {
+                Some("Disassembly later; showing body bytes for now.".to_owned())
+            }
             Some(InspectTarget::Data(_)) => Some("Relocation bytes highlighted below.".to_owned()),
             None => None,
         };
@@ -362,7 +473,16 @@ impl App {
     }
 
     fn selected_entry(&self, kind: SectionKind) -> Option<ListEntry> {
-        self.section_entries(kind).into_iter().nth(self.section_selected)
+        self.section_entries(kind)
+            .into_iter()
+            .nth(self.section_selected)
+    }
+
+    fn selected_overall_section_kind(&self) -> Option<SectionKind> {
+        self.source
+            .raw_sections
+            .get(self.overall_selected)
+            .and_then(|block| SectionKind::from_section_id(block.section_id))
     }
 
     fn type_entries(&self) -> Vec<ListEntry> {
@@ -530,7 +650,10 @@ impl App {
                 inspect_target: self.inspect_target_for_entity(EntityKind::Function(func_ref)),
                 detail_lines: vec![
                     format!("export name: {}", name),
-                    format!("target: {}", self.entity_label(EntityKind::Function(func_ref))),
+                    format!(
+                        "target: {}",
+                        self.entity_label(EntityKind::Function(func_ref))
+                    ),
                 ],
             });
         }
@@ -543,7 +666,10 @@ impl App {
                 inspect_target: None,
                 detail_lines: vec![
                     format!("export name: {}", name),
-                    format!("target: {}", self.entity_label(EntityKind::Table(table_ref))),
+                    format!(
+                        "target: {}",
+                        self.entity_label(EntityKind::Table(table_ref))
+                    ),
                 ],
             });
         }
@@ -556,7 +682,10 @@ impl App {
                 inspect_target: None,
                 detail_lines: vec![
                     format!("export name: {}", name),
-                    format!("target: {}", self.entity_label(EntityKind::Memory(memory_ref))),
+                    format!(
+                        "target: {}",
+                        self.entity_label(EntityKind::Memory(memory_ref))
+                    ),
                 ],
             });
         }
@@ -569,7 +698,10 @@ impl App {
                 inspect_target: None,
                 detail_lines: vec![
                     format!("export name: {}", name),
-                    format!("target: {}", self.entity_label(EntityKind::Global(global_ref))),
+                    format!(
+                        "target: {}",
+                        self.entity_label(EntityKind::Global(global_ref))
+                    ),
                 ],
             });
         }
@@ -629,7 +761,10 @@ impl App {
                         format!("relocations: {}", reloc_count),
                         format!(
                             "body bytes: {}",
-                            entity.to_defined().map(|defined| defined.body.len()).unwrap_or(0)
+                            entity
+                                .to_defined()
+                                .map(|defined| defined.body.len())
+                                .unwrap_or(0)
                         ),
                     ],
                 }
@@ -661,7 +796,11 @@ impl App {
                     format!("type: {:?}", entity.get_type()),
                     format!(
                         "kind: {}",
-                        if entity.to_defined().is_some() { "defined" } else { "imported" }
+                        if entity.to_defined().is_some() {
+                            "defined"
+                        } else {
+                            "imported"
+                        }
                     ),
                 ],
             })
@@ -720,7 +859,11 @@ impl App {
                     format!("type: {:?}", entity.get_type()),
                     format!(
                         "kind: {}",
-                        if entity.to_defined().is_some() { "defined" } else { "imported" }
+                        if entity.to_defined().is_some() {
+                            "defined"
+                        } else {
+                            "imported"
+                        }
                     ),
                 ],
             })
@@ -751,7 +894,11 @@ impl App {
                     format!("type: {:?}", entity.get_type()),
                     format!(
                         "kind: {}",
-                        if entity.to_defined().is_some() { "defined" } else { "imported" }
+                        if entity.to_defined().is_some() {
+                            "defined"
+                        } else {
+                            "imported"
+                        }
                     ),
                 ],
             })
@@ -782,7 +929,11 @@ impl App {
                     format!("type: {:?}", entity.get_type()),
                     format!(
                         "kind: {}",
-                        if entity.to_defined().is_some() { "defined" } else { "imported" }
+                        if entity.to_defined().is_some() {
+                            "defined"
+                        } else {
+                            "imported"
+                        }
                     ),
                 ],
             })
@@ -856,13 +1007,19 @@ impl App {
         };
 
         vec![ListEntry {
-            label: format!("start -> {}", self.entity_label(EntityKind::Function(func_ref))),
+            label: format!(
+                "start -> {}",
+                self.entity_label(EntityKind::Function(func_ref))
+            ),
             accent: Accent::Warning,
             action: Some(Scene::SectionDetail(SectionKind::Functions)),
             entity: Some(EntityKind::Function(func_ref)),
             inspect_target: self.inspect_target_for_entity(EntityKind::Function(func_ref)),
             detail_lines: vec![
-                format!("start function: {}", self.entity_label(EntityKind::Function(func_ref))),
+                format!(
+                    "start function: {}",
+                    self.entity_label(EntityKind::Function(func_ref))
+                ),
                 "Enter to jump to Functions section.".to_owned(),
             ],
         }]
@@ -879,24 +1036,18 @@ impl App {
     fn move_selection(&mut self, delta: isize) {
         match self.current_scene {
             Scene::OverallView => {
-                self.overall_selected = move_index(
-                    self.overall_selected,
-                    self.summary().section_rows.len(),
-                    delta,
-                );
+                let len = self.source.raw_sections.len();
+                let sel = wrap_index(self.overall_selected, len, delta);
+                self.overall_scroll =
+                    adjust_scroll(self.overall_scroll, sel, self.overall_viewport.get());
+                self.overall_selected = sel;
             }
             Scene::SectionDetail(kind) => {
-                if self.section_mode == SectionDetailMode::Raw {
-                    let len = self
-                        .raw_blocks(kind)
-                        .into_iter()
-                        .map(|block| block.rows.len() + 2)
-                        .sum();
-                    self.detail_scroll = move_index(self.detail_scroll, len, delta);
-                } else {
-                    let len = self.section_entries(kind).len();
-                    self.section_selected = move_index(self.section_selected, len, delta);
-                }
+                let len = self.section_selected_len(kind);
+                let sel = wrap_index(self.section_selected, len, delta);
+                self.section_scroll =
+                    adjust_scroll(self.section_scroll, sel, self.section_viewport.get());
+                self.section_selected = sel;
             }
         }
     }
@@ -908,17 +1059,16 @@ impl App {
     fn drill_in(&mut self) {
         match self.current_scene.clone() {
             Scene::OverallView => {
-                let kind = self.default_section_kind();
-                self.open_scene(Scene::SectionDetail(kind));
+                if let Some(kind) = self.selected_overall_section_kind() {
+                    self.open_scene(Scene::SectionDetail(kind));
+                }
             }
             Scene::SectionDetail(kind) => {
-                if let Some(entry) = self.selected_entry(kind) {
-                    if let Some(scene) = entry.action {
-                        self.open_scene(scene);
-                    } else if entry.inspect_target.is_some() {
-                        self.section_mode = SectionDetailMode::StructuredDetailed;
-                        self.detail_scroll = 0;
-                    }
+                if self.section_mode == SectionDetailMode::Structured
+                    && let Some(entry) = self.selected_entry(kind)
+                    && let Some(scene) = entry.action
+                {
+                    self.open_scene(scene);
                 }
             }
         }
@@ -933,12 +1083,15 @@ impl App {
     fn open_scene(&mut self, scene: Scene) {
         if self.current_scene != scene {
             self.scene_stack.push(self.current_scene.clone());
-            let reset = match (self.current_scene.clone(), scene.clone()) {
+            let reset = match (&self.current_scene, &scene) {
                 (Scene::SectionDetail(old), Scene::SectionDetail(new)) => old != new,
                 (Scene::OverallView, Scene::SectionDetail(_)) => true,
                 _ => false,
             };
             self.current_scene = scene;
+            if let Scene::SectionDetail(kind) = self.current_scene {
+                self.overall_selected = self.section_index_for_kind(kind);
+            }
             if reset {
                 self.reset_section_state();
             }
@@ -946,12 +1099,15 @@ impl App {
     }
 
     fn replace_scene(&mut self, scene: Scene) {
-        let reset = match (self.current_scene.clone(), scene.clone()) {
+        let reset = match (&self.current_scene, &scene) {
             (Scene::SectionDetail(old), Scene::SectionDetail(new)) => old != new,
             (Scene::OverallView, Scene::SectionDetail(_)) => true,
             _ => false,
         };
         self.current_scene = scene;
+        if let Scene::SectionDetail(kind) = self.current_scene {
+            self.overall_selected = self.section_index_for_kind(kind);
+        }
         if reset {
             self.reset_section_state();
         }
@@ -959,6 +1115,7 @@ impl App {
 
     fn reset_section_state(&mut self) {
         self.section_selected = 0;
+        self.section_scroll = 0;
         self.detail_scroll = 0;
     }
 
@@ -976,9 +1133,12 @@ impl App {
     }
 
     fn cycle_section_mode(&mut self) {
-        if matches!(self.current_scene, Scene::SectionDetail(_)) {
+        if let Scene::SectionDetail(kind) = self.current_scene {
             self.section_mode = self.section_mode.next();
             self.detail_scroll = 0;
+            self.section_selected = self
+                .section_selected
+                .min(self.section_selected_len(kind).saturating_sub(1));
         }
     }
 
@@ -994,13 +1154,31 @@ impl App {
         }
     }
 
+    fn section_index_for_kind(&self, kind: SectionKind) -> usize {
+        self.source
+            .raw_sections
+            .iter()
+            .position(|block| block.section_id == kind.canonical_ids())
+            .or_else(|| {
+                self.source
+                    .raw_sections
+                    .iter()
+                    .position(|block| kind.is_raw_eq(block.section_id))
+            })
+            .unwrap_or(0)
+    }
+
     fn inspect_target_for_entity(&self, entity: EntityKind) -> Option<InspectTarget> {
         match entity {
             EntityKind::Function(func_ref) => self
                 .module()
                 .functions
                 .try_get_entity(func_ref)
-                .and_then(|entity| entity.to_defined().map(|_| InspectTarget::Function(func_ref))),
+                .and_then(|entity| {
+                    entity
+                        .to_defined()
+                        .map(|_| InspectTarget::Function(func_ref))
+                }),
             EntityKind::DataSymbol(data_ref) => self
                 .module()
                 .extra
@@ -1124,7 +1302,7 @@ impl RawSummary {
 
         let data_count =
             module.extra.mem_layout.item_places().len() + module.extra.mem_layout.external().len();
-        let section_rows = vec![
+        let structural_rows = vec![
             SectionSummary {
                 kind: SectionKind::Types,
                 title: "Types".to_owned(),
@@ -1205,7 +1383,7 @@ impl RawSummary {
                 count: data_count,
                 note: format!(
                     "{} raw segments, {} data symbols",
-                    raw.data.section_payload.data_segments.len(),
+                    raw.data.data_segments.len(),
                     data_count,
                 ),
             },
@@ -1225,7 +1403,7 @@ impl RawSummary {
             file_size,
             target_features: target_features_label(raw),
             validation_error,
-            section_rows,
+            structural_rows,
         }
     }
 }
@@ -1239,6 +1417,30 @@ fn move_index(current: usize, len: usize, delta: isize) -> usize {
     next.clamp(0, len.saturating_sub(1) as isize) as usize
 }
 
+fn wrap_index(current: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+
+    (current as isize + delta).rem_euclid(len as isize) as usize
+}
+
+/// Move `scroll` the minimum amount so that `selected` stays inside
+/// `[scroll, scroll + viewport)`. Returns the unchanged scroll when selected
+/// is already visible.
+fn adjust_scroll(scroll: usize, selected: usize, viewport: usize) -> usize {
+    if viewport == 0 {
+        return 0;
+    }
+    if selected < scroll {
+        selected
+    } else if selected >= scroll + viewport {
+        selected + 1 - viewport
+    } else {
+        scroll
+    }
+}
+
 fn validate_wasm(bytes: &[u8]) -> Option<String> {
     wasmparser::Validator::new()
         .validate_all(bytes)
@@ -1249,6 +1451,31 @@ fn validate_wasm(bytes: &[u8]) -> Option<String> {
 fn entity_name(name: Option<impl AsRef<str>>) -> String {
     name.map(|name| name.as_ref().to_owned())
         .unwrap_or_else(|| "<anon>".to_owned())
+}
+
+fn format_size_len(bytes: usize) -> String {
+    format!(
+        "{:<10} ({})",
+        format_size_units(bytes),
+        format_hex_len(bytes)
+    )
+}
+
+fn format_size_units(bytes: usize) -> String {
+    if bytes >= 1 << 30 {
+        format!("{:.2} GB", bytes as f64 / (1 << 30) as f64)
+    } else if bytes >= 1 << 20 {
+        format!("{:.2} MB", bytes as f64 / (1 << 20) as f64)
+    } else if bytes >= 1 << 10 {
+        format!("{:.2} KB", bytes as f64 / (1 << 10) as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn format_hex_len(bytes: usize) -> String {
+    let width = format!("{bytes:x}").len().max(8);
+    format!("0x{bytes:0width$x}")
 }
 
 fn function_type_label(func_type: &wasmparser::FuncType) -> String {
@@ -1325,65 +1552,35 @@ fn plain_hexdump_rows(bytes: &[u8], base_offset: usize) -> Vec<HexdumpRow> {
         .collect()
 }
 
-fn collect_raw_sections(bytes: &[u8]) -> anyhow::Result<Vec<RawSectionBlock>> {
-    let mut blocks = Vec::new();
-
-    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
-        match payload? {
-            wasmparser::Payload::Version { .. }
-            | wasmparser::Payload::End(_)
-            | wasmparser::Payload::CodeSectionEntry(_) => {}
-            wasmparser::Payload::TypeSection(reader) => {
-                blocks.push(raw_block(1, "Type", reader.range()))
-            }
-            wasmparser::Payload::ImportSection(reader) => {
-                blocks.push(raw_block(2, "Import", reader.range()))
-            }
-            wasmparser::Payload::FunctionSection(reader) => {
-                blocks.push(raw_block(3, "Function", reader.range()))
-            }
-            wasmparser::Payload::TableSection(reader) => {
-                blocks.push(raw_block(4, "Table", reader.range()))
-            }
-            wasmparser::Payload::MemorySection(reader) => {
-                blocks.push(raw_block(5, "Memory", reader.range()))
-            }
-            wasmparser::Payload::GlobalSection(reader) => {
-                blocks.push(raw_block(6, "Global", reader.range()))
-            }
-            wasmparser::Payload::ExportSection(reader) => {
-                blocks.push(raw_block(7, "Export", reader.range()))
-            }
-            wasmparser::Payload::StartSection { range, .. } => {
-                blocks.push(raw_block(8, "Start", range))
-            }
-            wasmparser::Payload::ElementSection(reader) => {
-                blocks.push(raw_block(9, "Element", reader.range()))
-            }
-            wasmparser::Payload::CodeSectionStart { range, .. } => {
-                blocks.push(raw_block(10, "Code", range))
-            }
-            wasmparser::Payload::DataSection(reader) => {
-                blocks.push(raw_block(11, "Data", reader.range()))
-            }
-            wasmparser::Payload::DataCountSection { range, .. } => {
-                blocks.push(raw_block(12, "DataCount", range))
-            }
-            wasmparser::Payload::TagSection(reader) => {
-                blocks.push(raw_block(13, "Tag", reader.range()))
-            }
-            wasmparser::Payload::CustomSection(_) => {}
-            _ => {}
-        }
-    }
-
-    Ok(blocks)
+fn collect_raw_sections(raw: &ObjectReader<'_>) -> Vec<RawSectionBlock> {
+    raw.section_headers
+        .iter()
+        .map(|header| {
+            let mut range = header.content_range.clone();
+            range.start = header.raw_start;
+            raw_block(
+                header.index,
+                header.id,
+                header.name.as_ref(),
+                range,
+                header.count,
+            )
+        })
+        .collect()
 }
 
-fn raw_block(canonical_id: SectionId, name: &str, range: Range<usize>) -> RawSectionBlock {
+fn raw_block(
+    section_index: usize,
+    section_id: SectionId,
+    name: &str,
+    range: Range<usize>,
+    count: Option<usize>,
+) -> RawSectionBlock {
     RawSectionBlock {
-        canonical_id,
+        section_index,
+        section_id,
         name: name.to_owned(),
         range,
+        count,
     }
 }

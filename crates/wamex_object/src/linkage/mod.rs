@@ -155,13 +155,13 @@ impl<'src> LinkageInfo<'src> {
         let code = &input
             .relocs
             .relocs
-            .get(input.code.section_index)
+            .get(input.code_section_index())
             .map(|r| &r.entries[..])
             .unwrap_or_default();
         let data = &input
             .relocs
             .relocs
-            .get(input.data.section_index)
+            .get(input.data_section_index())
             .map(|r| &r.entries[..])
             .unwrap_or_default();
 
@@ -181,9 +181,11 @@ impl<'src> LinkageInfo<'src> {
         }
 
         code.iter()
-            .map(|entry| AnyRelocationEntry::from_raw(*entry, input.code.starting_offset as isize)) // save original offset
+            .map(|entry| {
+                AnyRelocationEntry::from_raw(*entry, input.code_starting_offset() as isize)
+            }) // save original offset
             .chain(data.iter().map(|entry| {
-                AnyRelocationEntry::from_raw(*entry, input.data.starting_offset as isize)
+                AnyRelocationEntry::from_raw(*entry, input.data_starting_offset() as isize)
             }))
     }
 
