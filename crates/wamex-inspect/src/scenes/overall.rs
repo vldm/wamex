@@ -1,7 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 
 use super::helpers::{content_height, content_width, truncate_text};
@@ -108,7 +108,7 @@ fn sections_structural(app: &App, area: Rect) -> Paragraph<'static> {
     Paragraph::new(lines)
         .block(
             Block::default()
-                .title("Sections [structural]")
+                .title("Sections [Structured]")
                 .title_style(theme::title())
                 .borders(Borders::ALL)
                 .border_style(theme::border(true)),
@@ -119,11 +119,7 @@ fn sections_structural(app: &App, area: Rect) -> Paragraph<'static> {
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(4),
-            Constraint::Min(8),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Length(4), Constraint::Min(8)])
         .split(area);
 
     frame.render_widget(metadata_widget(app.path(), app.summary()), chunks[0]);
@@ -133,26 +129,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             let w = sections_raw(app, chunks[1]);
             frame.render_widget(w, chunks[1]);
         }
-        OverallViewMode::Structural => {
+        OverallViewMode::Structured => {
             let w = sections_structural(app, chunks[1]);
             frame.render_widget(w, chunks[1]);
         }
     }
-
-    let mode_tabs = Tabs::new(
-        OverallViewMode::ALL
-            .into_iter()
-            .map(|mode| Line::from(mode.title()))
-            .collect::<Vec<_>>(),
-    )
-    .select(app.overall_mode().tab_index())
-    .highlight_style(theme::selection())
-    .block(
-        Block::default()
-            .title("Mode")
-            .title_style(theme::title())
-            .borders(Borders::ALL)
-            .border_style(theme::border(true)),
-    );
-    frame.render_widget(mode_tabs, chunks[2]);
 }

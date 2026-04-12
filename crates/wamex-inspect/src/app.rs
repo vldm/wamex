@@ -87,7 +87,7 @@ impl App {
             }
             KeyCode::Left | KeyCode::Char('h') => self.move_scene(-1),
             KeyCode::Right | KeyCode::Char('l') => self.move_scene(1),
-            KeyCode::Tab => match &self.current_scene {
+            KeyCode::Char('s') | KeyCode::Char('S') => match &self.current_scene {
                 Scene::OverallView => self.cycle_overall_mode(),
                 Scene::SectionDetail(_) => self.cycle_section_mode(),
             },
@@ -124,6 +124,13 @@ impl App {
 
     pub fn overall_mode(&self) -> OverallViewMode {
         self.overall.mode()
+    }
+
+    pub fn is_structured_mode(&self) -> bool {
+        match self.current_scene {
+            Scene::OverallView => self.overall.mode() == OverallViewMode::Structured,
+            Scene::SectionDetail(_) => self.section_detail.mode() == SectionDetailMode::Structured,
+        }
     }
 
     // ─── Source accessors ────────────────────────────────────────────────────
@@ -290,13 +297,39 @@ impl App {
 
     fn move_selection(&mut self, delta: isize) {
         match self.current_scene {
-            Scene::OverallView => {
-                let len = match self.overall.mode() {
-                    OverallViewMode::Raw => self.source.raw_sections.len(),
-                    OverallViewMode::Structural => self.source.structural_overview.len(),
-                };
-                self.overall.move_selection(delta, len);
-            }
+            Scene::OverallView => match self.overall.mode() {
+                OverallViewMode::Raw => {
+                    let len = self.source.raw_sections.len();
+                    self.overall.move_selection(delta, len);
+                }
+                OverallViewMode::Structured => {
+                    // Collect indices of selectable (non-separator) rows
+                    let selectable: Vec<usize> = self
+                        .source
+                        .structural_overview
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.kind.is_some())
+                        .map(|(i, _)| i)
+                        .collect();
+                    if selectable.is_empty() {
+                        return;
+                    }
+                    // Find position of `selected` within selectable slice
+                    let cur_sel = self.overall.selected();
+                    let pos = selectable
+                        .iter()
+                        .position(|&i| i == cur_sel)
+                        .unwrap_or(0);
+                    let next_pos = (pos as isize + delta)
+                        .clamp(0, selectable.len() as isize - 1) as usize;
+                    let new_selected = selectable[next_pos];
+                    self.overall.move_selection(
+                        new_selected as isize - cur_sel as isize,
+                        self.source.structural_overview.len(),
+                    );
+                }
+            },
             Scene::SectionDetail(kind) => {
                 let len = self.section_selected_len(kind);
                 self.section_detail.move_selection(delta, len);
@@ -306,11 +339,24 @@ impl App {
 
     fn drill_in(&mut self) {
         match self.current_scene.clone() {
-            Scene::OverallView => {
-                if let Some(kind) = self.selected_overall_section_kind() {
-                    self.open_scene(Scene::SectionDetail(kind));
+            Scene::OverallView => match self.overall.mode() {
+                OverallViewMode::Raw => {
+                    if let Some(kind) = self.selected_overall_section_kind() {
+                        self.open_scene(Scene::SectionDetail(kind));
+                    }
                 }
-            }
+                OverallViewMode::Structured => {
+                    let sel = self.overall.selected();
+                    if let Some(kind) = self
+                        .source
+                        .structural_overview
+                        .get(sel)
+                        .and_then(|r| r.kind)
+                    {
+                        self.open_scene(Scene::SectionDetail(kind));
+                    }
+                }
+            },
             Scene::SectionDetail(kind) => {
                 if self.section_detail.mode() == SectionDetailMode::Structured
                     && let Some(entry) = self

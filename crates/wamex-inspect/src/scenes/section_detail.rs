@@ -1,39 +1,17 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 
 use crate::{App, HexdumpRow, SectionKind, scene::SectionDetailMode, theme};
 use super::helpers::{content_height, content_width, truncate_text};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(3)])
-        .split(area);
-
     match app.section_mode() {
-        SectionDetailMode::Raw => render_raw(frame, chunks[0], app, kind),
-        SectionDetailMode::Structured => render_structured(frame, chunks[0], app, kind),
+        SectionDetailMode::Raw => render_raw(frame, area, app, kind),
+        SectionDetailMode::Structured => render_structured(frame, area, app, kind),
     }
-
-    let mode_tabs = Tabs::new(
-        SectionDetailMode::ALL
-            .into_iter()
-            .map(|mode| Line::from(mode.title()))
-            .collect::<Vec<_>>(),
-    )
-    .select(app.section_mode().tab_index())
-    .highlight_style(theme::selection())
-    .block(
-        Block::default()
-            .title("Mode")
-            .title_style(theme::title())
-            .borders(Borders::ALL)
-            .border_style(theme::border(true)),
-    );
-    frame.render_widget(mode_tabs, chunks[1]);
 }
 
 fn render_raw(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {

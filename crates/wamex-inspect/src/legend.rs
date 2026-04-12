@@ -4,21 +4,20 @@ use crate::{App, scene::Scene, theme};
 
 pub fn footer(app: &App) -> Line<'static> {
     let scene = app.current_scene();
-    let mut spans = vec![
+    let mode_label = match scene {
+        Scene::OverallView => app.overall_mode().title(),
+        Scene::SectionDetail(_) => app.section_mode().title(),
+    };
+    let spans = vec![
         Span::raw("q quit  "),
         Span::raw("← → scenes  "),
         Span::raw("Enter drill  "),
         Span::raw("Esc back  "),
         Span::raw("? help  "),
-        Span::raw("↑↓ move"),
+        Span::raw("↑↓ move  "),
+        Span::raw("s mode: "),
+        Span::styled(mode_label, theme::selection()),
     ];
-
-    if matches!(scene, Scene::SectionDetail(_)) {
-        spans.extend([
-            Span::raw("  |  Tab mode: "),
-            Span::styled(app.section_mode().title(), theme::selection()),
-        ]);
-    }
 
     Line::from(spans)
 }
@@ -29,7 +28,7 @@ pub fn help() -> Vec<Line<'static>> {
         Line::from("2 Section detail"),
         Line::from(""),
         Line::from("Left/Right switch top-level scenes."),
-        Line::from("Tab cycles section mode: raw, structured."),
+        Line::from("s toggles mode (Raw/Structured) in Overview and Section views."),
         Line::from("Enter from Overall opens selected section."),
         Line::from("Enter from Structured jumps to related section when available."),
         Line::from("Esc or Backspace returns to previous drill-in scene."),

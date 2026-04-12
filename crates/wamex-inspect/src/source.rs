@@ -34,6 +34,7 @@ pub struct SectionSummary {
 #[derive(Clone, Debug)]
 pub struct StructuralRow {
     pub text: String,
+    pub kind: Option<SectionKind>,
 }
 
 #[derive(Clone, Debug)]
@@ -195,8 +196,9 @@ pub fn build_structural_overview(loaded: &LoadedFile<'_>) -> Vec<StructuralRow> 
     let module = &loaded.module;
     let mut rows = Vec::new();
 
-    let entity_row = |label: &str, imports: usize, defined: usize, exported: usize| StructuralRow {
+    let entity_row = |label: &str, imports: usize, defined: usize, exported: usize, kind: SectionKind| StructuralRow {
         text: format!("{label:<10}  imports: {imports}  defined: {defined}  exported: {exported}"),
+        kind: Some(kind),
     };
 
     rows.push(entity_row(
@@ -204,38 +206,41 @@ pub fn build_structural_overview(loaded: &LoadedFile<'_>) -> Vec<StructuralRow> 
         module.functions.imports_iter().len(),
         module.functions.defined_iter().len(),
         module.functions.exports_iter().count(),
+        SectionKind::Functions,
     ));
     rows.push(entity_row(
         "tables",
         module.tables.imports_iter().len(),
         module.tables.defined_iter().len(),
         module.tables.exports_iter().count(),
+        SectionKind::Tables,
     ));
     rows.push(entity_row(
         "memories",
         module.memories.imports_iter().len(),
         module.memories.defined_iter().len(),
         module.memories.exports_iter().count(),
+        SectionKind::Memories,
     ));
     rows.push(entity_row(
         "globals",
         module.globals.imports_iter().len(),
         module.globals.defined_iter().len(),
         module.globals.exports_iter().count(),
+        SectionKind::Globals,
     ));
     rows.push(entity_row(
         "tags",
         module.tags.imports_iter().len(),
         module.tags.defined_iter().len(),
         module.tags.exports_iter().count(),
+        SectionKind::Tags,
     ));
 
     // Data segments
     let segments = module.extra.mem_layout.segments();
     if !segments.is_empty() {
-        rows.push(StructuralRow {
-            text: String::new(),
-        });
+        rows.push(StructuralRow { text: String::new(), kind: None });
         for (_seg_id, segment) in segments.iter() {
             rows.push(data_segment_row(segment));
         }
@@ -244,17 +249,18 @@ pub fn build_structural_overview(loaded: &LoadedFile<'_>) -> Vec<StructuralRow> 
     // Element segments
     let elem_segments = &module.extra.function_elements.segments;
     if !elem_segments.is_empty() {
-        rows.push(StructuralRow {
-            text: String::new(),
-        });
+        rows.push(StructuralRow { text: String::new(), kind: None });
         for (_seg_id, segment) in elem_segments.iter() {
+            let name = segment.name.as_ref();
+            let name = if name.len() > 20 { &name[..20] } else { name };
             rows.push(StructuralRow {
                 text: format!(
-                    "element {:?}  kind: {:?}  items: {}",
-                    segment.name.as_ref(),
+                    "element \"{}\"  kind: {:?}  items: {}",
+                    name,
                     segment.kind,
                     segment.parts.len(),
                 ),
+                kind: Some(SectionKind::Elements),
             });
         }
     }
@@ -269,27 +275,23 @@ fn data_segment_row(segment: &SealedDataSegment<'_>) -> StructuralRow {
         .map(|item| item.defined_entity.body.len())
         .sum();
     let items = segment.parts.len();
+    let name = segment.name.as_ref();
+    let name = if name.len() > 20 { &name[..20] } else { name };
     let location = match &segment.va_address {
-        DataKind::Active {
-            memory_ref,
-            location,
-        } => {
-            format!(
-                "mem: {}  offset: 0x{:x}",
-                memory_ref.as_u32(),
-                location.offset()
-            )
+        DataKind::Active { location, .. } => {
+            format!("offset: 0x{:x}", location.offset())
         }
         DataKind::Passive => "passive".to_owned(),
     };
     StructuralRow {
         text: format!(
-            "data {:?}  size: {}  {}  items: {}",
-            segment.name.as_ref(),
+            "data \"{}\"  size: {}  {}  items: {}",
+            name,
             format_size_len(total_size),
             location,
             items,
         ),
+        kind: Some(SectionKind::Data),
     }
 }
 

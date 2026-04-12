@@ -134,30 +134,21 @@ impl SectionDetailMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OverallViewMode {
     Raw,
-    Structural,
+    Structured,
 }
 
 impl OverallViewMode {
-    pub const ALL: [OverallViewMode; 2] = [OverallViewMode::Raw, OverallViewMode::Structural];
-
     pub fn title(self) -> &'static str {
         match self {
             OverallViewMode::Raw => "Raw",
-            OverallViewMode::Structural => "Structural",
+            OverallViewMode::Structured => "Structured",
         }
     }
 
     pub fn next(self) -> Self {
         match self {
-            OverallViewMode::Raw => OverallViewMode::Structural,
-            OverallViewMode::Structural => OverallViewMode::Raw,
-        }
-    }
-
-    pub fn tab_index(self) -> usize {
-        match self {
-            OverallViewMode::Raw => 0,
-            OverallViewMode::Structural => 1,
+            OverallViewMode::Raw => OverallViewMode::Structured,
+            OverallViewMode::Structured => OverallViewMode::Raw,
         }
     }
 }

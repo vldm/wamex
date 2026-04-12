@@ -51,15 +51,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
 fn render_status(app: &App) -> Paragraph<'static> {
     let summary = app.summary();
     let scene = app.current_scene().header_title();
+    let mode_badge = if app.is_structured_mode() { "  [Structured]" } else { "" };
     let mut spans = if let Some(error) = &summary.validation_error {
         vec![
             Span::styled("INVALID ", theme::status_error()),
-            Span::raw(format!("{}  |  {}", scene, error)),
+            Span::raw(format!("{}{}  |  {}", scene, mode_badge, error)),
         ]
     } else {
         vec![
             Span::styled("VALID ", theme::status_ok()),
-            Span::raw(format!("{}  |  {}", scene, app.path().display())),
+            Span::raw(format!("{}{}  |  {}", scene, mode_badge, app.path().display())),
         ]
     };
 
