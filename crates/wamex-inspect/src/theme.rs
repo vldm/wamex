@@ -1,7 +1,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use wamex_object::linkage::reloc::Relative;
 
-use crate::app::Accent;
+use crate::scenes::section_detail_state::Accent;
 
 pub fn title() -> Style {
     Style::default()

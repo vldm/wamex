@@ -13,16 +13,20 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 mod app;
 mod event;
+mod hexdump;
 mod legend;
 mod scene;
 mod scenes;
+mod scroll;
+mod source;
 mod theme;
 mod ui;
 
-pub use app::{
-    Accent, App, DetailView, HexdumpRow, ListEntry, RawBlockView, RawSummary, RelocationLine,
-};
+pub use app::App;
+pub use hexdump::{HexdumpRow, RawBlockView};
 pub use scene::{InspectTarget, Scene, SectionDetailMode, SectionKind};
+pub use scenes::section_detail_state::{Accent, DetailView, ListEntry, RelocationLine};
+pub use source::RawSummary;
 
 pub fn run_path(path: PathBuf) -> Result<()> {
     let mut app = App::load(path)?;
