@@ -1,11 +1,11 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Tabs, Wrap},
 };
 
 use super::helpers::{content_height, content_width, truncate_text};
-use crate::{App, theme};
+use crate::{App, scene::OverallViewMode, theme};
 
 // Print in human-friendly format, and full bytes in parens.
 fn format_bytes_len(bytes: usize) -> String {
@@ -80,15 +80,79 @@ fn sections_raw(app: &App, area: Rect) -> Paragraph<'static> {
         .wrap(Wrap { trim: false })
 }
 
+fn sections_structural(app: &App, area: Rect) -> Paragraph<'static> {
+    let rows = app.structural_overview();
+    let len = rows.len();
+
+    let width = content_width(area);
+    let viewport = content_height(area);
+    app.set_overall_viewport(viewport);
+    let scroll = app.overall_scroll();
+    let end = (scroll + viewport).min(len);
+
+    let lines = rows
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(end.saturating_sub(scroll))
+        .map(|(idx, row)| {
+            let style = if idx == app.overall_selected() {
+                theme::selection()
+            } else {
+                Style::default().fg(Color::White)
+            };
+            Line::from(Span::styled(truncate_text(&row.text, width), style))
+        })
+        .collect::<Vec<_>>();
+
+    Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title("Sections [structural]")
+                .title_style(theme::title())
+                .borders(Borders::ALL)
+                .border_style(theme::border(true)),
+        )
+        .wrap(Wrap { trim: false })
+}
+
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(8)])
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(8),
+            Constraint::Length(3),
+        ])
         .split(area);
 
-    let meta_widget = metadata_widget(app.path(), app.summary());
-    frame.render_widget(meta_widget, chunks[0]);
+    frame.render_widget(metadata_widget(app.path(), app.summary()), chunks[0]);
 
-    let section_widget = sections_raw(app, chunks[1]);
-    frame.render_widget(section_widget, chunks[1]);
+    match app.overall_mode() {
+        OverallViewMode::Raw => {
+            let w = sections_raw(app, chunks[1]);
+            frame.render_widget(w, chunks[1]);
+        }
+        OverallViewMode::Structural => {
+            let w = sections_structural(app, chunks[1]);
+            frame.render_widget(w, chunks[1]);
+        }
+    }
+
+    let mode_tabs = Tabs::new(
+        OverallViewMode::ALL
+            .into_iter()
+            .map(|mode| Line::from(mode.title()))
+            .collect::<Vec<_>>(),
+    )
+    .select(app.overall_mode().tab_index())
+    .highlight_style(theme::selection())
+    .block(
+        Block::default()
+            .title("Mode")
+            .title_style(theme::title())
+            .borders(Borders::ALL)
+            .border_style(theme::border(true)),
+    );
+    frame.render_widget(mode_tabs, chunks[2]);
 }

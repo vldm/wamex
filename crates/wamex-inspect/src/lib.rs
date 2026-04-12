@@ -24,9 +24,9 @@ mod ui;
 
 pub use app::App;
 pub use hexdump::{HexdumpRow, RawBlockView};
-pub use scene::{InspectTarget, Scene, SectionDetailMode, SectionKind};
+pub use scene::{InspectTarget, OverallViewMode, Scene, SectionDetailMode, SectionKind};
 pub use scenes::section_detail_state::{Accent, DetailView, ListEntry, RelocationLine};
-pub use source::RawSummary;
+pub use source::{RawSummary, StructuralRow};
 
 pub fn run_path(path: PathBuf) -> Result<()> {
     let mut app = App::load(path)?;

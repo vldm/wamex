@@ -132,6 +132,37 @@ impl SectionDetailMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OverallViewMode {
+    Raw,
+    Structural,
+}
+
+impl OverallViewMode {
+    pub const ALL: [OverallViewMode; 2] = [OverallViewMode::Raw, OverallViewMode::Structural];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            OverallViewMode::Raw => "Raw",
+            OverallViewMode::Structural => "Structural",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            OverallViewMode::Raw => OverallViewMode::Structural,
+            OverallViewMode::Structural => OverallViewMode::Raw,
+        }
+    }
+
+    pub fn tab_index(self) -> usize {
+        match self {
+            OverallViewMode::Raw => 0,
+            OverallViewMode::Structural => 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InspectTarget {
     Function(FunctionRef),
     Data(DataSymbolRef),

@@ -5,7 +5,7 @@ use wamex_object::typed::{EntityKind, FileLoader, LoadedFile, Module};
 
 use crate::{
     hexdump::{HexdumpRow, RawBlockView},
-    scene::{InspectTarget, Scene, SectionDetailMode, SectionKind},
+    scene::{InspectTarget, OverallViewMode, Scene, SectionDetailMode, SectionKind},
     scenes::{
         overall_state::{OverallState, raw_section_title, section_index_for_kind},
         section_detail_state::{
@@ -15,8 +15,8 @@ use crate::{
         },
     },
     source::{
-        RawSectionBlock, RawSummary, SectionSummary, SourceFile, collect_raw_sections,
-        validate_wasm,
+        RawSectionBlock, RawSummary, SectionSummary, SourceFile, StructuralRow,
+        build_structural_overview, collect_raw_sections, validate_wasm,
     },
 };
 
@@ -44,6 +44,7 @@ impl App {
         let loaded = loader.get_file(file_id);
         let raw_sections = collect_raw_sections(loaded.raw_reader());
         let summary = RawSummary::from_parts(&loaded, validation_error, file_size);
+        let structural_overview = build_structural_overview(&loaded);
 
         Ok(Self {
             source: SourceFile {
@@ -53,6 +54,7 @@ impl App {
                 loader,
                 file_id,
                 summary,
+                structural_overview,
             },
             current_scene: Scene::OverallView,
             scene_stack: Vec::new(),
@@ -85,7 +87,10 @@ impl App {
             }
             KeyCode::Left | KeyCode::Char('h') => self.move_scene(-1),
             KeyCode::Right | KeyCode::Char('l') => self.move_scene(1),
-            KeyCode::Tab => self.cycle_section_mode(),
+            KeyCode::Tab => match &self.current_scene {
+                Scene::OverallView => self.cycle_overall_mode(),
+                Scene::SectionDetail(_) => self.cycle_section_mode(),
+            },
             KeyCode::Esc | KeyCode::Backspace => self.go_back(),
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
@@ -117,6 +122,10 @@ impl App {
         self.section_detail.mode()
     }
 
+    pub fn overall_mode(&self) -> OverallViewMode {
+        self.overall.mode()
+    }
+
     // ─── Source accessors ────────────────────────────────────────────────────
 
     pub fn path(&self) -> &Path {
@@ -137,6 +146,10 @@ impl App {
 
     pub(crate) fn raw_sections(&self) -> &[RawSectionBlock] {
         &self.source.raw_sections
+    }
+
+    pub fn structural_overview(&self) -> &[StructuralRow] {
+        &self.source.structural_overview
     }
 
     // ─── Overall-view delegates ──────────────────────────────────────────────
@@ -278,7 +291,10 @@ impl App {
     fn move_selection(&mut self, delta: isize) {
         match self.current_scene {
             Scene::OverallView => {
-                let len = self.source.raw_sections.len();
+                let len = match self.overall.mode() {
+                    OverallViewMode::Raw => self.source.raw_sections.len(),
+                    OverallViewMode::Structural => self.source.structural_overview.len(),
+                };
                 self.overall.move_selection(delta, len);
             }
             Scene::SectionDetail(kind) => {
@@ -368,6 +384,10 @@ impl App {
             let current_len = self.section_selected_len(kind);
             self.section_detail.cycle_mode(kind, current_len);
         }
+    }
+
+    fn cycle_overall_mode(&mut self) {
+        self.overall.cycle_mode();
     }
 
     fn selected_overall_section_kind(&self) -> Option<SectionKind> {
