@@ -172,6 +172,10 @@ impl InspectTarget {
 pub enum Scene {
     OverallView,
     SectionDetail(SectionKind),
+    /// Detail view for a specific entry in a section.
+    /// `usize` is the entry index within the current mode's list
+    /// (raw block index when mode is Raw, entry index when mode is Structured).
+    Detail(SectionKind, usize),
 }
 
 impl Scene {
@@ -179,21 +183,26 @@ impl Scene {
         match self {
             Scene::OverallView => 0,
             Scene::SectionDetail(_) => 1,
+            Scene::Detail(_, _) => 2,
         }
     }
 
     pub fn tab_title(&self) -> &'static str {
         match self {
-            Scene::OverallView => "Overall",
+            Scene::OverallView => "Overview",
             Scene::SectionDetail(_) => "Section",
+            Scene::Detail(_, _) => "Detail",
         }
     }
 
     pub fn header_title(&self) -> String {
         match self {
-            Scene::OverallView => "Overall view".to_owned(),
+            Scene::OverallView => "Overview".to_owned(),
             Scene::SectionDetail(kind) => {
                 format!("Section: [{}] {}", kind.canonical_label(), kind.title())
+            }
+            Scene::Detail(kind, _) => {
+                format!("Detail: [{}] {}", kind.canonical_label(), kind.title())
             }
         }
     }

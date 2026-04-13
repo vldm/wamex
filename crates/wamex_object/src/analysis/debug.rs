@@ -64,14 +64,14 @@ pub(crate) fn print_deps_inner(
     }
 
     let mut total_size: usize = 0;
-    for r in reachable.iter() {
+    for r in reachable {
         let symbol = graph.snapshot().unpack_ref(*r);
         total_size += info.get_body_len(symbol);
     }
     println!("SPLIT: ============== {module_name} : total size: {total_size}");
 }
 
-/// Format a DepGraph into a human-readable string for snapshot testing
+/// Format a `DepGraph` into a human-readable string for snapshot testing
 pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
     use std::fmt::Write;
 
@@ -130,7 +130,7 @@ pub fn format_dep_graph(graph: &DepGraph, info: &Module) -> String {
     output
 }
 
-/// Format a SplitProgramInfo into a human-readable string for snapshot testing
+/// Format a `SplitProgramInfo` into a human-readable string for snapshot testing
 pub fn format_split_program_info(
     split_info: &crate::analysis::split::SplitProgramInfo,
     info: &Module,

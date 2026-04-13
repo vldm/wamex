@@ -5,3 +5,9 @@ rustflags = ['-Ctarget-cpu=native'] # for gxhash
 # Flags for examples
 [target.wasm32-unknown-unknown]
 rustflags = ['-Clink-args=--emit-relocs']
+
+# [unstable]
+# codegen-backend = true
+
+# [profile.dev]
+# codegen-backend = "cranelift"

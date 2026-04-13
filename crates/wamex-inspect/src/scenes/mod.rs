@@ -1,3 +1,4 @@
+pub mod detail;
 pub mod helpers;
 pub mod overall;
 pub mod overall_state;

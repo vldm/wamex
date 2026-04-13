@@ -192,9 +192,16 @@ pub fn detail_view(
     state: &SectionDetailState,
     kind: SectionKind,
 ) -> Option<DetailView> {
-    let entry = section_entries(module, loaded, kind)
-        .into_iter()
-        .nth(state.selected())?;
+    detail_view_at_index(module, loaded, kind, state.selected())
+}
+
+pub fn detail_view_at_index(
+    module: &Module<'_>,
+    loaded: &LoadedFile<'_>,
+    kind: SectionKind,
+    idx: usize,
+) -> Option<DetailView> {
+    let entry = section_entries(module, loaded, kind).into_iter().nth(idx)?;
 
     let dump_rows = entry
         .inspect_target

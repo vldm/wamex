@@ -151,6 +151,7 @@ pub struct SharedEntry<Id> {
 pub fn get_dependencies(info: &LoadedFile) -> anyhow::Result<DepGraph> {
     get_dependencies_with_filter(info, |e| !e.is_type())
 }
+
 #[inline]
 pub fn get_dependencies_with_filter(
     info: &LoadedFile,
@@ -301,7 +302,7 @@ impl<Id> NamedGraph<Id> {
 
         // For each dep -> child if child is not found in deps: add it to linked_nodes
         // Imports
-        for shared in result.iter_mut() {
+        for shared in &mut result {
             let new_imports = shared
                 .shared_deps
                 .iter()
@@ -338,11 +339,7 @@ mod tests {
 
     use super::{DepGraph, DepSet};
     use crate::{
-        analysis::{
-            debug::print_deps_inner,
-            dep_graph::{ DepMiniSet},
-            get_dependencies, testing,
-        },
+        analysis::{debug::print_deps_inner, dep_graph::DepMiniSet, get_dependencies, testing},
         emit::relocation::EntityLocation,
         typed::{EntityKind, FileLoader, LoadedFile, Module, snapshot::FlatEntityRef},
     };
@@ -465,10 +462,10 @@ mod tests {
     thread_local! {
         static TEST_GRAPH: LazyCell<DepGraph> = LazyCell::new(|| {
             testing::parse_deps(
-                r#"
+                r"
             1 -> 2 & 4 -> 5 & 7 -> 8
             11 -> 4 & 12
-            "#,
+            ",
             )
             .unwrap()
         });
@@ -541,12 +538,12 @@ mod tests {
 
     #[test]
     fn test_multiple_shared_deps() {
-        let input = r#"
+        let input = r"
         1 -> 102 & 11 & 4 -> 115
         11 -> 112 -> 12 & 4 & 7 -> 118
         10 -> 111 & 7
         20 -> 4 & 7
-        "#;
+        ";
         let mut modules = vec![
             super::NamedGraph::new(
                 "module1",
@@ -600,10 +597,10 @@ mod tests {
     #[test]
     fn test_recursive_shared_deps() {
         // F4 is parent of F7 which call F4
-        let input = r#"
+        let input = r"
         1 -> 102 & 4 -> 105 & 7 -> 108 & 4
         10 -> 111 -> 4
-        "#;
+        ";
         let mut modules = vec![
             super::NamedGraph::new(
                 "module1",
@@ -639,14 +636,14 @@ mod tests {
 
     #[test]
     fn test_shared_deps_reduced() {
-        let source = r#"
+        let source = r"
     899  -> 307 & 912
     1358 -> 1417 & 1418 & 4759
     124  -> 4759
     307  -> 308 & 124
     912  -> 1358
     1    -> 307
-            "#;
+            ";
         let graph = testing::parse_deps(source).unwrap();
 
         let mut modules = vec![
@@ -683,7 +680,7 @@ mod tests {
         }
     }
 
-    const INPUT: &str = r#"
+    const INPUT: &str = r"
     1358 -> 1359 & 1366 & 1417
     4453 -> 4800 & 4759
     912  -> 1358
@@ -694,7 +691,7 @@ mod tests {
     1418 -> 4759
     899  -> 912 & 307 & 916
     4671 -> 4663
-                "#;
+                ";
     #[test]
     fn test_deps_in_shared_conflict() {
         assert!(test_deps_in_shared_conflict_impl(INPUT));

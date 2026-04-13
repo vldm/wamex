@@ -2,12 +2,13 @@
 /pkg
 /split_tmp
 
-
+# Local usage of LLMs is allowed,
+# but don't create a garbage file for them in repo
 AGENTS.md
 CLAUDE.md
 # temp files
 plan.txt
 test.txt
-# insta snapshot files
-**/*.snap.new
 test-output/*
+# insta snapshot NEW files
+**/*.snap.new
