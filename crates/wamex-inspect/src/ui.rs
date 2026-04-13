@@ -38,9 +38,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     match app.current_scene() {
         Scene::OverallView => scenes::overall::render(frame, main_area, app),
-        Scene::SectionDetail(kind) => {
-            scenes::section_detail::render(frame, main_area, app, *kind)
-        }
+        Scene::SectionDetail(kind) => scenes::section_detail::render(frame, main_area, app, *kind),
         Scene::Detail(kind, idx) => scenes::detail::render(frame, main_area, app, *kind, *idx),
     }
 
@@ -69,14 +67,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 /// Render the preview pane — shows content one level deeper than the current scene.
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
-    use crate::scenes::helpers::render_hexdump_row;
-    use crate::scenes::helpers::{content_width, truncate_text};
+    use crate::scenes::helpers::{content_width, render_hexdump_row, truncate_text};
 
     match app.current_scene() {
         Scene::OverallView => {
             // Preview shows Section content for the currently highlighted section.
-            match app.overall_mode() {
-                crate::OverallViewMode::Raw => {
+            match app.mode() {
+                crate::ViewMode::Raw => {
                     // Show hexdump of the selected raw section.
                     let mut lines = Vec::new();
                     if let Some(block) = app.overview_raw_preview() {
@@ -101,7 +98,7 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
                         .wrap(Wrap { trim: false });
                     frame.render_widget(p, area);
                 }
-                crate::OverallViewMode::Structured => {
+                crate::ViewMode::Structured => {
                     // Show entity list for the selected section kind.
                     let kind = app.overview_structural_preview_section();
                     let entries = app.section_entries(kind);
@@ -135,11 +132,11 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
         Scene::SectionDetail(kind) => {
             // Preview shows Detail content for the currently selected entry.
             let idx = app.section_selected();
-            match app.section_mode() {
-                crate::SectionDetailMode::Raw => {
+            match app.mode() {
+                crate::ViewMode::Raw => {
                     scenes::detail::render_raw_block(frame, area, app, *kind, idx);
                 }
-                crate::SectionDetailMode::Structured => {
+                crate::ViewMode::Structured => {
                     scenes::detail::render_structured_detail(frame, area, app, *kind, idx);
                 }
             }
@@ -154,7 +151,12 @@ fn render_status(app: &App) -> Paragraph<'static> {
     let mut spans = if let Some(error) = &summary.validation_error {
         vec![
             Span::styled("INVALID ", theme::status_error()),
-            Span::raw(format!("{}  size: {}  |  error: {}", app.path().display(), size_str, error)),
+            Span::raw(format!(
+                "{}  size: {}  |  error: {}",
+                app.path().display(),
+                size_str,
+                error
+            )),
         ]
     } else {
         vec![

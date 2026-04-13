@@ -4,14 +4,14 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::{App, SectionKind, scene::SectionDetailMode, theme};
+use crate::{App, SectionKind, scene::ViewMode, theme};
 use super::helpers::{content_width, render_hexdump_row, truncate_text};
 
 /// Renders the Detail scene (full screen — one specific section entry).
 pub fn render(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind, idx: usize) {
-    match app.section_mode() {
-        SectionDetailMode::Raw => render_raw(frame, area, app, kind, idx),
-        SectionDetailMode::Structured => render_structured(frame, area, app, kind, idx),
+    match app.mode() {
+        ViewMode::Raw => render_raw(frame, area, app, kind, idx),
+        ViewMode::Structured => render_structured(frame, area, app, kind, idx),
     }
 }
 

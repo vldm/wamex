@@ -23,3 +23,5 @@ But all that tooling is very limited in representing structural information link
 While usage of LLM in `wamex-object` is not recommended (due to novelity of architecture, and constant desire of LLMs to duplicate code), in `wamex-inspect` 80% starting code was implement using various of LLMs based on design drawing in: 
 
 ![tui-screens.excalidraw.png](tui-screens.excalidraw.png)
+
+Usage LLMs in TUI looks promising, but any contribution using LLMs should be reviewed and signed by real person before committing.

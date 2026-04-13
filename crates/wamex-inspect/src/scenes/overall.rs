@@ -5,7 +5,7 @@ use ratatui::{
 };
 
 use super::helpers::{content_height, content_width, truncate_text};
-use crate::{App, scene::OverallViewMode, theme};
+use crate::{App, scene::ViewMode, theme};
 
 // Print in human-friendly format, and full bytes in parens.
 fn format_bytes_len(bytes: usize) -> String {
@@ -124,12 +124,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(metadata_widget(app.path(), app.summary()), chunks[0]);
 
-    match app.overall_mode() {
-        OverallViewMode::Raw => {
+    match app.mode() {
+        ViewMode::Raw => {
             let w = sections_raw(app, chunks[1]);
             frame.render_widget(w, chunks[1]);
         }
-        OverallViewMode::Structured => {
+        ViewMode::Structured => {
             let w = sections_structural(app, chunks[1]);
             frame.render_widget(w, chunks[1]);
         }

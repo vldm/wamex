@@ -5,9 +5,9 @@ use wamex_object::typed::{EntityKind, FileLoader, LoadedFile, Module};
 
 use crate::{
     hexdump::{HexdumpRow, RawBlockView},
-    scene::{InspectTarget, OverallViewMode, Scene, SectionDetailMode, SectionKind},
+    scene::{InspectTarget, Scene, SectionKind, ViewMode},
     scenes::{
-        overall_state::{OverallState, raw_section_title, section_index_for_kind},
+        overall_state::{OverallState, raw_section_title},
         section_detail_state::{
             DetailView, ListEntry, RelocationLine, SectionDetailState, detail_view,
             detail_view_at_index, hexdump_rows, raw_blocks, raw_preview, reloc_lines,
@@ -23,8 +23,8 @@ use crate::{
 pub struct App {
     source: SourceFile,
     current_scene: Scene,
-    scene_stack: Vec<Scene>,
 
+    mode: ViewMode,
     overall: OverallState,
     section_detail: SectionDetailState,
 
@@ -58,7 +58,7 @@ impl App {
                 structural_overview,
             },
             current_scene: Scene::OverallView,
-            scene_stack: Vec::new(),
+            mode: ViewMode::Raw,
             show_help: false,
             show_preview: true,
             should_quit: false,
@@ -83,17 +83,17 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.show_help = true,
-            KeyCode::Char(c) if ('1'..='3').contains(&c) => {
+            KeyCode::Char(c) if ('1'..='2').contains(&c) => {
                 let idx = (c as u8 - b'1') as usize;
-                self.replace_scene(self.top_level_scene(idx));
+                self.jump_to_scene(idx);
             }
-            KeyCode::Left | KeyCode::Char('h') => self.move_scene(-1),
-            KeyCode::Right | KeyCode::Char('l') => self.move_scene(1),
             KeyCode::Char('p') | KeyCode::Char('P') => self.show_preview = !self.show_preview,
-            KeyCode::Char('s') | KeyCode::Char('S') => match &self.current_scene {
-                Scene::OverallView => self.cycle_overall_mode(),
-                Scene::SectionDetail(_) => self.cycle_section_mode(),
-                Scene::Detail(_, _) => {} // mode is fixed once in Detail
+            KeyCode::Char('s') | KeyCode::Char('S') => match self.current_scene {
+                Scene::OverallView | Scene::SectionDetail(_) => self.cycle_mode(),
+                Scene::Detail(kind, _) => {
+                    self.current_scene = Scene::SectionDetail(kind);
+                    self.cycle_mode();
+                }
             },
             KeyCode::Esc | KeyCode::Backspace => self.go_back(),
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
@@ -126,21 +126,12 @@ impl App {
         self.show_preview
     }
 
-    pub fn section_mode(&self) -> SectionDetailMode {
-        self.section_detail.mode()
-    }
-
-    pub fn overall_mode(&self) -> OverallViewMode {
-        self.overall.mode()
+    pub fn mode(&self) -> ViewMode {
+        self.mode
     }
 
     pub fn is_structured_mode(&self) -> bool {
-        match self.current_scene {
-            Scene::OverallView => self.overall.mode() == OverallViewMode::Structured,
-            Scene::SectionDetail(_) | Scene::Detail(_, _) => {
-                self.section_detail.mode() == SectionDetailMode::Structured
-            }
-        }
+        self.mode == ViewMode::Structured
     }
 
     // ─── Source accessors ────────────────────────────────────────────────────
@@ -212,7 +203,7 @@ impl App {
             &self.source.raw_sections,
             self.module(),
             &loaded,
-            &self.section_detail,
+            self.mode,
             kind,
         )
     }
@@ -313,7 +304,7 @@ impl App {
             Scene::SectionDetail(kind) | Scene::Detail(kind, _) => kind,
             Scene::OverallView => return None,
         };
-        if self.section_detail.mode() != SectionDetailMode::Structured {
+        if self.mode != ViewMode::Structured {
             return None;
         }
         self.section_notice(kind).map(str::to_owned)
@@ -335,12 +326,12 @@ impl App {
 
     fn move_selection(&mut self, delta: isize) {
         match self.current_scene {
-            Scene::OverallView => match self.overall.mode() {
-                OverallViewMode::Raw => {
+            Scene::OverallView => match self.mode {
+                ViewMode::Raw => {
                     let len = self.source.raw_sections.len();
                     self.overall.move_selection(delta, len);
                 }
-                OverallViewMode::Structured => {
+                ViewMode::Structured => {
                     // Collect indices of selectable (non-separator) rows
                     let selectable: Vec<usize> = self
                         .source
@@ -375,13 +366,14 @@ impl App {
 
     fn drill_in(&mut self) {
         match self.current_scene.clone() {
-            Scene::OverallView => match self.overall.mode() {
-                OverallViewMode::Raw => {
+            Scene::OverallView => match self.mode {
+                ViewMode::Raw => {
                     if let Some(kind) = self.selected_overall_section_kind() {
-                        self.open_scene(Scene::SectionDetail(kind));
+                        self.current_scene = Scene::SectionDetail(kind);
+                        self.section_detail.reset();
                     }
                 }
-                OverallViewMode::Structured => {
+                ViewMode::Structured => {
                     let sel = self.overall.selected();
                     if let Some(kind) = self
                         .source
@@ -389,7 +381,8 @@ impl App {
                         .get(sel)
                         .and_then(|r| r.kind)
                     {
-                        self.open_scene(Scene::SectionDetail(kind));
+                        self.current_scene = Scene::SectionDetail(kind);
+                        self.section_detail.reset();
                     }
                 }
             },
@@ -397,7 +390,7 @@ impl App {
                 let idx = self.section_detail.selected();
                 let len = self.section_selected_len(kind);
                 if len > 0 && idx < len {
-                    self.open_scene(Scene::Detail(kind, idx));
+                    self.current_scene = Scene::Detail(kind, idx);
                 }
             }
             Scene::Detail(_, _) => {} // no further drilling from Detail
@@ -405,98 +398,43 @@ impl App {
     }
 
     fn go_back(&mut self) {
-        if let Some(previous) = self.scene_stack.pop() {
-            self.current_scene = previous;
+        self.current_scene = match self.current_scene {
+            Scene::Detail(kind, _) => Scene::SectionDetail(kind),
+            Scene::SectionDetail(_) | Scene::OverallView => Scene::OverallView,
+        };
+    }
+
+    fn cycle_mode(&mut self) {
+        self.mode = self.mode.next();
+        match self.current_scene {
+            Scene::OverallView => {
+                self.overall.selection.selected = 0;
+                self.overall.selection.scroll = 0;
+            }
+            Scene::SectionDetail(_) | Scene::Detail(_, _) => {
+                self.section_detail.reset();
+            }
         }
     }
 
-    fn open_scene(&mut self, scene: Scene) {
-        if self.current_scene == scene {
+    fn jump_to_scene(&mut self, idx: usize) {
+        let new_scene = match idx {
+            0 => Scene::OverallView,
+            1 => Scene::SectionDetail(self.default_section_kind()),
+            _ => return,
+        };
+        if self.current_scene == new_scene {
             return;
         }
-        self.scene_stack.push(self.current_scene.clone());
-        let reset = match (&self.current_scene, &scene) {
-            (Scene::SectionDetail(old), Scene::SectionDetail(new)) => old != new,
-            (Scene::OverallView, Scene::SectionDetail(_)) => true,
-            _ => false,
-        };
-        let kind_for_overall_sync = match &scene {
-            Scene::SectionDetail(k) | Scene::Detail(k, _) => Some(*k),
-            Scene::OverallView => None,
-        };
-        self.current_scene = scene;
-        if let Some(kind) = kind_for_overall_sync {
-            self.overall.selection.selected =
-                section_index_for_kind(&self.source.raw_sections, kind);
-        }
-        if reset {
-            self.section_detail.reset();
-        }
-    }
-
-    fn replace_scene(&mut self, scene: Scene) {
-        let reset = match (&self.current_scene, &scene) {
+        let reset = match (&self.current_scene, &new_scene) {
             (Scene::SectionDetail(old), Scene::SectionDetail(new)) => old != new,
             (_, Scene::SectionDetail(_)) => true,
             _ => false,
         };
-        let kind_for_overall_sync = match &scene {
-            Scene::SectionDetail(k) | Scene::Detail(k, _) => Some(*k),
-            Scene::OverallView => None,
-        };
-        self.current_scene = scene;
-        if let Some(kind) = kind_for_overall_sync {
-            self.overall.selection.selected =
-                section_index_for_kind(&self.source.raw_sections, kind);
-        }
+        self.current_scene = new_scene;
         if reset {
             self.section_detail.reset();
         }
-    }
-
-    fn top_level_scene(&self, idx: usize) -> Scene {
-        match idx {
-            0 => Scene::OverallView,
-            1 => Scene::SectionDetail(self.default_section_kind()),
-            2 => {
-                // Navigate to Detail scene for current section and selection
-                let kind = self.current_section_kind();
-                let entry_idx = self.section_detail.selected();
-                let len = match self.current_scene {
-                    Scene::Detail(_, _) => usize::MAX, // already in detail, keep index
-                    _ => {
-                        // use raw or structured len depending on mode
-                        selected_len(
-                            &self.source.bytes,
-                            &self.source.raw_sections,
-                            self.module(),
-                            &self.source.loaded(),
-                            &self.section_detail,
-                            kind,
-                        )
-                    }
-                };
-                let safe_idx = entry_idx.min(len.saturating_sub(1));
-                Scene::Detail(kind, safe_idx)
-            }
-            _ => Scene::OverallView,
-        }
-    }
-
-    fn move_scene(&mut self, delta: isize) {
-        let next = move_index(self.current_scene.tab_index(), 3, delta);
-        self.replace_scene(self.top_level_scene(next));
-    }
-
-    fn cycle_section_mode(&mut self) {
-        if let Scene::SectionDetail(kind) = self.current_scene {
-            let current_len = self.section_selected_len(kind);
-            self.section_detail.cycle_mode(kind, current_len);
-        }
-    }
-
-    fn cycle_overall_mode(&mut self) {
-        self.overall.cycle_mode();
     }
 
     fn selected_overall_section_kind(&self) -> Option<SectionKind> {
@@ -505,12 +443,4 @@ impl App {
             .get(self.overall.selected())
             .and_then(|block| SectionKind::from_section_id(block.section_id))
     }
-}
-
-fn move_index(current: usize, len: usize, delta: isize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    let next = current as isize + delta;
-    next.clamp(0, len.saturating_sub(1) as isize) as usize
 }

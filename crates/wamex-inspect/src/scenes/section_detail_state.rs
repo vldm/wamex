@@ -9,7 +9,7 @@ use wamex_object::{
 
 use crate::{
     hexdump::{HexdumpRow, RawBlockView, plain_hexdump_rows},
-    scene::{InspectTarget, Scene, SectionDetailMode, SectionKind},
+    scene::{InspectTarget, Scene, SectionKind, ViewMode},
     scroll::{ListSelectionState, adjust_scroll, wrap_index},
     source::{RawSectionBlock, entity_name, format_size_len, function_type_label},
 };
@@ -57,14 +57,12 @@ pub struct DetailView {
 
 pub struct SectionDetailState {
     pub(crate) selection: ListSelectionState,
-    pub(crate) mode: SectionDetailMode,
 }
 
 impl Default for SectionDetailState {
     fn default() -> Self {
         Self {
             selection: ListSelectionState::default(),
-            mode: SectionDetailMode::Structured,
         }
     }
 }
@@ -76,10 +74,6 @@ impl SectionDetailState {
 
     pub fn scroll(&self) -> usize {
         self.selection.scroll
-    }
-
-    pub fn mode(&self) -> SectionDetailMode {
-        self.mode
     }
 
     pub fn set_viewport(&self, h: usize) {
@@ -96,12 +90,6 @@ impl SectionDetailState {
         self.selection.selected = sel;
     }
 
-    pub fn cycle_mode(&mut self, kind: SectionKind, current_len: usize) {
-        self.mode = self.mode.next();
-        self.selection.selected = self.selection.selected.min(current_len.saturating_sub(1));
-        let _ = kind; // kept for possible future use
-    }
-
     pub fn reset(&mut self) {
         self.selection.selected = 0;
         self.selection.scroll = 0;
@@ -115,12 +103,12 @@ pub fn selected_len(
     raw_sections: &[RawSectionBlock],
     module: &Module<'_>,
     loaded: &LoadedFile<'_>,
-    state: &SectionDetailState,
+    mode: ViewMode,
     kind: SectionKind,
 ) -> usize {
-    match state.mode {
-        SectionDetailMode::Raw => raw_blocks(source_bytes, raw_sections, kind).len(),
-        SectionDetailMode::Structured => section_entries(module, loaded, kind).len(),
+    match mode {
+        ViewMode::Raw => raw_blocks(source_bytes, raw_sections, kind).len(),
+        ViewMode::Structured => section_entries(module, loaded, kind).len(),
     }
 }
 

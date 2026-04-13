@@ -4,13 +4,13 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::{App, SectionKind, scene::SectionDetailMode, theme};
+use crate::{App, SectionKind, scene::ViewMode, theme};
 use super::helpers::{content_height, content_width, truncate_text};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {
-    match app.section_mode() {
-        SectionDetailMode::Raw => render_raw(frame, area, app, kind),
-        SectionDetailMode::Structured => render_structured(frame, area, app, kind),
+    match app.mode() {
+        ViewMode::Raw => render_raw(frame, area, app, kind),
+        ViewMode::Structured => render_structured(frame, area, app, kind),
     }
 }
 

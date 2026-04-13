@@ -24,7 +24,7 @@ mod ui;
 
 pub use app::App;
 pub use hexdump::{HexdumpRow, RawBlockView};
-pub use scene::{InspectTarget, OverallViewMode, Scene, SectionDetailMode, SectionKind};
+pub use scene::{InspectTarget, Scene, SectionKind, ViewMode};
 pub use scenes::section_detail_state::{Accent, DetailView, ListEntry, RelocationLine};
 pub use source::{RawSummary, StructuralRow};
 

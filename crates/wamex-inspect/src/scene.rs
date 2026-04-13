@@ -101,54 +101,23 @@ impl SectionKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SectionDetailMode {
+pub enum ViewMode {
     Raw,
     Structured,
 }
 
-impl SectionDetailMode {
-    pub const ALL: [SectionDetailMode; 2] = [SectionDetailMode::Raw, SectionDetailMode::Structured];
-
+impl ViewMode {
     pub fn title(self) -> &'static str {
         match self {
-            SectionDetailMode::Raw => "Raw",
-            SectionDetailMode::Structured => "Structured",
+            ViewMode::Raw => "Raw",
+            ViewMode::Structured => "Structured",
         }
     }
 
     pub fn next(self) -> Self {
         match self {
-            SectionDetailMode::Raw => SectionDetailMode::Structured,
-            SectionDetailMode::Structured => SectionDetailMode::Raw,
-        }
-    }
-
-    pub fn tab_index(self) -> usize {
-        match self {
-            SectionDetailMode::Raw => 0,
-            SectionDetailMode::Structured => 1,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum OverallViewMode {
-    Raw,
-    Structured,
-}
-
-impl OverallViewMode {
-    pub fn title(self) -> &'static str {
-        match self {
-            OverallViewMode::Raw => "Raw",
-            OverallViewMode::Structured => "Structured",
-        }
-    }
-
-    pub fn next(self) -> Self {
-        match self {
-            OverallViewMode::Raw => OverallViewMode::Structured,
-            OverallViewMode::Structured => OverallViewMode::Raw,
+            ViewMode::Raw => ViewMode::Structured,
+            ViewMode::Structured => ViewMode::Raw,
         }
     }
 }

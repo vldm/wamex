@@ -1,7 +1,4 @@
-use ratatui::{
-    layout::Rect,
-    prelude::*,
-};
+use ratatui::{layout::Rect, prelude::*};
 
 use crate::{HexdumpRow, theme};
 
@@ -42,10 +39,8 @@ pub fn render_hexdump_row(row: HexdumpRow) -> Line<'static> {
     )];
 
     for (idx, (byte, relation)) in row.bytes.iter().enumerate() {
-        let style = relation
-            .map(theme::reloc)
-            .unwrap_or_else(|| Style::default().fg(Color::White));
-        spans.push(Span::styled(format!("{:02x}", byte), style));
+        let style = relation.map_or_else(|| Style::default().fg(Color::White), theme::reloc);
+        spans.push(Span::styled(format!("{:02x}", *byte), style));
         spans.push(Span::raw(if idx == 7 { "  " } else { " " }));
     }
 

@@ -147,11 +147,10 @@ impl RawSummary {
                 kind: SectionKind::Start,
                 title: "Start".to_owned(),
                 count: usize::from(module.extra.start_function.is_some()),
-                note: module
-                    .extra
-                    .start_function
-                    .map(|func_ref| format!("starts at func {}", func_ref.as_u32()))
-                    .unwrap_or_else(|| "no start section".to_owned()),
+                note: module.extra.start_function.map_or_else(
+                    || "no start section".to_owned(),
+                    |func_ref| format!("starts at func {}", func_ref.as_u32()),
+                ),
             },
             SectionSummary {
                 kind: SectionKind::Elements,
@@ -196,7 +195,11 @@ pub fn build_structural_overview(loaded: &LoadedFile<'_>) -> Vec<StructuralRow> 
     let module = &loaded.module;
     let mut rows = Vec::new();
 
-    let entity_row = |label: &str, imports: usize, defined: usize, exported: usize, kind: SectionKind| StructuralRow {
+    let entity_row = |label: &str,
+                      imports: usize,
+                      defined: usize,
+                      exported: usize,
+                      kind: SectionKind| StructuralRow {
         text: format!("{label:<10}  imports: {imports}  defined: {defined}  exported: {exported}"),
         kind: Some(kind),
     };
@@ -240,8 +243,11 @@ pub fn build_structural_overview(loaded: &LoadedFile<'_>) -> Vec<StructuralRow> 
     // Data segments
     let segments = module.extra.mem_layout.segments();
     if !segments.is_empty() {
-        rows.push(StructuralRow { text: String::new(), kind: None });
-        for (_seg_id, segment) in segments.iter() {
+        rows.push(StructuralRow {
+            text: String::new(),
+            kind: None,
+        });
+        for (_seg_id, segment) in segments {
             rows.push(data_segment_row(segment));
         }
     }
@@ -249,8 +255,11 @@ pub fn build_structural_overview(loaded: &LoadedFile<'_>) -> Vec<StructuralRow> 
     // Element segments
     let elem_segments = &module.extra.function_elements.segments;
     if !elem_segments.is_empty() {
-        rows.push(StructuralRow { text: String::new(), kind: None });
-        for (_seg_id, segment) in elem_segments.iter() {
+        rows.push(StructuralRow {
+            text: String::new(),
+            kind: None,
+        });
+        for (_seg_id, segment) in elem_segments {
             let name = segment.name.as_ref();
             let name = if name.len() > 20 { &name[..20] } else { name };
             rows.push(StructuralRow {
@@ -342,8 +351,7 @@ pub fn validate_wasm(bytes: &[u8]) -> Option<String> {
 // ─── Format helpers ───────────────────────────────────────────────────────────
 
 pub fn entity_name(name: Option<impl AsRef<str>>) -> String {
-    name.map(|name| name.as_ref().to_owned())
-        .unwrap_or_else(|| "<anon>".to_owned())
+    name.map_or_else(|| "<anon>".to_owned(), |name| name.as_ref().to_owned())
 }
 
 pub fn format_size_len(bytes: usize) -> String {
@@ -354,15 +362,16 @@ pub fn format_size_len(bytes: usize) -> String {
     )
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn format_size_units(bytes: usize) -> String {
     if bytes >= 1 << 30 {
-        format!("{:.2} GB", bytes as f64 / (1 << 30) as f64)
+        format!("{:.2} GB", bytes as f64 / f64::from(1 << 30))
     } else if bytes >= 1 << 20 {
-        format!("{:.2} MB", bytes as f64 / (1 << 20) as f64)
+        format!("{:.2} MB", bytes as f64 / f64::from(1 << 20))
     } else if bytes >= 1 << 10 {
-        format!("{:.2} KB", bytes as f64 / (1 << 10) as f64)
+        format!("{:.2} KB", bytes as f64 / f64::from(1 << 10))
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 
@@ -375,23 +384,26 @@ pub fn function_type_label(func_type: &wasmparser::FuncType) -> String {
     let params = func_type
         .params()
         .iter()
+        .copied()
         .map(val_type_label)
         .collect::<Vec<_>>()
         .join(", ");
     let results = func_type
         .results()
         .iter()
+        .copied()
         .map(val_type_label)
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+        .join(", ");
 
     if results.is_empty() {
         format!("fn({params})")
     } else {
-        format!("fn({params}) -> {}", results.join(", "))
+        format!("fn({params}) -> {results}")
     }
 }
 
-fn val_type_label(ty: &wasmparser::ValType) -> String {
+fn val_type_label(ty: wasmparser::ValType) -> String {
     format!("{ty:?}").to_lowercase()
 }
 

@@ -1,19 +1,17 @@
 use crate::{
-    scene::{OverallViewMode, SectionKind},
+    scene::SectionKind,
     scroll::{ListSelectionState, adjust_scroll, wrap_index},
     source::{RawSectionBlock, format_size_len},
 };
 
 pub struct OverallState {
     pub(crate) selection: ListSelectionState,
-    pub(crate) mode: OverallViewMode,
 }
 
 impl Default for OverallState {
     fn default() -> Self {
         Self {
             selection: ListSelectionState::default(),
-            mode: OverallViewMode::Raw,
         }
     }
 }
@@ -25,16 +23,6 @@ impl OverallState {
 
     pub fn scroll(&self) -> usize {
         self.selection.scroll
-    }
-
-    pub fn mode(&self) -> OverallViewMode {
-        self.mode
-    }
-
-    pub fn cycle_mode(&mut self) {
-        self.mode = self.mode.next();
-        self.selection.selected = 0;
-        self.selection.scroll = 0;
     }
 
     pub fn set_viewport(&self, h: usize) {

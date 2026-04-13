@@ -3,15 +3,10 @@ use ratatui::text::{Line, Span};
 use crate::{App, scene::Scene, theme};
 
 pub fn footer(app: &App) -> Line<'static> {
-    let scene = app.current_scene();
-    let mode_label = match scene {
-        Scene::OverallView => app.overall_mode().title(),
-        Scene::SectionDetail(_) | Scene::Detail(_, _) => app.section_mode().title(),
-    };
+    let mode_label = app.mode().title();
     let preview_label = if app.show_preview() { "on" } else { "off" };
     let spans = vec![
         Span::raw("q quit  "),
-        Span::raw("← → scenes  "),
         Span::raw("Enter drill  "),
         Span::raw("Esc back  "),
         Span::raw("? help  "),
@@ -27,10 +22,9 @@ pub fn footer(app: &App) -> Line<'static> {
 
 pub fn help() -> Vec<Line<'static>> {
     vec![
-        Line::from("1 Overview  2 Section  3 Detail"),
+        Line::from("1 Overview  2 Section"),
         Line::from(""),
-        Line::from("Left/Right switch top-level scenes."),
-        Line::from("s toggles mode (Raw/Structured) in Overview and Section views."),
+        Line::from("s toggles mode (Raw/Structured) in all scenes."),
         Line::from("p toggles the preview pane on/off."),
         Line::from("Enter from Overview opens selected section."),
         Line::from("Enter from Section drills into Detail for the selected entry."),
