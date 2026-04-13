@@ -51,12 +51,14 @@ pub struct NameResolver<'src> {
 }
 
 impl<'src> NameResolver<'src> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             names: std::collections::HashMap::new(),
         }
     }
 
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<SymbolRecord> {
         self.names.get(name).copied()
     }

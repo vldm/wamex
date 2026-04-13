@@ -22,8 +22,9 @@ pub enum RangeComp {
 }
 
 impl RangeComp {
-    /// Converts the RangeComp to a PartialOrd, usefull for sorting ranges.
-    /// Returns None if the RangeComp is NonComparable.
+    /// Converts the `RangeComp` to a `PartialOrd`, usefull for sorting ranges.
+    /// Returns None if the `RangeComp` is `NonComparable`.
+    #[must_use]
     pub fn as_partial_ordering(&self) -> Option<Ordering> {
         match self {
             RangeComp::Left | RangeComp::Overlap => Some(Ordering::Less),
@@ -32,6 +33,7 @@ impl RangeComp {
             _ => None,
         }
     }
+    #[must_use]
     pub fn is_intersecting(&self) -> bool {
         matches!(self, RangeComp::Overlap | RangeComp::Within | RangeComp::NonComparable)
     }
@@ -43,7 +45,7 @@ impl RangeComp {
 /// 1. If self starts at or after other's end, self is fully to the right.
 /// 2. If self ends at or before other's start, self is fully to the left.
 /// 3. If self fully contains other (starts before or at other's start and ends after or at other's end), it's Overlap Or Equal.
-/// 4. Otherwise, ranges partially intersect (NonComparable).
+/// 4. Otherwise, ranges partially intersect (`NonComparable`).
 pub fn cmp_range<V>(some: &Range<V>, other: impl Borrow<Range<V>>) -> RangeComp
 where
     V: Ord,
@@ -146,11 +148,13 @@ pub fn debug_fmt_mostly_filled<T: Debug>(
     writer
 }
 
+#[must_use]
 pub fn encoding_size(n: u32) -> usize {
     let (_value, pos) = leb128fmt::encode_u32(n).unwrap();
     pos
 }
 
+#[must_use]
 pub fn demangle_full(name: &str) -> String {
     rustc_demangle::demangle(name).to_string()
 }
@@ -191,8 +195,9 @@ impl<Offset> ShiftMap<Offset>
 where
     Offset: Ord + Copy + Add<u32, Output = Offset> + Debug,
 {
-    /// Build ShiftMap from points, accumulating shifts.
+    /// Build `ShiftMap` from points, accumulating shifts.
     /// Expects no duplicate offsets in points.
+    #[must_use]
     pub fn build(points: Vec<ShiftPoint<Offset>>) -> Self
     where
         Offset: Default,
@@ -355,9 +360,9 @@ where
     }
 
     /// Get an iterator over shifted offsets.
-    /// old_capacity is used to determine iterator limit.
-    /// Returns an iterator of (old_offset, new_offset) pairs.
-    /// If some offset was removed, new_offset will be None.
+    /// `old_capacity` is used to determine iterator limit.
+    /// Returns an iterator of (`old_offset`, `new_offset`) pairs.
+    /// If some offset was removed, `new_offset` will be None.
     /// Any added offsets will be skipped, since they don't have old offset.
     pub fn for_each(&self, old_capacity: Offset, mut f: impl FnMut(Offset, Option<Offset>))
     where

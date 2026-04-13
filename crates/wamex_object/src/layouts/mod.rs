@@ -43,9 +43,9 @@ pub type FuncLayoutBuilder<'src> = elements::ElementLayoutBuilder<'src, Temp<Fun
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SegmentPlacement<GR = GlobalRef> {
-    /// Place chunk at offset (starting from mem_start) in active memory, where offset is calculated as value of global + offset.
+    /// Place chunk at offset (starting from `mem_start`) in active memory, where offset is calculated as value of global + offset.
     GotBased { global: GR, offset: u32 },
-    /// Place chunk at offset (starting from mem_start) in active memory.
+    /// Place chunk at offset (starting from `mem_start`) in active memory.
     ConstantOffset(u32),
 }
 
@@ -141,6 +141,7 @@ impl SegmentPlacement<GlobalRef> {
             None => SegmentPlacement::ConstantOffset(offset),
         })
     }
+    #[must_use]
     pub fn to_init_expr(&self) -> wasm_encoder::ConstExpr {
         match self {
             SegmentPlacement::GotBased { global, offset } => {

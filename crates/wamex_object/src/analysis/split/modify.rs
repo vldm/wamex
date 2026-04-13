@@ -1,7 +1,7 @@
 //!
 //! A glue between split-points and actual emitting.
 //!
-//! Contain a code required to convert SplitProgramInfo into copy plan + modifications.
+//! Contain a code required to convert `SplitProgramInfo` into copy plan + modifications.
 //!
 
 use anyhow::Result;
@@ -19,7 +19,6 @@ use crate::{
     },
     index::Temp,
     layouts::{ElementInTable, ElementKind, ElementSegmentSpec, SegmentPlacement},
-    raw::FuncTypeId,
     typed::{
         EntityBody, EntityType, ExportNames, FileId, FileLoader, FunctionRef, ImportOrDefined,
         ImportedEntity, Module, TableRef, TempEntityKind,
@@ -285,7 +284,7 @@ where
 
     ///
     /// Create trampoline function without body
-    /// - body will be filled on finish with call_indirect to static index.
+    /// - body will be filled on finish with `call_indirect` to static index.
     ///
     fn declare_trampoline(
         trampoline: &TrampolineDeclared,
@@ -383,7 +382,7 @@ where
         Ok(())
     }
     ///
-    /// Fill trampoline body with call_indirect to corresponding split point index.
+    /// Fill trampoline body with `call_indirect` to corresponding split point index.
     ///
     fn add_trampoline_body(
         module: &mut crate::typed::Module<'_>,
@@ -395,7 +394,7 @@ where
             ImportOrDefined::Defined(d) => {
                 let EntityBody::New {
                     new_bytes,
-                    new_relocs,
+                    new_relocs: _,
                 } = &mut d.body
                 else {
                     panic!("Trampoline body should be new");
@@ -707,7 +706,7 @@ impl SplitProgramInfo {
     }
 }
 
-/// The indirect_function table is shared between main module and submodules.
+/// The `indirect_function` table is shared between main module and submodules.
 /// it's layout is:
 /// [ 0: empty ]
 /// [ 1..N: functions used in this module ]
@@ -716,14 +715,14 @@ impl SplitProgramInfo {
 ///
 /// Example of final layout:
 ///  1. After main load:
-///     [0, f1, f2, f3, ..., s1_entry1_uninit, s1_entry2_uninit, s2_entry1_uninit, ...]
+///     [0, f1, f2, f3, ..., `s1_entry1_uninit`, `s1_entry2_uninit`, `s2_entry1_uninit`, ...]
 ///  2. After submodule load:
-///     [0, f1, f2, f3, ..., s1_entry1,        s1_entry2,       s1_f1, s1_f2, ...]
+///     [0, f1, f2, f3, ..., `s1_entry1`,        `s1_entry2`,       `s1_f1`, `s1_f2`, ...]
 ///  3. If submodule reloaded, the following changes are applied:
-///     [_, _, _, _, ...,    s1_FIX_entry1,    s1_FIX_entry2,   s1_f1, s1_f2,     s1_FIX_f1, s1_FIX_f2, ...]
+///     [_, _, _, _, ...,    `s1_FIX_entry1`,    `s1_FIX_entry2`,   `s1_f1`, `s1_f2`,     `s1_FIX_f1`, `s1_FIX_f2`, ...]
 ///  
-///  Note that original s1_f1 and s1_f2 are not removed, because other submodules may still use them.
-///  And only after calling linker::unload we can reuse these entries.
+///  Note that original `s1_f1` and `s1_f2` are not removed, because other submodules may still use them.
+///  And only after calling `linker::unload` we can reuse these entries.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct IndirectFnLayout {
     pub start_dyn: usize,
@@ -731,6 +730,7 @@ pub struct IndirectFnLayout {
 }
 
 impl IndirectFnLayout {
+    #[must_use]
     pub fn from_module(module: &Module, dyn_fns: Vec<SplitPoint>) -> Self {
         let indirect_fn_segment = module
             .extra
@@ -746,6 +746,7 @@ impl IndirectFnLayout {
             .offset() as usize;
         Self::new(start + main_indirect_len, dyn_fns)
     }
+    #[must_use]
     pub fn new(main_indirect_len: usize, dyn_fns: Vec<SplitPoint>) -> Self {
         Self {
             start_dyn: main_indirect_len,
@@ -754,6 +755,7 @@ impl IndirectFnLayout {
     }
 
     /// Return index of split point import function in indirect function table.
+    #[must_use]
     pub fn find_import_fn(&self, func: FlatEntityRef) -> Option<usize> {
         self.dyn_fns
             .iter()
@@ -762,6 +764,7 @@ impl IndirectFnLayout {
     }
 
     /// Return index of split point export function in indirect function table.
+    #[must_use]
     pub fn find_export_fn(&self, func: FlatEntityRef) -> Option<usize> {
         self.dyn_fns
             .iter()

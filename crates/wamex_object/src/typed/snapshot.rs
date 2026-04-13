@@ -44,6 +44,7 @@ pub struct EntitiesSnapshot {
 
 impl EntitiesSnapshot {
     /// Create a snapshot with arbitrary numbers for testing purposes.
+    #[must_use]
     pub fn for_testing() -> Self {
         Self {
             num_file_offset: 150,
@@ -57,6 +58,7 @@ impl EntitiesSnapshot {
         }
     }
 
+    #[must_use]
     pub fn new_without_types(object: &Module<'_>) -> Self {
         let num_function_refs = object.functions.len() as u32;
         let num_global_refs = object.globals.len() as u32;
@@ -91,67 +93,80 @@ impl EntitiesSnapshot {
         }
     }
 
+    #[must_use]
     pub fn with_num_type_refs(mut self, num_type_refs: u32) -> Self {
         self.total_end = self.data_end + num_type_refs;
         self
     }
 
+    #[must_use]
     pub fn with_offset(mut self, num_file_offset: u32) -> Self {
         self.num_file_offset = num_file_offset;
         self
     }
 
     #[inline]
+    #[must_use]
     pub fn num_function_refs(&self) -> u32 {
         self.functions_end
     }
 
     #[inline]
+    #[must_use]
     pub fn num_global_refs(&self) -> u32 {
         self.globals_end - self.functions_end
     }
 
     #[inline]
+    #[must_use]
     pub fn num_table_refs(&self) -> u32 {
         self.tables_end - self.globals_end
     }
 
     #[inline]
+    #[must_use]
     pub fn num_memory_refs(&self) -> u32 {
         self.memories_end - self.tables_end
     }
 
     #[inline]
+    #[must_use]
     pub fn num_tag_refs(&self) -> u32 {
         self.tags_end - self.memories_end
     }
 
     #[inline]
+    #[must_use]
     pub fn num_data_symbol_refs(&self) -> u32 {
         self.data_end - self.tags_end
     }
 
     #[inline]
+    #[must_use]
     pub fn num_type_refs(&self) -> u32 {
         self.total_end - self.data_end
     }
 
     #[inline]
+    #[must_use]
     pub fn local_end(&self) -> u32 {
         self.total_end
     }
 
     #[inline]
+    #[must_use]
     pub fn global_start(&self) -> u32 {
         self.num_file_offset
     }
 
     #[inline]
+    #[must_use]
     pub fn global_end(&self) -> u32 {
         self.num_file_offset + self.local_end()
     }
 
     #[inline]
+    #[must_use]
     pub fn contains(&self, any_ref: FlatEntityRef) -> bool {
         let idx = any_ref.as_u32();
         self.global_start() <= idx && idx < self.global_end()
@@ -174,6 +189,7 @@ impl EntitiesSnapshot {
     }
 
     #[inline]
+    #[must_use]
     pub fn unpack_ref(&self, any_ref: FlatEntityRef) -> EntityKind {
         let idx = any_ref.as_u32().checked_sub(self.num_file_offset).unwrap();
         if idx < self.functions_end {
@@ -201,6 +217,7 @@ pub struct MultiSnapshot {
 }
 
 impl MultiSnapshot {
+    #[must_use]
     pub fn single(module: &Module<'_>) -> Self {
         Self::new([EntitiesSnapshot::new_without_types(module)])
     }
@@ -223,25 +240,30 @@ impl MultiSnapshot {
     }
 
     #[inline]
+    #[must_use]
     pub fn total_entities(&self) -> u32 {
         self.total_entities
     }
 
     #[inline]
+    #[must_use]
     pub fn num_files(&self) -> usize {
         self.files.len()
     }
 
     #[inline]
+    #[must_use]
     pub fn file_snapshot(&self, file_id: FileId) -> &EntitiesSnapshot {
         &self.files[file_id]
     }
 
     #[inline]
+    #[must_use]
     pub fn pack_ref(&self, loc: EntityLocation) -> FlatEntityRef {
         self.file_snapshot(loc.file_id).pack_ref(loc.entity)
     }
 
+    #[must_use]
     pub fn unpack_ref(&self, any_ref: FlatEntityRef) -> EntityLocation {
         let flat = any_ref.as_u32();
         assert!(

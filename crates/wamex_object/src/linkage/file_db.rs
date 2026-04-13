@@ -19,6 +19,7 @@ pub struct RelocRange {
     pub(super) relocs: Range<usize>,
 }
 impl RelocRange {
+    #[must_use]
     pub fn from_range(relocs: Range<usize>) -> Self {
         Self { relocs }
     }
@@ -60,6 +61,7 @@ pub(crate) type Regions = (
 
 impl FileRelocs {
     /// Build `FileRelocs` from parts.
+    #[must_use]
     pub fn build_from_parts(
         array: Box<[EntityRelocationEntry]>,
         code_owners: GappedMap<FunctionRef, RelocRange>,
@@ -76,7 +78,7 @@ impl FileRelocs {
     }
 
     /// Resolve relocations symbols (to corresponding entities).
-    /// code_owners and data_owners should contain regions in original file that belongs to each symbol.
+    /// `code_owners` and `data_owners` should contain regions in original file that belongs to each symbol.
     ///
     /// Build relocs map based on position in file of entities.
     #[tracing::instrument(skip_all)]
@@ -159,6 +161,7 @@ impl FileRelocs {
     }
 
     /// Get all code relocations related to code section
+    #[must_use]
     pub fn get_code_section_relocs(&self) -> &[EntityRelocationEntry] {
         Self::section_range(&self.code_owners)
             .map(|range| {
@@ -171,6 +174,7 @@ impl FileRelocs {
             .unwrap_or_default()
     }
     /// Get all data relocations related to data section
+    #[must_use]
     pub fn get_data_section_relocs(&self) -> &[EntityRelocationEntry] {
         Self::section_range(&self.data_owners)
             .map(|range| {
@@ -292,17 +296,20 @@ impl FileRelocs {
         }
     }
 
+    #[must_use]
     pub fn get_data_relocs(&self, data_symbol: DataSymbolRef) -> Option<&[EntityRelocationEntry]> {
         self.data_owners
             .get(data_symbol)
             .map(|range| &self.array[range.relocs.clone()])
     }
+    #[must_use]
     pub fn get_code_relocs(&self, func: FunctionRef) -> Option<&[EntityRelocationEntry]> {
         self.code_owners
             .get(func)
             .map(|range| &self.array[range.relocs.clone()])
     }
 
+    #[must_use]
     pub fn get_entity_relocs(&self, entity: EntityKind) -> Option<&[EntityRelocationEntry]> {
         match entity {
             EntityKind::Function(func) => self.get_code_relocs(func),
@@ -311,6 +318,7 @@ impl FileRelocs {
         }
     }
 
+    #[must_use]
     pub fn list_indirect_fns(&self) -> Vec<FunctionRef> {
         let mut result: SecondaryMap<FunctionRef, bool> = SecondaryMap::new();
 
@@ -403,6 +411,7 @@ pub struct SymbolOffset {
 }
 
 impl SymbolOffset {
+    #[must_use]
     pub fn new(entity: EntityKind) -> Self {
         Self {
             entity,
@@ -424,14 +433,16 @@ pub struct FileSymbolDb {
 }
 
 impl FileSymbolDb {
-    /// Get symbol entity by its SymbolId
+    /// Get symbol entity by its `SymbolId`
     #[inline]
+    #[must_use]
     pub fn symbol_entity(&self, symbol_id: SymbolId) -> Option<&SymbolOffset> {
         self.symbols.get(symbol_id)
     }
 
     /// Get `EntityKind` for `FuncTypeId`.
     #[inline]
+    #[must_use]
     pub fn resolve_type_id(&self, type_id: FnTypeRef) -> Option<EntityKind> {
         //TODO: currently not supported - so just copy as is.
         Some(EntityKind::Type(type_id))

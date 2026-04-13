@@ -82,7 +82,7 @@ impl<'src> Module<'src> {
         })
     }
 
-    /// Generate type section, return map from FunctionId to type index.
+    /// Generate type section, return map from `FunctionId` to type index.
     pub fn generate_type_section(
         &self,
         output_module: &mut wasm_encoder::Module,
@@ -390,7 +390,7 @@ impl<'src> Module<'src> {
         Ok(())
     }
 
-    /// Copy relocs to new FileRelocs.
+    /// Copy relocs to new `FileRelocs`.
     ///
     /// - Move out all relocs from entities bodies (patches, and new entities).
     /// - Resolve unresolved relocs (e.g. when symbol is

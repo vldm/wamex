@@ -49,7 +49,7 @@ impl<W> Encoder<W> {
         self.writer
     }
     /// Extend current written range with additional space,
-    /// the additional_offset is added to the current offset.
+    /// the `additional_offset` is added to the current offset.
     ///
     /// This call should be used with call to internal writer, to declare used range.
     fn extend_range(&mut self, additional_offset: u32) {
@@ -209,19 +209,19 @@ where
         Ok(pos)
     }
 
-    /// Encode [`Instruction::GlobalGet`] and return offset of global_id start
+    /// Encode [`Instruction::GlobalGet`] and return offset of `global_id` start
     pub fn global_get(&mut self, g: u32) -> Result<u32, std::io::Error> {
         self.push_byte(0x23)?;
         self.encode_leb_5byte(g)
     }
 
-    /// Encode [`Instruction::GlobalGet`] with 0xdeadbeef global_id and return offset of global_id start
+    /// Encode [`Instruction::GlobalGet`] with 0xdeadbeef `global_id` and return offset of `global_id` start
     pub fn global_get_invalid(&mut self) -> Result<u32, std::io::Error> {
         self.push_byte(0x23)?;
         self.encode_5byte_invalid()
     }
 
-    /// Encode [`Instruction::GlobalSet`] and return offset of global_id start
+    /// Encode [`Instruction::GlobalSet`] and return offset of `global_id` start
     pub fn global_set(&mut self, g: u32) -> Result<u32, std::io::Error> {
         self.push_byte(0x24)?;
         self.encode_leb_5byte(g)
@@ -244,7 +244,7 @@ where
         self.push_byte(0x6a)?;
         Ok(())
     }
-    /// Encode memarg, return offset to memory_index
+    /// Encode memarg, return offset to `memory_index`
     fn encode_memarg32(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         const MEM_ARG_FLAG: u32 = 1 << 6;
         debug_assert!(m.align < MEM_ARG_FLAG);
@@ -267,139 +267,139 @@ where
         }
     }
 
-    /// Encode [`Instruction::I32Load`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I32Load`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i32_load(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x28)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Load`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Load`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_load(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x29)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::F32Load`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::F32Load`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn f32_load(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x2A)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::F64Load`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::F64Load`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn f64_load(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x2B)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I32Load8S`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I32Load8S`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i32_load8_s(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x2C)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I32Load8U`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I32Load8U`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i32_load8_u(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x2D)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I32Load16S`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I32Load16S`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i32_load16_s(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x2E)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I32Load16U`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I32Load16U`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i32_load16_u(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x2F)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Load8S`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Load8S`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_load8_s(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x30)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Load8U`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Load8U`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_load8_u(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x31)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Load16S`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Load16S`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_load16_s(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x32)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Load16U`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Load16U`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_load16_u(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x33)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Load32S`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Load32S`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_load32_s(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x34)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Load32U`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Load32U`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_load32_u(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x35)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I32Store`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I32Store`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i32_store(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x36)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Store`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Store`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_store(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x37)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::F32Store`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::F32Store`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn f32_store(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x38)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::F64Store`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::F64Store`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn f64_store(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x39)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I32Store8`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I32Store8`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i32_store8(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x3A)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I32Store16`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I32Store16`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i32_store16(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x3B)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Store8`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Store8`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_store8(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x3C)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Store16`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Store16`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_store16(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x3D)?;
         self.encode_memarg32(m)
     }
 
-    /// Encode [`Instruction::I64Store32`] and return offset to memory_index and offset to `memarg.offset`.
+    /// Encode [`Instruction::I64Store32`] and return offset to `memory_index` and offset to `memarg.offset`.
     pub fn i64_store32(&mut self, m: MemArg) -> Result<MemArgOffsets, std::io::Error> {
         self.push_byte(0x3E)?;
         self.encode_memarg32(m)
@@ -436,9 +436,9 @@ pub struct MemArgOffsets {
 
 /// Wrapper for emitting list-like sections in streaming fashion.
 ///
-/// Creating a new `SectionList` will push id and reserve place for <bytes_len> of section and <list_count>.
+/// Creating a new `SectionList` will push id and reserve place for <`bytes_len`> of section and <`list_count`>.
 /// Calling `push_item` allow `SectionList` to count items,
-/// and after calling `finish`, the `SectionList` will update <bytes_len> and <list_count> in the `Encoder` and return it.
+/// and after calling `finish`, the `SectionList` will update <`bytes_len`> and <`list_count`> in the `Encoder` and return it.
 #[derive(Debug)]
 pub struct SectionList<W> {
     encoder: Encoder<W>,
@@ -450,7 +450,7 @@ pub struct SectionList<W> {
 
 impl<W: Write> SectionList<W> {
     /// Create new section in the given writer.
-    /// Reserve space for <bytes_len> and <list_count>.
+    /// Reserve space for <`bytes_len`> and <`list_count`>.
     ///
     /// This constructor will consume `Encoder` and return a `SectionList` object.
     /// To return back `Encoder`, one should call `finish`.
@@ -477,7 +477,7 @@ impl<W: Write> SectionList<W> {
         })
     }
 
-    /// Finish section, update <bytes_len> and <list_count> and return back `Encoder`.
+    /// Finish section, update <`bytes_len`> and <`list_count`> and return back `Encoder`.
     pub fn finish(mut self) -> Result<Encoder<W>, std::io::Error>
     where
         W: Seek,
@@ -525,7 +525,7 @@ impl<W: Write> SectionList<W> {
     }
 }
 
-/// Adapter to wasm_encoder
+/// Adapter to `wasm_encoder`
 #[derive(Debug)]
 pub struct SectionAdapter {
     bytes: Vec<u8>,

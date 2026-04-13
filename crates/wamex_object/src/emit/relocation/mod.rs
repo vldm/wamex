@@ -5,7 +5,7 @@
 //!
 //! Relocation is performed in 2 steps:
 //! 1. Symbol index resolution - remap relocs to point to correct entities. Currently it consist of 2 sub-steps:
-//!    1.1. map from entity -> (file, file_relocs) - find file and relocastions of the entity.
+//!    1.1. map from entity -> (file, `file_relocs`) - find file and relocastions of the entity.
 //!    1.2. map from (file, entity) -> output entity - find coresponding entity in output module, which will be used for relocation.
 //! 2. Offset calculation/encoding - calculate final offset for each relocation and encode it in output module.
 //!
@@ -116,6 +116,7 @@ pub struct RelocationState<'any, 'src> {
 }
 
 impl<'any, 'src> RelocationState<'any, 'src> {
+    #[must_use]
     pub fn new(
         current_module: &'any Module<'src>,
         current_module_layout: &'any ModuleLayout,

@@ -30,6 +30,7 @@ pub struct DataDefined<'a> {
     pub range: Range<u32>,
 }
 impl<'a> DataDefined<'a> {
+    #[must_use]
     pub fn from_defined(value: &wasmparser::DefinedDataSymbol, name: Cow<'a, str>) -> Self {
         Self {
             segment_id: SegmentId::from_u32(value.index),

@@ -285,6 +285,7 @@ impl<'a> ObjectReader<'a> {
         Ok(module)
     }
 
+    #[must_use]
     pub fn code_starting_offset(&self) -> usize {
         self.section_headers
             .iter()
@@ -292,6 +293,7 @@ impl<'a> ObjectReader<'a> {
             .map(|h| h.content_range.start)
             .unwrap_or(0)
     }
+    #[must_use]
     pub fn data_starting_offset(&self) -> usize {
         self.section_headers
             .iter()
@@ -299,12 +301,14 @@ impl<'a> ObjectReader<'a> {
             .map(|h| h.content_range.start)
             .unwrap_or(0)
     }
+    #[must_use]
     pub fn code_section_index(&self) -> usize {
         self.section_headers
             .iter()
             .position(|h| h.id == wasm_encoder::SectionId::Code as SectionId)
             .unwrap_or(usize::MAX)
     }
+    #[must_use]
     pub fn data_section_index(&self) -> usize {
         self.section_headers
             .iter()

@@ -45,6 +45,7 @@ pub struct DepGraph {
 }
 impl DepGraph {
     /// Create empty graph for testing, with junk snapshot.
+    #[must_use]
     pub fn for_testing() -> Self {
         Self {
             nodes: GappedMap::new(),
@@ -52,8 +53,9 @@ impl DepGraph {
         }
     }
 
-    /// Creates empty DepGraph suitable to use with module.
+    /// Creates empty `DepGraph` suitable to use with module.
     ///
+    #[must_use]
     pub fn for_module(module: &Module<'_>) -> Self {
         Self {
             nodes: GappedMap::new(),
@@ -62,6 +64,7 @@ impl DepGraph {
     }
 
     /// Get snapshot with entities information.
+    #[must_use]
     pub fn snapshot(&self) -> &EntitiesSnapshot {
         &self.snapshot
     }
@@ -82,10 +85,12 @@ impl DepGraph {
         child_struct.parents.insert(parent);
     }
 
+    #[must_use]
     pub fn get_children(&self, key: FlatEntityRef) -> Option<&DepMiniSet> {
         self.nodes.get(key).map(|s| &s.childs)
     }
 
+    #[must_use]
     pub fn get_parents(&self, key: FlatEntityRef) -> Option<&DepMiniSet> {
         self.nodes.get(key).map(|s| &s.parents)
     }
@@ -194,6 +199,7 @@ pub fn get_dependencies_with_filter(
 }
 
 // traverse the dep graph starting from roots and return all reachable nodes
+#[must_use]
 pub fn find_reachable_deps(deps: &DepGraph, roots: &DepSet) -> DepSet {
     let mut queue: VecDeque<_> = roots.iter().copied().collect();
     let mut seen = DepSet::new();
@@ -228,6 +234,7 @@ impl<Id> NamedGraph<Id> {
 
     /// List only shared entries that have parents in module entries.
     /// This will collect nodes that module entries imports from shared entries.
+    #[must_use]
     pub fn reduce_shared_entries(
         shared_entries: &DepSet,
         module_entries: &DepSet,
@@ -246,7 +253,7 @@ impl<Id> NamedGraph<Id> {
     }
 
     /// Calculate shared entries between modules.
-    /// Returns a vector of SharedEntries, each containing a list of module names and shared dependencies.
+    /// Returns a vector of `SharedEntries`, each containing a list of module names and shared dependencies.
     /// Shared dependencies are those that are reachable from multiple modules.
     pub fn calculate_shared_modules(
         modules: &mut [NamedGraph<Id>],

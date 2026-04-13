@@ -29,6 +29,7 @@ pub enum SegmentFlags {
 }
 
 impl SegmentFlags {
+    #[must_use]
     pub fn from_name(name: &str) -> Self {
         if name.contains(".bss") {
             Self::ZeroInit
@@ -68,7 +69,7 @@ pub enum DataKind<OwnerId> {
         /// The segment placement is an virtual address in owner unit.
         ///
         /// Can be:
-        /// - GotBased - means that segments will have offsets relative to value of global reference.
+        /// - `GotBased` - means that segments will have offsets relative to value of global reference.
         /// - Constant - means that segments will have constant offsets.
         location: SegmentPlacement,
     },
@@ -111,6 +112,7 @@ pub struct MemLayoutBuilder<'src> {
 }
 
 impl<'src> MemLayoutBuilder<'src> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             virtual_spaces: PrimaryMap::new(),
@@ -121,7 +123,7 @@ impl<'src> MemLayoutBuilder<'src> {
     ///
     /// Assign each item to a concrete position within its segment and owner unit.
     ///
-    /// num_owner_imports is used to convert Temp<MemoryRef> to actual MemoryRef.
+    /// `num_owner_imports` is used to convert Temp<MemoryRef> to actual `MemoryRef`.
     pub fn seal_at(
         self,
         section_offset: usize,

@@ -16,6 +16,7 @@ pub struct OutputEntitiesResolver {
 }
 
 impl OutputEntitiesResolver {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             // module: ModuleAndDataInfo::new(),
@@ -32,6 +33,7 @@ impl OutputEntitiesResolver {
     ///
     /// 1-st step of relocation processing:
     ///  - we need to know where to search array of relocs for given entity (get file id)
+    #[must_use]
     pub fn get_entity_src(&self, output: EntityKind) -> Option<EntityLocation> {
         self.src_map.get(output).cloned()
     }
@@ -40,6 +42,7 @@ impl OutputEntitiesResolver {
     ///
     /// 2-nd step of relocation processing:
     ///  - we need to know where to search this entity
+    #[must_use]
     pub fn get_output_entity(&self, src: &EntityLocation) -> Option<EntityKind> {
         self.remapped_entity.get(src).copied()
     }

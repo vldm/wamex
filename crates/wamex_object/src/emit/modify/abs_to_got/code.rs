@@ -1,4 +1,4 @@
-//! Patch code to use GOT-relative addresses instead of absolute for memory and indiret_function_table accesses.
+//! Patch code to use GOT-relative addresses instead of absolute for memory and `indiret_function_table` accesses.
 //!
 //! Uses relocation entries to find place in code and symbols that need to make relocatable.
 

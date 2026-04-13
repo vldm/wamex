@@ -103,6 +103,7 @@ impl<K: EntityRef, V> GappedMap<K, V>
 where
     V: Clone + ReservedValue,
 {
+    #[must_use]
     pub fn new() -> Self {
         GappedMap::default()
     }
@@ -395,10 +396,12 @@ impl<Idx: TempIndex> Temp<Idx> {
     pub const EXTERNAL_FLAG: u32 = 1 << 30;
     pub const MAX_VALUE: u32 = Self::EXTERNAL_FLAG - 1;
 
+    #[must_use]
     pub fn from_import(index: usize) -> Self {
         debug_assert!(index <= (Self::MAX_VALUE as usize));
         Self(index as u32, std::marker::PhantomData)
     }
+    #[must_use]
     pub fn from_defined(index: usize) -> Self {
         debug_assert!(index <= (Self::MAX_VALUE as usize));
         Self(
@@ -406,6 +409,7 @@ impl<Idx: TempIndex> Temp<Idx> {
             std::marker::PhantomData,
         )
     }
+    #[must_use]
     pub fn from_external(index: usize) -> Self {
         debug_assert!(index <= (Self::MAX_VALUE as usize));
         Self(
@@ -418,14 +422,17 @@ impl<Idx: TempIndex> Temp<Idx> {
     /// # Safety
     /// Caller should ensure that value has valid import/defined entity,
     /// before converting `to_stable`.
+    #[must_use]
     pub unsafe fn from_bits(value: u32) -> Self {
         Self(value, std::marker::PhantomData)
     }
+    #[must_use]
     pub fn as_bits(&self) -> u32 {
         self.0
     }
 
     #[inline]
+    #[must_use]
     pub fn as_import(&self) -> Option<Idx> {
         if (self.0 & Self::DEFINED_FLAG) == 0 && (self.0 & Self::EXTERNAL_FLAG) == 0 {
             Some(Idx::from_u32(self.0))
@@ -435,6 +442,7 @@ impl<Idx: TempIndex> Temp<Idx> {
     }
 
     #[inline]
+    #[must_use]
     pub fn as_defined(&self) -> Option<u32> {
         if (self.0 & Self::DEFINED_FLAG) != 0 {
             Some(self.0 & !Self::DEFINED_FLAG)
@@ -444,6 +452,7 @@ impl<Idx: TempIndex> Temp<Idx> {
     }
 
     #[inline]
+    #[must_use]
     pub fn to_stable(self, num_imports: usize, num_defined: usize) -> Idx {
         let tag = (self.0 & (Self::DEFINED_FLAG | Self::EXTERNAL_FLAG)) >> 30;
         match tag {

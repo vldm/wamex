@@ -1,14 +1,13 @@
-use std::{borrow::Cow, collections::BTreeMap, fmt::Debug, io::Write, ops::Range};
+use std::{borrow::Cow, fmt::Debug, io::Write};
 
 use anyhow::Result;
-use cranelift_entity::{EntityRef, PrimaryMap};
+use cranelift_entity::PrimaryMap;
 
 use super::{DataKind, DataSymbolRef, Offsets};
 use crate::{
     emit::modify::wasm_emitter::{self, EncodeWithRelocOffset, SectionList},
-    helpers::cmp_range,
     index::{GappedMap, WithStart},
-    layouts::{PartId, VirtualSpaceId},
+    layouts::PartId,
     raw::SegmentId,
     typed::{DefinedDataChunk, ImportedEntity, IterBytes, MemoryRef},
 };
@@ -52,6 +51,7 @@ pub struct SealedDataSegment<'src> {
 }
 
 impl<'src> SealedDataSegment<'src> {
+    #[must_use]
     pub fn data_stream(&self) -> DataStream<'_> {
         let total_size: usize = self
             .parts
@@ -78,12 +78,15 @@ pub struct MemLayoutSealed<'src> {
 }
 
 impl<'src> MemLayoutSealed<'src> {
+    #[must_use]
     pub fn item_places(&self) -> &GappedMap<DataSymbolRef, DataItemPlace> {
         &self.defined
     }
+    #[must_use]
     pub fn external(&self) -> &WithStart<DataSymbolRef, ImportedEntity<'src, ()>> {
         &self.external
     }
+    #[must_use]
     pub fn segments(&self) -> &PrimaryMap<SegmentId, SealedDataSegment<'src>> {
         &self.segments
     }
@@ -149,6 +152,7 @@ impl<'a> Clone for DataStream<'a> {
 }
 
 impl<'a> DataStream<'a> {
+    #[must_use]
     pub fn bytes_len(&self) -> usize {
         self.total_size
     }

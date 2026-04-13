@@ -55,6 +55,7 @@ pub fn wbg_closures(module: &Module, graph: &DepGraph) -> MiniSet<FlatEntityRef>
     wbg_descriptors.into_iter().collect()
 }
 
+#[must_use]
 pub fn merge_split_points_by_name(
     split_points: &[SplitPoint],
 ) -> BTreeMap<String, Vec<SplitPoint>> {
@@ -205,7 +206,7 @@ pub fn merge_shared_with_main(
     Ok(())
 }
 
-/// Process special entities (memory, __indirect_function_table)
+/// Process special entities (memory, __`indirect_function_table`)
 /// - Mark them as exported in main module.
 /// - Add imports to modules that use them.
 pub fn process_special_entities(

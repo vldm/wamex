@@ -38,7 +38,7 @@ pub struct DataSymbolInit<S = Temp<DataSymbolRef>, RelocSymbol = EntityLocation>
     // Symbol in input module space.
     pub relocated_symbol: RelocSymbol,
 
-    /// Whenever relocated_symbol is not in main module.
+    /// Whenever `relocated_symbol` is not in main module.
     /// And therefore need GOT address.
     pub is_got_based: bool,
 }
@@ -170,7 +170,7 @@ where
         })?;
         Ok(())
     }
-    /// Convert temp ids to stable and resolve input symbol_ids to output ones.
+    /// Convert temp ids to stable and resolve input `symbol_ids` to output ones.
     pub fn convert_to_stable_refs_and_resolve(
         module: &mut crate::typed::Module,
         module_info: &OutputEntitiesResolver,

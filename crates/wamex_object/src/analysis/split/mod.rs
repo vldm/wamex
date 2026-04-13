@@ -35,6 +35,7 @@ pub struct SplitPoint {
 }
 
 impl SplitPoint {
+    #[must_use]
     pub fn new(
         module_name: String,
         unique_id: String,
@@ -48,9 +49,11 @@ impl SplitPoint {
             export_func,
         }
     }
+    #[must_use]
     pub fn import_func(&self) -> FlatEntityRef {
         self.import_func
     }
+    #[must_use]
     pub fn export_func(&self) -> FlatEntityRef {
         self.export_func
     }
@@ -80,6 +83,7 @@ impl Debug for SplitModuleInfo {
 }
 
 impl SplitModuleInfo {
+    #[must_use]
     pub fn need_export(&self, symbol: &FlatEntityRef, input_func_id: FlatEntityRef) -> bool {
         // if any module linked to current function
         let static_export = self.exports.contains(symbol);
@@ -164,6 +168,7 @@ impl Display for SharedModuleIdentifier {
 }
 
 impl SharedModuleIdentifier {
+    #[must_use]
     pub fn contains(&self, module: &ModuleIdentifier) -> bool {
         self.0.iter().any(|m| m == module)
     }
@@ -174,6 +179,7 @@ impl SharedModuleIdentifier {
         original_len != self.0.len()
     }
 
+    #[must_use]
     pub fn includes(&self, other: &SplitModuleIdentifier) -> bool {
         match other {
             SplitModuleIdentifier::Single(name) => self.contains(name),
@@ -233,6 +239,7 @@ impl Display for SplitModuleIdentifier {
 }
 
 impl SplitModuleIdentifier {
+    #[must_use]
     pub fn as_single(&self) -> Option<&ModuleIdentifier> {
         match self {
             Self::Single(name) => Some(name),
@@ -240,6 +247,7 @@ impl SplitModuleIdentifier {
         }
     }
 
+    #[must_use]
     pub fn as_shared(&self) -> Option<&SharedModuleIdentifier> {
         match self {
             Self::Single(_) => None,
@@ -247,14 +255,17 @@ impl SplitModuleIdentifier {
         }
     }
 
+    #[must_use]
     pub fn is_shared(&self) -> bool {
         matches!(self, Self::Shared(_))
     }
 
+    #[must_use]
     pub fn is_main(&self) -> bool {
         matches!(self, Self::Single(ModuleIdentifier::Main))
     }
 
+    #[must_use]
     pub fn is_part_of(&self, other: &SharedModuleIdentifier) -> bool {
         match self {
             Self::Single(name) => other.contains(name),
@@ -262,6 +273,7 @@ impl SplitModuleIdentifier {
         }
     }
 
+    #[must_use]
     pub fn collect_deps(
         &self,
         shared_modules: &[SharedModuleIdentifier],

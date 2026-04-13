@@ -394,6 +394,7 @@ pub struct EmitContext<'a> {
     pub layouts: PrimaryMap<FileId, ModuleLayout>,
 }
 impl<'src> EmitContext<'src> {
+    #[must_use]
     pub fn new_plan(
         input_files: &'src FileLoader,
         output_names: PrimaryMap<FileId, OutputId>,

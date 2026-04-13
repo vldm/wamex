@@ -9,6 +9,7 @@ pub struct TargetFeatures {
 }
 
 impl TargetFeatures {
+    #[must_use]
     pub fn encode_custom_section(&self) -> wasm_encoder::CustomSection<'static> {
         let data = self.feature_bytes();
         wasm_encoder::CustomSection {

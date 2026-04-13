@@ -1,6 +1,6 @@
 //!
 //! Neither wasm spec, nor llvm tooling describe a conception of virtual spaces.
-//! Instead LLVM work with "main" memory and "indirect_function_table".
+//! Instead LLVM work with "main" memory and "`indirect_function_table`".
 //!
 //! So, during work with real files, we need to recover information about their virtual spaces.
 //! This is important since we need to perform valid merging.

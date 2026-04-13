@@ -39,6 +39,7 @@ pub const DEFAULT_HEAP_START: SegmentPlacement = SegmentPlacement::ConstantOffse
 pub type ImportedDataChunk<'src> = ImportedEntity<'src, ()>;
 
 impl DefinedDataChunk<'_> {
+    #[must_use]
     pub fn debug_name(&self) -> &str {
         self.name.as_deref().unwrap_or("<unnamed>")
     }
@@ -58,6 +59,7 @@ impl DefinedDataChunk<'_> {
 // Impl for sealed
 //
 impl<'src> MemLayoutSealed<'src> {
+    #[must_use]
     pub fn get_entity(
         &self,
         data_ref: DataSymbolRef,
@@ -111,9 +113,11 @@ impl<'src> MemLayoutSealed<'src> {
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.defined_len() + self.external.len()
     }
+    #[must_use]
     pub fn defined_len(&self) -> usize {
         self.defined
             // get last defined in case of gapps (symbols that was pushed, but later was merged into another)
@@ -122,6 +126,7 @@ impl<'src> MemLayoutSealed<'src> {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn stable_id(&self, id: Temp<DataSymbolRef>) -> DataSymbolRef {
         id.to_stable(0, self.defined.len())
     }
@@ -407,7 +412,7 @@ impl<'src> MemLayoutSealed<'src> {
     ///
     /// Note: can reorder segments in output
     ///
-    /// Returns MemLayoutBuilder without items.
+    /// Returns `MemLayoutBuilder` without items.
     pub fn recover_vs_segments(
         &self,
         mut import_mem: impl FnMut(MemoryRef) -> Temp<MemoryRef>,
@@ -470,6 +475,7 @@ impl<'src> MemLayoutBuilder<'src> {
     ) -> Temp<DataSymbolRef> {
         self.items.push_entity(entity)
     }
+    #[must_use]
     pub fn dry_push_entity(
         &self,
         entity: &ImportOrDefined<ImportedDataChunk<'src>, DefinedDataChunk<'src>>,
@@ -549,12 +555,14 @@ pub struct ItemType {
 }
 
 impl ItemType {
+    #[must_use]
     pub fn element_item(segment_id: SegmentId) -> Self {
         Self {
             segment_id,
             alignment: 0,
         }
     }
+    #[must_use]
     pub fn data_chunk(segment_id: SegmentId, align: u8) -> Self {
         Self {
             segment_id,

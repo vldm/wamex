@@ -55,6 +55,7 @@ impl Locked<'_> {
     /// Get segment used as indirect function table, if exist.
     ///
     /// Current implementation will find first active segment.
+    #[must_use]
     pub fn get_indirect_fn_segment(&self) -> Option<SegmentId> {
         self.function_elements
             .segments
@@ -83,6 +84,7 @@ impl Builder<'_> {
     /// Get virtual space used as indirect function table, if exist.
     ///
     /// Current implementation will find first active virtual space.
+    #[must_use]
     pub fn get_indirect_fn_vs(&self) -> Option<VirtualSpaceId> {
         self.function_elements
             .virtual_spaces
@@ -90,6 +92,7 @@ impl Builder<'_> {
             .find(|(_, s)| s.is_active())
             .map(|(id, _)| id)
     }
+    #[must_use]
     pub fn has_got(&self) -> bool {
         self.got_info.is_some()
     }
@@ -114,6 +117,7 @@ pub struct FileLoader {
     files_readers: PrimaryMap<FileId, FileWithData<'static>>,
 }
 impl FileLoader {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             files_readers: PrimaryMap::new(),
@@ -132,10 +136,12 @@ impl FileLoader {
         Ok(id)
     }
 
+    #[must_use]
     pub fn get_file(&self, file_id: FileId) -> &LoadedFile<'_> {
         self.files_readers.get(file_id).unwrap().get()
     }
 
+    #[must_use]
     pub fn get_snapshot(&self) -> snapshot::MultiSnapshot {
         snapshot::MultiSnapshot::new(self.files_readers.iter().map(|(_, file)| {
             let file = file.get();
@@ -180,6 +186,7 @@ impl<'src> LoadedFile<'src> {
     }
 
     #[doc(hidden)]
+    #[must_use]
     pub fn raw_reader(&self) -> &raw::ObjectReader<'src> {
         &self.wasm_reader
     }
@@ -214,7 +221,7 @@ pub struct ModuleGeneric<
     pub globals: entities::Globals<'src, LockedState>,
     pub tags: entities::Tags<'src, LockedState>,
 
-    /// Extra information that depend on state (data layout, indirect functions, start_functions)
+    /// Extra information that depend on state (data layout, indirect functions, `start_functions`)
     /// It is extracted in phase, because during build we don't have stable indexes.
     ///
     /// Checkout [`Locked`] and [`Builder`] for details.
@@ -401,6 +408,7 @@ impl<'src> Module<'src> {
     }
 
     /// Get entity name
+    #[must_use]
     pub fn get_name(&self, entity: EntityKind) -> Cow<'src, str> {
         let debug_name = match entity {
             EntityKind::Function(func_id) => self.functions.get_entity(func_id).name().cloned(),
@@ -414,6 +422,7 @@ impl<'src> Module<'src> {
         debug_name.unwrap_or_else(|| format!("{entity}").into())
     }
     /// Get entity type
+    #[must_use]
     pub fn get_type(&self, entity: EntityKind) -> Option<EntityType> {
         Some(match entity {
             EntityKind::Global(g) => EntityType::Global(*self.globals.get_entity(g).get_type()),
@@ -428,6 +437,7 @@ impl<'src> Module<'src> {
         })
     }
     /// Calculate estimated size of entity.
+    #[must_use]
     pub fn get_body_len(&self, entity: EntityKind) -> usize {
         match entity {
             EntityKind::DataSymbol(d) => self
@@ -514,6 +524,7 @@ impl<'src> Module<'src> {
             .modify_bodies(|data_ref, def| op(data_ref.into(), &mut def.body));
     }
 
+    #[must_use]
     pub fn find_function_id_by_name(&self, name: &str) -> Option<FunctionRef> {
         let func = self
             .functions
@@ -522,6 +533,7 @@ impl<'src> Module<'src> {
         Some(func.0)
     }
 
+    #[must_use]
     pub fn find_global_id_by_name(&self, name: &str) -> Option<GlobalRef> {
         let global = self
             .globals
@@ -552,6 +564,7 @@ impl<'src> ModuleBuilder<'src> {
         clippy::new_without_default,
         reason = "it's api only for building state, so make it default might be confusing"
     )]
+    #[must_use]
     pub fn new() -> Self {
         ModuleBuilder {
             functions: entities::Functions::default(),
@@ -626,7 +639,7 @@ impl<'src> ModuleBuilder<'src> {
     }
     /// Defines the default memory for the module.
     ///
-    /// Panics: if memory_id for base memory was already set.
+    /// Panics: if `memory_id` for base memory was already set.
     pub fn create_base_memory(&mut self) -> crate::index::Temp<MemoryRef> {
         self.memories.push_defined(WithoutBody {
             entity_type: raw::MemoryType {
@@ -648,10 +661,11 @@ impl<'src> ModuleBuilder<'src> {
     /// so it's requiered to either call [`create_empty_indirect_fn_table`] and [`create_base_memory`]
     /// or push tables/memories before calling this method.
     ///
-    /// Also this method init start_fn based on list of start functions provided during building phase
+    /// Also this method init `start_fn` based on list of start functions provided during building phase
     ///
     /// Panics: if no default memory/indirect function can be found.
     ///
+    #[must_use]
     pub fn into_locked(mut self) -> Module<'src> {
         let tables = self.tables.into_finished();
 

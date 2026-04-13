@@ -28,6 +28,7 @@ impl Relocation {
         }
         Ok(())
     }
+    #[must_use]
     pub fn get_section(&self, index: SectionId) -> Option<&RelocationSection> {
         self.relocs.get(index as usize)
     }

@@ -131,15 +131,19 @@ impl ReservedValue for EntityKind {
 }
 
 impl EntityKind {
+    #[must_use]
     pub fn is_function(&self) -> bool {
         matches!(self, EntityKind::Function(_))
     }
+    #[must_use]
     pub fn is_data(&self) -> bool {
         matches!(self, EntityKind::DataSymbol(_))
     }
+    #[must_use]
     pub fn is_type(&self) -> bool {
         matches!(self, EntityKind::Type(_))
     }
+    #[must_use]
     pub fn to_inner_u32(&self) -> u32 {
         match self {
             EntityKind::Function(f) => f.as_u32(),
@@ -167,6 +171,7 @@ pub enum TempEntityKind {
     // Type(Temp<FuncTypeId>),
 }
 impl TempEntityKind {
+    #[must_use]
     pub fn to_stable(self, module: &Module<'_>) -> EntityKind {
         match self {
             TempEntityKind::Function(func_ref) => EntityKind::Function(func_ref.to_stable(

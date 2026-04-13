@@ -53,6 +53,7 @@ pub enum AnyRelocationEntry {
 
 impl AnyRelocationEntry {
     /// Get symbol index if this is linkage relocation entry.
+    #[must_use]
     pub fn symbol_id(&self) -> Option<SymbolId> {
         match self {
             AnyRelocationEntry::Linkage(reloc) => Some(reloc.symbol_id),
@@ -60,6 +61,7 @@ impl AnyRelocationEntry {
         }
     }
     /// Get offset of relocation entry within the containing symbol.
+    #[must_use]
     pub fn offset(&self) -> u32 {
         match self {
             AnyRelocationEntry::Linkage(reloc) => reloc.offset,
@@ -74,6 +76,7 @@ impl AnyRelocationEntry {
         }
     }
     /// Get linkage relocation entry if applicable.
+    #[must_use]
     pub fn linkage(&self) -> Option<&LinkageRelocationEntry> {
         match self {
             AnyRelocationEntry::Linkage(reloc) => Some(reloc),
@@ -81,6 +84,7 @@ impl AnyRelocationEntry {
         }
     }
     /// Return range of bytes in the containing symbol that should be modified by this relocation.
+    #[must_use]
     pub fn relocation_range(&self) -> std::ops::Range<usize> {
         let start = self.offset() as usize;
         let len = match self {
@@ -128,6 +132,7 @@ pub enum EntityAddressMode {
     BaseStaticIndex,
 }
 impl EntityAddressMode {
+    #[must_use]
     pub fn from_llvm_relocs(entity_kind: EntityKind, reloc_ty: SymbolType) -> Self {
         match (&entity_kind, reloc_ty) {
             (EntityKind::Function(_), SymbolType::FunctionIndex)
@@ -146,9 +151,9 @@ impl EntityAddressMode {
 
 ///
 /// Implementation of relocation entry type defined in linker symbols table.
-/// Generic Symbols allows to map SymbolId to EntityRef and
+/// Generic Symbols allows to map `SymbolId` to `EntityRef` and
 /// decompose work with relocation into two parts:
-/// - resolution of symbol index to typed entity_id
+/// - resolution of symbol index to typed `entity_id`
 /// - application of symbol offset.
 ///
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -188,6 +193,7 @@ impl<Index, Op> RelocationEntry<Index, Op> {
     }
 }
 impl EntityRelocationEntry {
+    #[must_use]
     pub fn index_base(offset_of_got: u32, symbol_ref: EntityKind) -> Self {
         Self {
             // entity should have information about GOT they used, since there maybe more than one.
@@ -200,6 +206,7 @@ impl EntityRelocationEntry {
             addend: 0,
         }
     }
+    #[must_use]
     pub fn runtime_addr(place_for_adddr: u32, symbol_ref: EntityKind, is_got: bool) -> Self {
         // only data or fn can have runtime addr
         debug_assert!(symbol_ref.is_function() || symbol_ref.is_data());
@@ -362,6 +369,7 @@ impl Debug for RelocationWidth {
 // }
 
 impl AnyRelocationEntry {
+    #[must_use]
     pub fn from_raw(entry: wasmparser::RelocationEntry, entry_offset: isize) -> Self {
         use wasmparser::RelocationType::*;
         let symbol_type = match entry.ty {

@@ -1,4 +1,4 @@
-//! Wasm spec defines multiple types of entities https://webassembly.github.io/spec/core/syntax/types.html
+//! Wasm spec defines multiple types of entities <https://webassembly.github.io/spec/core/syntax/types.html>
 //! for representing various concepts in wasm modules.
 //!
 //! Some of them are usefull for low-level representation of wasm modules, like value types (i32, i64, f32, f64, v128, funcref, externref),
@@ -95,6 +95,7 @@ impl<Ref, Import, Defined> EntityCollection<Ref, Import, Defined, BuilderState>
 where
     Ref: TempIndex,
 {
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             imports: Vec::new(),
@@ -105,6 +106,7 @@ where
         }
     }
 
+    #[must_use]
     pub fn new_raw(imports: Vec<Import>, defined: Vec<Defined>) -> Self {
         Self {
             imports,
@@ -115,13 +117,16 @@ where
         }
     }
 
+    #[must_use]
     pub fn imports_slice(&self) -> &[Import] {
         self.imports.as_slice()
     }
+    #[must_use]
     pub fn defined_slice(&self) -> &[Defined] {
         self.defined.as_slice()
     }
 
+    #[must_use]
     pub fn into_finished(self) -> EntityCollection<Ref, Import, Defined, SealedState> {
         EntityCollection {
             imports: self.imports,
@@ -134,6 +139,7 @@ where
 
     /// Returns iterator over imported entities.
     /// The returned iterator yields pairs of (compound index, import reference).
+    #[must_use]
     pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Temp<Ref>, &Import)> {
         self.imports
             .iter()
@@ -144,6 +150,7 @@ where
 
     /// Returns iterator over defined entities.
     /// The returned iterator yields pairs of (compound index, defined reference).
+    #[must_use]
     pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Temp<Ref>, &Defined)> {
         self.defined
             .iter()
@@ -172,6 +179,7 @@ where
 
     /// Returns imported entity by index, if index is in imports range.
     /// For import by import index use `imports` field directly.
+    #[must_use]
     pub fn get_import(&self, idx: Temp<Ref>) -> Option<&Import> {
         let import_idx = idx.to_stable(self.imports.len(), self.defined.len());
         Some(&self.imports[import_idx.index()])
@@ -179,12 +187,14 @@ where
 
     /// Returns defined entity by index, if index is in defined range.
     /// For import by defined index use `defined` field directly.
+    #[must_use]
     pub fn get_defined(&self, idx: Temp<Ref>) -> Option<&Defined> {
         let defined_idx = idx.to_stable(self.imports.len(), self.defined.len());
         Some(&self.defined[defined_idx.index()])
     }
 
     /// Returns either imported or defined entity by compound index.
+    #[must_use]
     pub fn get_entity(&self, idx: Temp<Ref>) -> ImportOrDefined<&Import, &Defined> {
         if let Some(import) = idx.as_import() {
             let import_id = import.index();
@@ -217,14 +227,17 @@ where
         Temp::from_external(idx)
     }
     /// Returns the next defined index that will be assigned to the next defined entity.
+    #[must_use]
     pub fn next_defined_key(&self) -> Temp<Ref> {
         Temp::from_defined(self.defined.len())
     }
     /// Returns the next import index that will be assigned to the next imported entity.
+    #[must_use]
     pub fn next_import_key(&self) -> Temp<Ref> {
         Temp::from_import(self.imports.len())
     }
     /// Returns the next external index that will be assigned to the next external entity.
+    #[must_use]
     pub fn next_external_key(&self) -> Temp<Ref> {
         Temp::from_external(self.external_refs.len())
     }
@@ -254,6 +267,7 @@ impl<'src, Ref, Import, Defined> EntityCollection<Ref, Import, Defined>
 where
     Ref: TempIndex,
 {
+    #[must_use]
     pub fn extend_with_info(
         mut self,
         mut names: GappedMap<Ref, NonDefault<Cow<'src, str>>>,
@@ -287,10 +301,12 @@ where
         (0..(self.imports.len() + self.defined.len())).map(EntityRef::new)
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.imports.len() + self.defined.len() + self.external_refs.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -316,11 +332,13 @@ where
         })
     }
     // Convert temporary index to stable index.
+    #[must_use]
     pub fn stable_id(&self, idx: Temp<Ref>) -> Ref {
         idx.to_stable(self.imports.len(), self.defined.len())
     }
     /// Returns iterator over imported entities.
     /// The returned iterator yields pairs of (compound index, import reference).
+    #[must_use]
     pub fn imports_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Import)> {
         self.imports
             .iter()
@@ -331,6 +349,7 @@ where
 
     /// Returns iterator over defined entities.
     /// The returned iterator yields pairs of (compound index, defined reference).
+    #[must_use]
     pub fn defined_iter(&self) -> impl ExactSizeIterator<Item = (Ref, &Defined)> {
         self.defined
             .iter()
@@ -358,6 +377,7 @@ where
     }
 
     /// Convert collection into imports and defined maps.
+    #[must_use]
     pub fn into_parts(
         self,
     ) -> (
@@ -491,6 +511,7 @@ impl<Import, Defined> ImportOrDefined<Import, Defined> {
 }
 
 impl<Import, Defined> ImportOrDefined<&Import, &Defined> {
+    #[must_use]
     pub fn cloned(&self) -> ImportOrDefined<Import, Defined>
     where
         Import: Clone,
@@ -528,6 +549,7 @@ impl<'any, ImportInner, D> ImportOrDefined<&'any ImportedEntity<'_, ImportInner>
 where
     D: WithType<Type = ImportInner>,
 {
+    #[must_use]
     pub fn get_type(&self) -> &'any ImportInner {
         match self {
             ImportOrDefined::Import(import) => &import.entity_type,
@@ -542,6 +564,7 @@ where
     Import: WithExtraInfo<'src>,
     Defined: WithExtraInfo<'src>,
 {
+    #[must_use]
     pub fn export_as(&self) -> &ExportNames<'src> {
         match self {
             ImportOrDefined::Import(import) => import.export_as(),
@@ -549,6 +572,7 @@ where
             ImportOrDefined::External(external) => external.export_as(),
         }
     }
+    #[must_use]
     pub fn name(&self) -> Option<&Cow<'src, str>> {
         match self {
             ImportOrDefined::Import(import) => import.name(),
@@ -641,7 +665,7 @@ mod assert_covariance {
 /// A primary map from input entity to some value.
 /// Abstract over key - use `EntityKind`.
 /// The implementation may vary, but instead of using `PrimaryMap<FlatEntityRef, Value>`
-/// this collection should allow using it when EntitiesSnapshot cannot be created.
+/// this collection should allow using it when `EntitiesSnapshot` cannot be created.
 #[derive(Debug)]
 pub struct EntitiesMultiMap<V: ReservedValue + Clone> {
     functions: GappedMap<FunctionRef, V>,

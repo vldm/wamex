@@ -8,8 +8,8 @@ use wasmparser::ElementItems;
 
 use crate::{
     emit::modify::wasm_emitter::{self, SectionList},
-    index::{GappedMap, Temp, WithStart},
-    layouts::{DataSegmentSpec, PartId, SegmentPlacement, VirtualSpaceId},
+    index::{GappedMap, Temp},
+    layouts::{PartId, SegmentPlacement, VirtualSpaceId},
     raw::{self, SegmentId},
     typed::{FunctionRef, GlobalRef, TableRef},
 };
@@ -44,6 +44,7 @@ pub struct ElementLayoutBuilder<'src, T> {
 }
 
 impl<'src, T> ElementLayoutBuilder<'src, T> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             virtual_spaces: PrimaryMap::new(),
@@ -348,6 +349,7 @@ impl<'src, T: ElementType<'src> + ReservedValue + Clone> ElementLayoutSealed<'sr
     }
 }
 impl<'src> ElementLayoutSealed<'src, FunctionRef> {
+    #[must_use]
     pub fn items_locations(&self) -> GappedMap<FunctionRef, ElementItemId> {
         let mut result = GappedMap::new();
         for segment in self.segments.values() {
@@ -393,7 +395,7 @@ pub enum ElementKind<OwnerId, GlobalRef> {
         /// The segment placement is an virtual address in owner unit.
         ///
         /// Can be:
-        /// - GotBased - means that segments will have offsets relative to value of global reference.
+        /// - `GotBased` - means that segments will have offsets relative to value of global reference.
         /// - Constant - means that segments will have constant offsets.
         location: SegmentPlacement<GlobalRef>,
     },

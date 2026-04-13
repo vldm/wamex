@@ -23,10 +23,10 @@ pub struct Ref {
     pub name: String,
 }
 
-/// Renders a hexdump of a DataPart with optional color highlighting for references.
-/// part_base - initial offset of the part in the overall data segment.
+/// Renders a hexdump of a `DataPart` with optional color highlighting for references.
+/// `part_base` - initial offset of the part in the overall data segment.
 /// color - whether to use ANSI color codes for highlighting.
-/// part - the DataPart to render.
+/// part - the `DataPart` to render.
 pub fn render_part(mut out: impl Write, part_base: usize, part: DataPart, color: bool) {
     // Collect bytes into a vector for indexing
     let bytes: Vec<u8> = part.bytes;
@@ -179,7 +179,7 @@ pub fn render_part(mut out: impl Write, part_base: usize, part: DataPart, color:
     writeln!(out).ok();
 }
 
-/// Returns (fg_code, bg_code) — high-contrast ANSI pairs, excluding default white-on-black.
+/// Returns (`fg_code`, `bg_code`) — high-contrast ANSI pairs, excluding default white-on-black.
 fn palette(i: usize) -> (String, String) {
     // Hand-picked (fg, bg) pairs: every combination has strong contrast,
     // avoids default terminal colors (white on black), and adjacent indices

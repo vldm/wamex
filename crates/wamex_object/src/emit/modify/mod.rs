@@ -26,10 +26,12 @@ pub enum OutputEntityRef {
     FromInput(EntityKind),
 }
 impl OutputEntityRef {
+    #[must_use]
     pub fn from_input(input: EntityKind) -> Self {
         Self::FromInput(input)
     }
 
+    #[must_use]
     pub fn resolved(resolved: EntityKind) -> Self {
         Self::Resolved(resolved)
     }
@@ -39,6 +41,7 @@ pub type OutputRelocationEntry =
     crate::linkage::reloc::RelocationEntry<OutputEntityRef, EntityAddressMode>;
 
 impl EntityRelocationEntry {
+    #[must_use]
     pub fn into_resolved(self) -> OutputRelocationEntry {
         OutputRelocationEntry {
             symbol_id: OutputEntityRef::Resolved(self.symbol_id),
@@ -50,6 +53,7 @@ impl EntityRelocationEntry {
             width: self.width,
         }
     }
+    #[must_use]
     pub fn into_from_input(self) -> OutputRelocationEntry {
         OutputRelocationEntry {
             symbol_id: OutputEntityRef::FromInput(self.symbol_id),
@@ -80,6 +84,7 @@ pub struct Rewrite {
 
 impl Rewrite {
     /// Get the size difference between new and old data.
+    #[must_use]
     pub fn size(&self) -> isize {
         self.new_bytes.len() as isize - self.old_range.len() as isize
     }
