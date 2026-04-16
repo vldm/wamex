@@ -4,7 +4,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use super::helpers::{content_width, render_hexdump_row, truncate_text};
+use super::helpers::{content_width, render_semantic_dump, truncate_text};
 use crate::{App, SectionKind, scene::ViewMode, theme};
 
 /// Renders the Detail scene (full screen — one specific section entry).
@@ -26,7 +26,7 @@ pub fn render_raw_block(frame: &mut Frame, area: Rect, app: &App, kind: SectionK
             theme::title(),
         )));
         lines.push(Line::from(""));
-        lines.extend(block.rows.into_iter().map(render_hexdump_row));
+        lines.extend(render_semantic_dump(&block.dump));
     } else {
         lines.push(Line::from("No raw bytes for this entry"));
     }
@@ -96,7 +96,7 @@ pub fn render_structured_detail(
                     truncate_text(&dump_title, width),
                     theme::title(),
                 )));
-                lines.extend(detail.dump_rows.into_iter().map(render_hexdump_row));
+                lines.extend(render_semantic_dump(&detail.dump));
             }
 
             if !detail.reloc_lines.is_empty() {

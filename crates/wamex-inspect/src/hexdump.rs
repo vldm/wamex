@@ -1,24 +1,13 @@
-use wamex_object::linkage::reloc::Relative;
-
-#[derive(Clone, Debug)]
-pub struct HexdumpRow {
-    pub offset: usize,
-    pub bytes: Vec<(u8, Option<Relative>)>,
-}
+use semdump::{DataPart, SemanticDump};
 
 #[derive(Clone, Debug)]
 pub struct RawBlockView {
     pub title: String,
-    pub rows: Vec<HexdumpRow>,
+    pub dump: SemanticDump<'static>,
 }
 
-pub fn plain_hexdump_rows(bytes: &[u8], base_offset: usize) -> Vec<HexdumpRow> {
-    bytes
-        .chunks(16)
-        .enumerate()
-        .map(|(row_idx, chunk)| HexdumpRow {
-            offset: base_offset + row_idx * 16,
-            bytes: chunk.iter().map(|byte| (*byte, None)).collect(),
-        })
-        .collect()
+pub fn plain_semantic_dump(bytes: &[u8], base_offset: usize) -> SemanticDump<'static> {
+    let mut dump = SemanticDump::new(base_offset);
+    dump.push_part(DataPart::from_bytes(bytes.to_vec()));
+    dump
 }

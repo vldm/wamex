@@ -67,7 +67,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 /// Render the preview pane — shows content one level deeper than the current scene.
 fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
-    use crate::scenes::helpers::{content_width, render_hexdump_row, truncate_text};
+    use crate::scenes::helpers::{content_width, render_semantic_dump, truncate_text};
 
     match app.current_scene() {
         Scene::OverallView => {
@@ -83,7 +83,7 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
                             theme::title(),
                         )));
                         lines.push(Line::from(""));
-                        lines.extend(block.rows.into_iter().map(render_hexdump_row));
+                        lines.extend(render_semantic_dump(&block.dump));
                     } else {
                         lines.push(Line::from("No section selected"));
                     }

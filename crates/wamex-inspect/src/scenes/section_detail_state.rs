@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
+use semdump::{DataPart, SemanticDump};
 use wamex_object::{
     linkage::reloc::Relative,
     typed::{EntityKind, LoadedFile, Module},
 };
 
 use crate::{
-    hexdump::{HexdumpRow, RawBlockView, plain_hexdump_rows},
+    hexdump::{RawBlockView, plain_semantic_dump},
     scene::{InspectTarget, Scene, SectionKind, ViewMode},
     scroll::{ListSelectionState, adjust_scroll, wrap_index},
     source::{
@@ -49,7 +50,7 @@ pub struct DetailView {
     pub title: String,
     pub info_lines: Vec<String>,
     pub dump_title: Option<String>,
-    pub dump_rows: Vec<HexdumpRow>,
+    pub dump: SemanticDump<'static>,
     pub dump_note: Option<String>,
     pub reloc_lines: Vec<RelocationLine>,
 }
@@ -116,7 +117,7 @@ pub fn raw_blocks(
         .filter(|block| kind.is_raw_eq(block.section_id))
         .map(|block| RawBlockView {
             title: raw_section_block_title(block),
-            rows: plain_hexdump_rows(&source_bytes[block.range.clone()], block.range.start),
+            dump: plain_semantic_dump(&source_bytes[block.range.clone()], block.range.start),
         })
         .collect()
 }
@@ -185,9 +186,9 @@ pub fn detail_view_at_index(
 ) -> Option<DetailView> {
     let entry = section_entries(module, loaded, kind).into_iter().nth(idx)?;
 
-    let dump_rows = entry
+    let dump = entry
         .inspect_target
-        .and_then(|target| hexdump_rows(module, loaded, target).map(|(_, rows)| rows))
+        .and_then(|target| hexdump_rows(module, loaded, target).map(|(_, dump)| dump))
         .unwrap_or_default();
     let dump_title = entry.inspect_target.map(|target| match target {
         InspectTarget::Function(_) => "Function body".to_owned(),
@@ -209,7 +210,7 @@ pub fn detail_view_at_index(
         title: entry.label,
         info_lines: entry.detail_lines,
         dump_title,
-        dump_rows,
+        dump,
         dump_note,
         reloc_lines,
     })
@@ -249,45 +250,37 @@ pub fn hexdump_rows(
     module: &Module<'_>,
     loaded: &LoadedFile<'_>,
     target: InspectTarget,
-) -> Option<(String, Vec<HexdumpRow>)> {
+) -> Option<(String, SemanticDump<'static>)> {
     let entity = match target {
         InspectTarget::Function(func_ref) => EntityKind::Function(func_ref),
         InspectTarget::Data(data_ref) => EntityKind::DataSymbol(data_ref),
     };
 
-    let bytes = entity_bytes(module, target)?;
+    let (bytes, reloc_base) = entity_bytes_and_base(module, target)?;
     let relocs = loaded
         .relocs
         .iter_relocs()
         .find_map(|(owner, relocs)| (owner == entity).then_some(relocs))
         .unwrap_or_default();
 
-    let rows = bytes
-        .chunks(16)
-        .enumerate()
-        .map(|(row_idx, chunk)| {
-            let start = row_idx * 16;
-            let bytes = chunk
-                .iter()
-                .enumerate()
-                .map(|(offset, byte)| {
-                    let absolute = start + offset;
-                    let relation = relocs
-                        .iter()
-                        .find(|reloc| reloc.relocation_range().contains(&absolute))
-                        .map(|reloc| reloc.relation);
-                    (*byte, relation)
-                })
-                .collect();
+    let bytes_len = bytes.len();
+    let mut part = DataPart::from_bytes(bytes);
+    for reloc in relocs {
+        // Reloc offsets are section-relative; adjust to entity-local by subtracting the
+        // body's start offset within the section (same as SymbolDebug::shift_left).
+        let Some(local_offset) = (reloc.offset as usize).checked_sub(reloc_base) else {
+            continue;
+        };
+        let range = local_offset..(local_offset + reloc.extent());
+        if range.end <= bytes_len {
+            part.push_ref(range, entity_label(module, reloc.symbol_id));
+        }
+    }
 
-            HexdumpRow {
-                offset: start,
-                bytes,
-            }
-        })
-        .collect();
+    let mut dump = SemanticDump::new(0);
+    dump.push_part(part);
 
-    Some((entity_label(module, entity), rows))
+    Some((entity_label(module, entity), dump))
 }
 
 pub fn entity_label(module: &Module<'_>, entity: EntityKind) -> String {
@@ -402,18 +395,22 @@ pub fn inspect_target_for_entity(module: &Module<'_>, entity: EntityKind) -> Opt
     }
 }
 
-fn entity_bytes(module: &Module<'_>, target: InspectTarget) -> Option<Vec<u8>> {
+fn entity_bytes_and_base(module: &Module<'_>, target: InspectTarget) -> Option<(Vec<u8>, usize)> {
     match target {
         InspectTarget::Function(func_ref) => module
             .functions
             .try_get_entity(func_ref)
             .and_then(|entity| entity.to_defined())
-            .map(|defined| defined.body.iter_bytes().collect()),
+            .map(|defined| {
+                let base = defined.body.original_range().start;
+                (defined.body.iter_bytes().collect(), base)
+            }),
         InspectTarget::Data(data_ref) => {
             let place = module.extra.mem_layout.item_places().get(data_ref)?;
             let segment = &module.extra.mem_layout.segments()[place.segment_id];
             let item = &segment.parts[place.part_id];
-            Some(item.defined_entity.body.iter_bytes().collect())
+            let base = item.defined_entity.body.original_range().start;
+            Some((item.defined_entity.body.iter_bytes().collect(), base))
         }
     }
 }

@@ -1,6 +1,5 @@
 use ratatui::{layout::Rect, prelude::*};
-
-use crate::{HexdumpRow, theme};
+use semdump::{RatatuiFormatter, SemanticDump};
 
 pub fn content_width(area: Rect) -> usize {
     area.width.saturating_sub(2) as usize
@@ -32,36 +31,8 @@ pub fn truncate_text(text: &str, width: usize) -> String {
     truncated
 }
 
-#[allow(clippy::needless_pass_by_value)]
-pub fn render_hexdump_row(row: HexdumpRow) -> Line<'static> {
-    let mut spans = vec![Span::styled(
-        format!("{:08x}  ", row.offset),
-        Style::default().fg(Color::DarkGray),
-    )];
-
-    for (idx, (byte, relation)) in row.bytes.iter().enumerate() {
-        let style = relation.map_or_else(|| Style::default().fg(Color::White), theme::reloc);
-        spans.push(Span::styled(format!("{:02x}", *byte), style));
-        spans.push(Span::raw(if idx == 7 { "  " } else { " " }));
-    }
-
-    if row.bytes.len() < 16 {
-        for idx in row.bytes.len()..16 {
-            let padding = if idx == 7 { "   " } else { "  " };
-            spans.push(Span::raw(format!("{padding} ")));
-        }
-    }
-
-    spans.push(Span::raw(" |"));
-    for (byte, relation) in &row.bytes {
-        let ch = if byte.is_ascii_graphic() || *byte == b' ' {
-            char::from(*byte)
-        } else {
-            '.'
-        };
-        spans.push(Span::styled(ch.to_string(), theme::ascii(*relation)));
-    }
-    spans.push(Span::raw("|"));
-
-    Line::from(spans)
+pub fn render_semantic_dump(dump: &SemanticDump<'static>) -> Vec<Line<'static>> {
+    let mut fmt = RatatuiFormatter::new();
+    dump.render(&mut fmt).unwrap();
+    fmt.into_text().lines
 }

@@ -10,7 +10,8 @@ anyhow = { version = "1.0.82", features = ["backtrace"] }
 clap = { version = "4.5.4", features = ["derive"] }
 cranelift-entity = "0.126.1"
 crossterm = "0.29"
-ratatui = "0.29"
+ratatui = "0.30"
+semdump = { version = "0.1", features = ["ratatui"] }
 wasmparser = { version = "0.238.0", features = ["validate"] }
 wasm-encoder = { version = "0.238.0" }
 wamex_object = { version = "0.1.0", path = "../wamex_object", features = [

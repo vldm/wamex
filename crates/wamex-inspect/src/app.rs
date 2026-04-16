@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use wamex_object::typed::{EntityKind, FileLoader, LoadedFile, Module};
 
 use crate::{
-    hexdump::{HexdumpRow, RawBlockView},
+    hexdump::RawBlockView,
     scene::{InspectTarget, Scene, SectionKind, ViewMode},
     scenes::{
         overall_state::{OverallState, raw_section_title},
@@ -240,7 +240,7 @@ impl App {
         reloc_lines(self.module(), &loaded, entity)
     }
 
-    pub fn hexdump_rows(&self, target: InspectTarget) -> Option<(String, Vec<HexdumpRow>)> {
+    pub fn hexdump_rows(&self, target: InspectTarget) -> Option<(String, semdump::SemanticDump<'static>)> {
         let loaded = self.source.loaded();
         hexdump_rows(self.module(), &loaded, target)
     }
@@ -255,11 +255,11 @@ impl App {
     }
 
     pub fn overview_raw_preview(&self) -> Option<RawBlockView> {
-        use crate::hexdump::plain_hexdump_rows;
+        use crate::hexdump::plain_semantic_dump;
         let block = self.source.raw_sections.get(self.overall.selected())?;
         Some(RawBlockView {
             title: raw_section_title(block),
-            rows: plain_hexdump_rows(&self.source.bytes[block.range.clone()], block.range.start),
+            dump: plain_semantic_dump(&self.source.bytes[block.range.clone()], block.range.start),
         })
     }
 
