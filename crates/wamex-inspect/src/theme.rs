@@ -46,13 +46,6 @@ pub fn reloc(relative: Relative) -> Style {
     }
 }
 
-pub fn ascii(rel: Option<Relative>) -> Style {
-    match rel {
-        Some(relative) => reloc(relative),
-        None => Style::default().fg(Color::Gray),
-    }
-}
-
 pub fn status_error() -> Style {
     Style::default()
         .fg(Color::LightRed)

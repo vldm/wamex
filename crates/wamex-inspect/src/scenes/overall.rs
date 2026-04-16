@@ -8,6 +8,7 @@ use super::helpers::{content_height, content_width, truncate_text};
 use crate::{App, scene::ViewMode, theme};
 
 // Print in human-friendly format, and full bytes in parens.
+#[allow(clippy::cast_precision_loss, clippy::cast_lossless)]
 fn format_bytes_len(bytes: usize) -> String {
     let with_units = if bytes >= 1 << 30 {
         format!("{:.2} GB", bytes as f64 / (1 << 30) as f64)
@@ -16,9 +17,9 @@ fn format_bytes_len(bytes: usize) -> String {
     } else if bytes >= 1 << 10 {
         format!("{:.2} KB", bytes as f64 / (1 << 10) as f64)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     };
-    format!("{} ({})", with_units, bytes)
+    format!("{with_units} ({bytes})")
 }
 
 fn metadata_widget(path: &std::path::Path, summary: &crate::RawSummary) -> Paragraph<'static> {

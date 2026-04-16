@@ -14,6 +14,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn render_raw(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {
     use super::helpers::render_semantic_dump;
 

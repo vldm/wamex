@@ -217,7 +217,7 @@ impl App {
 
     pub fn section_entries(&self, kind: SectionKind) -> Vec<ListEntry> {
         let loaded = self.source.loaded();
-        section_entries(self.module(), &loaded, kind)
+        section_entries(self.module(), loaded, kind)
     }
 
     pub fn structured_preview_entries(&self, kind: SectionKind) -> Vec<ListEntry> {
@@ -239,22 +239,25 @@ impl App {
 
     pub fn detail_view(&self, kind: SectionKind) -> Option<DetailView> {
         let loaded = self.source.loaded();
-        detail_view(self.module(), &loaded, &self.section_detail, kind)
+        detail_view(self.module(), loaded, &self.section_detail, kind)
     }
 
     pub fn reloc_lines(&self, entity: EntityKind) -> Vec<RelocationLine> {
         let loaded = self.source.loaded();
-        reloc_lines(self.module(), &loaded, entity)
+        reloc_lines(self.module(), loaded, entity)
     }
 
-    pub fn hexdump_rows(&self, target: InspectTarget) -> Option<(String, semdump::SemanticDump<'static>)> {
+    pub fn hexdump_rows(
+        &self,
+        target: InspectTarget,
+    ) -> Option<(String, semdump::SemanticDump<'static>)> {
         let loaded = self.source.loaded();
-        hexdump_rows(self.module(), &loaded, target)
+        hexdump_rows(self.module(), loaded, target)
     }
 
     pub fn detail_view_for(&self, kind: SectionKind, idx: usize) -> Option<DetailView> {
         let loaded = self.source.loaded();
-        detail_view_at_index(self.module(), &loaded, kind, idx)
+        detail_view_at_index(self.module(), loaded, kind, idx)
     }
 
     pub fn raw_block_at(&self, kind: SectionKind, idx: usize) -> Option<RawBlockView> {
@@ -262,7 +265,7 @@ impl App {
     }
 
     /// Returns the full hexdump of the raw-section block that was selected when
-    /// entering SectionDetail from the OverallView in Raw mode.
+    /// entering `SectionDetail` from the `OverallView` in Raw mode.
     pub fn section_detail_raw_dump(&self) -> Option<RawBlockView> {
         use crate::hexdump::plain_semantic_dump;
         let block = self
@@ -276,19 +279,18 @@ impl App {
     }
 
     /// Estimates the maximum scroll offset (rendered lines) for the current
-    /// raw-section hexdump, used to clamp Up/Down in raw SectionDetail.
+    /// raw-section hexdump, used to clamp Up/Down in raw `SectionDetail`.
     fn section_detail_raw_max_scroll(&self) -> usize {
-        let block = match self
+        let Some(block) = self
             .source
             .raw_sections
             .get(self.section_detail.entered_raw_section_idx)
-        {
-            Some(b) => b,
-            None => return 0,
+        else {
+            return 0;
         };
         let byte_count = block.range.end.saturating_sub(block.range.start);
         // 16 bytes per hexdump row, +3 for title/blank/rounding headroom
-        (byte_count + 15) / 16 + 3
+        byte_count.div_ceil(16) + 3
     }
 
     pub fn overview_raw_preview(&self) -> Option<RawBlockView> {
@@ -389,11 +391,12 @@ impl App {
                     // Find position of `selected` within selectable slice
                     let cur_sel = self.overall.selected();
                     let pos = selectable.iter().position(|&i| i == cur_sel).unwrap_or(0);
-                    let next_pos =
-                        (pos as isize + delta).clamp(0, selectable.len() as isize - 1) as usize;
+                    let next_pos = (pos.cast_signed() + delta)
+                        .clamp(0, selectable.len().cast_signed() - 1)
+                        .cast_unsigned();
                     let new_selected = selectable[next_pos];
                     self.overall.move_selection(
-                        new_selected as isize - cur_sel as isize,
+                        new_selected.cast_signed() - cur_sel.cast_signed(),
                         self.source.structural_overview.len(),
                     );
                     if self.selected_overall_section_kind() != prev_kind {
@@ -413,8 +416,9 @@ impl App {
             },
             Scene::Detail(_, _) => {
                 // Scroll the detail content. Use a large cap; ratatui handles over-scroll gracefully.
-                self.detail_scroll = (self.detail_scroll as isize + delta)
-                    .max(0) as usize;
+                self.detail_scroll = (self.detail_scroll.cast_signed() + delta)
+                    .max(0)
+                    .cast_unsigned();
             }
         }
     }
@@ -511,12 +515,4 @@ impl App {
             .get(self.overall.selected())
             .and_then(|block| SectionKind::from_section_id(block.section_id))
     }
-}
-
-fn move_index(current: usize, len: usize, delta: isize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    let next = current as isize + delta;
-    next.clamp(0, len.saturating_sub(1) as isize) as usize
 }

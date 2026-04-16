@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use semdump::{DataPart, SemanticDump};
 use wamex_object::{
     linkage::reloc::Relative,
-    typed::{EntityKind, LoadedFile, Module},
+    typed::{EntityKind, ImportOrDefined, LoadedFile, Module},
 };
 
 use crate::{
@@ -60,12 +60,12 @@ pub struct DetailView {
 #[derive(Default)]
 pub struct SectionDetailState {
     pub(crate) selection: ListSelectionState,
-    /// Index into the App's raw_sections slice recorded when entering this
-    /// section from the Overview in Raw mode.  Preserved across reset() so
-    /// that go_back / re-entry always shows the right block.
+    /// Index into the App's `raw_sections` slice recorded when entering this
+    /// section from the Overview in Raw mode.  Preserved across `reset()` so
+    /// that `go_back` / re-entry always shows the right block.
     pub(crate) entered_raw_section_idx: usize,
     /// The section kind that was last entered.  Used to detect same-section
-    /// re-entry so scroll state is preserved on go_back + re-drill.
+    /// re-entry so scroll state is preserved on `go_back` + re-drill.
     pub(crate) last_kind: Option<SectionKind>,
 }
 
@@ -94,8 +94,9 @@ impl SectionDetailState {
 
     /// Scroll the raw-hexdump view by `delta` lines, clamped to `[0, max_scroll]`.
     pub fn scroll_raw(&mut self, delta: isize, max_scroll: usize) {
-        let new_scroll = (self.selection.scroll as isize + delta)
-            .clamp(0, max_scroll as isize) as usize;
+        let new_scroll = (self.selection.scroll.cast_signed() + delta)
+            .clamp(0, max_scroll.cast_signed())
+            .cast_unsigned();
         self.selection.scroll = new_scroll;
         self.selection.selected = new_scroll;
     }
@@ -378,6 +379,7 @@ pub fn entity_label(module: &Module<'_>, entity: EntityKind) -> String {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 pub fn scene_for_entity(entity: EntityKind) -> Option<Scene> {
     match entity {
         EntityKind::Function(_) => Some(Scene::SectionDetail(SectionKind::Functions)),
@@ -417,7 +419,7 @@ fn entity_bytes_and_base(module: &Module<'_>, target: InspectTarget) -> Option<(
         InspectTarget::Function(func_ref) => module
             .functions
             .try_get_entity(func_ref)
-            .and_then(|entity| entity.to_defined())
+            .and_then(ImportOrDefined::to_defined)
             .map(|defined| {
                 let base = defined.body.original_range().start;
                 (defined.body.iter_bytes().collect(), base)
@@ -622,7 +624,7 @@ fn export_entries(module: &Module<'_>) -> Vec<ListEntry> {
             entity: Some(EntityKind::Table(table_ref)),
             inspect_target: None,
             detail_lines: vec![
-                format!("export name: {}", name),
+                format!("export namce: {}", name),
                 format!(
                     "target: {}",
                     entity_label(module, EntityKind::Table(table_ref))
@@ -693,7 +695,25 @@ fn function_entries(module: &Module<'_>, loaded: &LoadedFile<'_>) -> Vec<ListEnt
                 .copied()
                 .unwrap_or_default();
 
-            let exports = entity.export_as().names.join(", ");
+            let exports = entity
+                .export_as()
+                .names
+                .iter()
+                .map(|name| format!("- {name}"));
+
+            let mut detail_lines = vec![
+                format!("kind: {}", if is_defined { "defined" } else { "imported" }),
+                format!("name: {}", entity_name(entity.name())),
+                format!("type: {}", function_type_label(entity.get_type())),
+                format!("relocations: {}", reloc_count),
+                format!("exports: {}", exports_count),
+                format!(
+                    "body bytes: {}",
+                    entity.to_defined().map_or(0, |defined| defined.body.len())
+                ),
+                format!("exports list: "),
+            ];
+            detail_lines.extend(exports);
 
             ListEntry {
                 label: format!(
@@ -712,17 +732,7 @@ fn function_entries(module: &Module<'_>, loaded: &LoadedFile<'_>) -> Vec<ListEnt
                 action: None,
                 entity: Some(EntityKind::Function(func_ref)),
                 inspect_target: is_defined.then_some(InspectTarget::Function(func_ref)),
-                detail_lines: vec![
-                    format!("kind: {}", if is_defined { "defined" } else { "imported" }),
-                    format!("name: {}", entity_name(entity.name())),
-                    format!("type: {}", function_type_label(entity.get_type())),
-                    format!("exports: {}", exports_count),
-                    format!("relocations: {}", reloc_count),
-                    format!(
-                        "body bytes: {}",
-                        entity.to_defined().map_or(0, |defined| defined.body.len())
-                    ),
-                ],
+                detail_lines,
             }
         })
         .collect()

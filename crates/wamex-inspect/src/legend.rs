@@ -1,6 +1,6 @@
 use ratatui::text::{Line, Span};
 
-use crate::{App, scene::Scene, theme};
+use crate::{App, theme};
 
 pub fn footer(app: &App) -> Line<'static> {
     let mode_label = app.mode().title();

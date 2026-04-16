@@ -4,7 +4,13 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Tabs, Wrap},
 };
 
-use crate::{App, legend, scene::Scene, scenes, source::format_size_len, theme};
+use crate::{
+    App, legend,
+    scene::Scene,
+    scenes::{self, helpers::content_height},
+    source::format_size_len,
+    theme,
+};
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -104,7 +110,7 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
                                 .borders(Borders::ALL)
                                 .border_style(theme::border(false)),
                         )
-                        .scroll((scroll as u16, 0))
+                        .scroll((u16::try_from(scroll).unwrap_or(0), 0))
                         .wrap(Wrap { trim: false });
                     frame.render_widget(p, area);
                 }
@@ -114,7 +120,6 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
                     let kind = app.overview_structural_preview_section();
                     let entries = app.section_entries(kind);
                     let width = content_width(area);
-                    use crate::scenes::helpers::content_height;
                     let viewport = content_height(area);
                     app.set_section_viewport(viewport);
                     let scroll = app.section_scroll();

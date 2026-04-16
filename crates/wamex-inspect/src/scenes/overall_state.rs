@@ -1,5 +1,4 @@
 use crate::{
-    scene::SectionKind,
     scroll::{ListSelectionState, adjust_scroll, wrap_index},
     source::{RawSectionBlock, format_size_len},
 };
@@ -49,17 +48,4 @@ pub fn raw_section_title(block: &RawSectionBlock) -> String {
             .map(|count| format!("  count: {count}"))
             .unwrap_or_default(),
     )
-}
-
-/// Returns the index of the first `RawSectionBlock` whose id matches `kind`.
-pub fn section_index_for_kind(raw_sections: &[RawSectionBlock], kind: SectionKind) -> usize {
-    raw_sections
-        .iter()
-        .position(|block| block.section_id == kind.canonical_ids())
-        .or_else(|| {
-            raw_sections
-                .iter()
-                .position(|block| kind.is_raw_eq(block.section_id))
-        })
-        .unwrap_or(0)
 }

@@ -141,10 +141,12 @@ pub fn render_structured_detail(
     frame.render_widget(p, area);
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn render_raw(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind, idx: usize) {
     render_raw_block(frame, area, app, kind, idx, app.detail_scroll() as u16);
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn render_structured(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind, idx: usize) {
     render_structured_detail(frame, area, app, kind, idx, app.detail_scroll() as u16);
 }
