@@ -21,12 +21,17 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let status = render_status(app);
     frame.render_widget(status, chunks[0]);
 
-    let tabs = render_tabs(app.current_scene());
+    let tabs = render_tabs(app);
     frame.render_widget(tabs, chunks[1]);
 
     // Split body area into main pane + optional preview pane.
-    let is_detail = matches!(app.current_scene(), Scene::Detail(_, _));
-    let (main_area, preview_area) = if app.show_preview() && !is_detail {
+    // Hide preview for Detail (leaf) and for raw SectionDetail (it IS the hexdump).
+    let hide_preview = matches!(app.current_scene(), Scene::Detail(_, _))
+        || matches!(
+            (app.current_scene(), app.mode()),
+            (Scene::SectionDetail(_), crate::ViewMode::Raw)
+        );
+    let (main_area, preview_area) = if app.show_preview() && !hide_preview {
         let split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -71,10 +76,14 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
 
     match app.current_scene() {
         Scene::OverallView => {
-            // Preview shows Section content for the currently highlighted section.
+            // Preview shows the SectionDetail content for the highlighted section,
+            // preserving the section_detail scroll / selection state so that
+            // go_back doesn't lose the user's position.
             match app.mode() {
                 crate::ViewMode::Raw => {
-                    // Show hexdump of the selected raw section.
+                    // Show hexdump of the selected raw section, scrolled to match
+                    // where the user was (or left off) in raw SectionDetail.
+                    let scroll = app.section_scroll();
                     let mut lines = Vec::new();
                     if let Some(block) = app.overview_raw_preview() {
                         let width = content_width(area);
@@ -95,23 +104,38 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
                                 .borders(Borders::ALL)
                                 .border_style(theme::border(false)),
                         )
+                        .scroll((scroll as u16, 0))
                         .wrap(Wrap { trim: false });
                     frame.render_widget(p, area);
                 }
                 crate::ViewMode::Structured => {
-                    // Show entity list for the selected section kind.
+                    // Show entry list for the selected section kind, scrolled to match
+                    // the section_detail selection state.
                     let kind = app.overview_structural_preview_section();
                     let entries = app.section_entries(kind);
                     let width = content_width(area);
+                    use crate::scenes::helpers::content_height;
+                    let viewport = content_height(area);
+                    app.set_section_viewport(viewport);
+                    let scroll = app.section_scroll();
+                    let end = (scroll + viewport).min(entries.len());
                     let lines: Vec<Line<'static>> = if entries.is_empty() {
                         vec![Line::from("No entries")]
                     } else {
                         entries
                             .iter()
-                            .map(|entry| {
+                            .enumerate()
+                            .skip(scroll)
+                            .take(end.saturating_sub(scroll))
+                            .map(|(idx, entry)| {
+                                let style = if idx == app.section_selected() {
+                                    theme::selection()
+                                } else {
+                                    theme::accent(entry.accent)
+                                };
                                 Line::from(Span::styled(
                                     truncate_text(&format!("  {}", entry.label), width),
-                                    theme::accent(entry.accent),
+                                    style,
                                 ))
                             })
                             .collect()
@@ -130,15 +154,11 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App) {
             }
         }
         Scene::SectionDetail(kind) => {
-            // Preview shows Detail content for the currently selected entry.
-            let idx = app.section_selected();
-            match app.mode() {
-                crate::ViewMode::Raw => {
-                    scenes::detail::render_raw_block(frame, area, app, *kind, idx);
-                }
-                crate::ViewMode::Structured => {
-                    scenes::detail::render_structured_detail(frame, area, app, *kind, idx);
-                }
+            // Raw SectionDetail has no preview (the whole pane IS the hexdump).
+            // Only structured mode shows a detail preview.
+            if app.mode() == crate::ViewMode::Structured {
+                let idx = app.section_selected();
+                scenes::detail::render_structured_detail(frame, area, app, *kind, idx, 0);
             }
         }
         Scene::Detail(_, _) => {} // no preview for Detail (leaf)
@@ -173,14 +193,21 @@ fn render_status(app: &App) -> Paragraph<'static> {
     Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
 }
 
-fn render_tabs(scene: &Scene) -> Tabs<'static> {
-    let titles = ["Overview", "Section", "Detail"]
-        .into_iter()
-        .map(Line::from)
-        .collect::<Vec<_>>();
+fn render_tabs(app: &App) -> Tabs<'static> {
+    // Detail tab is greyed out only in Raw mode — no disassembly there yet.
+    let detail_style = if app.mode() == crate::ViewMode::Raw {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default()
+    };
+    let titles = vec![
+        Line::from("Overview"),
+        Line::from("Section"),
+        Line::from(Span::styled("Detail", detail_style)),
+    ];
 
     Tabs::new(titles)
-        .select(scene.tab_index())
+        .select(app.current_scene().tab_index())
         .highlight_style(theme::selection())
         .block(
             Block::default()

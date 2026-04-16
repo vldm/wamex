@@ -17,7 +17,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind, idx: 
 
 /// Renders a raw hexdump of the `idx`-th raw block for `kind`. Used by Detail[raw]
 /// and by the preview pane when in Section[raw] mode.
-pub fn render_raw_block(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind, idx: usize) {
+/// `scroll` is the number of lines to skip at the top (0 for preview).
+pub fn render_raw_block(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    kind: SectionKind,
+    idx: usize,
+    scroll: u16,
+) {
     let width = content_width(area);
     let mut lines = Vec::new();
     if let Some(block) = app.raw_block_at(kind, idx) {
@@ -39,18 +47,21 @@ pub fn render_raw_block(frame: &mut Frame, area: Rect, app: &App, kind: SectionK
                 .borders(Borders::ALL)
                 .border_style(theme::border(true)),
         )
+        .scroll((scroll, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(p, area);
 }
 
 /// Renders a structured detail view for entry `idx` in `kind`. Used by Detail[structured]
 /// and by the preview pane when in Section[structured] mode.
+/// `scroll` is the number of lines to skip at the top (0 for preview).
 pub fn render_structured_detail(
     frame: &mut Frame,
     area: Rect,
     app: &App,
     kind: SectionKind,
     idx: usize,
+    scroll: u16,
 ) {
     let width = content_width(area);
     let mut lines = Vec::new();
@@ -125,14 +136,15 @@ pub fn render_structured_detail(
                 .borders(Borders::ALL)
                 .border_style(theme::border(true)),
         )
+        .scroll((scroll, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(p, area);
 }
 
 fn render_raw(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind, idx: usize) {
-    render_raw_block(frame, area, app, kind, idx);
+    render_raw_block(frame, area, app, kind, idx, app.detail_scroll() as u16);
 }
 
 fn render_structured(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind, idx: usize) {
-    render_structured_detail(frame, area, app, kind, idx);
+    render_structured_detail(frame, area, app, kind, idx, app.detail_scroll() as u16);
 }

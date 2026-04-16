@@ -15,33 +15,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {
 }
 
 fn render_raw(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {
-    let width = content_width(area);
-    let blocks = app.raw_blocks(kind);
+    use super::helpers::render_semantic_dump;
+
     let viewport = content_height(area);
     app.set_section_viewport(viewport);
-    let len = blocks.len();
     let scroll = app.section_scroll();
-    let end = (scroll + viewport).min(len);
-    let lines = if blocks.is_empty() {
-        vec![Line::from("No raw section bytes for this section")]
-    } else {
-        blocks
-            .iter()
-            .enumerate()
-            .skip(scroll)
-            .take(end.saturating_sub(scroll))
-            .map(|(idx, block)| {
-                let style = if idx == app.section_selected() {
-                    theme::selection()
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                Line::from(Span::styled(truncate_text(&block.title, width), style))
-            })
-            .collect::<Vec<_>>()
-    };
+    let width = content_width(area);
 
-    let list = Paragraph::new(lines)
+    let mut lines = Vec::new();
+    if let Some(block) = app.section_detail_raw_dump() {
+        lines.push(Line::from(Span::styled(
+            truncate_text(&block.title, width),
+            theme::title(),
+        )));
+        lines.push(Line::from(""));
+        lines.extend(render_semantic_dump(&block.dump));
+    } else {
+        lines.push(Line::from("No raw bytes for this section"));
+    }
+
+    let p = Paragraph::new(lines)
         .block(
             Block::default()
                 .title(format!("{} raw", app.section_label(kind)))
@@ -49,8 +42,9 @@ fn render_raw(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {
                 .borders(Borders::ALL)
                 .border_style(theme::border(true)),
         )
+        .scroll((scroll as u16, 0))
         .wrap(Wrap { trim: false });
-    frame.render_widget(list, area);
+    frame.render_widget(p, area);
 }
 
 fn render_structured(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {

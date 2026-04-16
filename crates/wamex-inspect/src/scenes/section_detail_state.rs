@@ -60,6 +60,13 @@ pub struct DetailView {
 #[derive(Default)]
 pub struct SectionDetailState {
     pub(crate) selection: ListSelectionState,
+    /// Index into the App's raw_sections slice recorded when entering this
+    /// section from the Overview in Raw mode.  Preserved across reset() so
+    /// that go_back / re-entry always shows the right block.
+    pub(crate) entered_raw_section_idx: usize,
+    /// The section kind that was last entered.  Used to detect same-section
+    /// re-entry so scroll state is preserved on go_back + re-drill.
+    pub(crate) last_kind: Option<SectionKind>,
 }
 
 impl SectionDetailState {
@@ -85,9 +92,19 @@ impl SectionDetailState {
         self.selection.selected = sel;
     }
 
+    /// Scroll the raw-hexdump view by `delta` lines, clamped to `[0, max_scroll]`.
+    pub fn scroll_raw(&mut self, delta: isize, max_scroll: usize) {
+        let new_scroll = (self.selection.scroll as isize + delta)
+            .clamp(0, max_scroll as isize) as usize;
+        self.selection.scroll = new_scroll;
+        self.selection.selected = new_scroll;
+    }
+
     pub fn reset(&mut self) {
         self.selection.selected = 0;
         self.selection.scroll = 0;
+        // entered_raw_section_idx is intentionally kept across resets so that
+        // the OverallView preview shows the correct block after go_back.
     }
 }
 

@@ -27,6 +27,8 @@ pub struct App {
     mode: ViewMode,
     overall: OverallState,
     section_detail: SectionDetailState,
+    /// Scroll offset for the Detail scene (content is not a list, just lines).
+    detail_scroll: usize,
 
     show_help: bool,
     show_preview: bool,
@@ -64,6 +66,7 @@ impl App {
             should_quit: false,
             overall: OverallState::default(),
             section_detail: SectionDetailState::default(),
+            detail_scroll: 0,
         })
     }
 
@@ -196,6 +199,10 @@ impl App {
         format!("[{}] {}", kind.canonical_label(), kind.title())
     }
 
+    pub fn detail_scroll(&self) -> usize {
+        self.detail_scroll
+    }
+
     pub fn section_selected_len(&self, kind: SectionKind) -> usize {
         let loaded = self.source.loaded();
         selected_len(
@@ -252,6 +259,36 @@ impl App {
 
     pub fn raw_block_at(&self, kind: SectionKind, idx: usize) -> Option<RawBlockView> {
         self.raw_blocks(kind).into_iter().nth(idx)
+    }
+
+    /// Returns the full hexdump of the raw-section block that was selected when
+    /// entering SectionDetail from the OverallView in Raw mode.
+    pub fn section_detail_raw_dump(&self) -> Option<RawBlockView> {
+        use crate::hexdump::plain_semantic_dump;
+        let block = self
+            .source
+            .raw_sections
+            .get(self.section_detail.entered_raw_section_idx)?;
+        Some(RawBlockView {
+            title: raw_section_title(block),
+            dump: plain_semantic_dump(&self.source.bytes[block.range.clone()], block.range.start),
+        })
+    }
+
+    /// Estimates the maximum scroll offset (rendered lines) for the current
+    /// raw-section hexdump, used to clamp Up/Down in raw SectionDetail.
+    fn section_detail_raw_max_scroll(&self) -> usize {
+        let block = match self
+            .source
+            .raw_sections
+            .get(self.section_detail.entered_raw_section_idx)
+        {
+            Some(b) => b,
+            None => return 0,
+        };
+        let byte_count = block.range.end.saturating_sub(block.range.start);
+        // 16 bytes per hexdump row, +3 for title/blank/rounding headroom
+        (byte_count + 15) / 16 + 3
     }
 
     pub fn overview_raw_preview(&self) -> Option<RawBlockView> {
@@ -328,10 +365,15 @@ impl App {
         match self.current_scene {
             Scene::OverallView => match self.mode {
                 ViewMode::Raw => {
+                    let prev_kind = self.selected_overall_section_kind();
                     let len = self.source.raw_sections.len();
                     self.overall.move_selection(delta, len);
+                    if self.selected_overall_section_kind() != prev_kind {
+                        self.section_detail.reset();
+                    }
                 }
                 ViewMode::Structured => {
+                    let prev_kind = self.selected_overall_section_kind();
                     // Collect indices of selectable (non-separator) rows
                     let selectable: Vec<usize> = self
                         .source
@@ -354,13 +396,26 @@ impl App {
                         new_selected as isize - cur_sel as isize,
                         self.source.structural_overview.len(),
                     );
+                    if self.selected_overall_section_kind() != prev_kind {
+                        self.section_detail.reset();
+                    }
                 }
             },
-            Scene::SectionDetail(kind) => {
-                let len = self.section_selected_len(kind);
-                self.section_detail.move_selection(delta, len);
+            Scene::SectionDetail(kind) => match self.mode {
+                ViewMode::Raw => {
+                    let max = self.section_detail_raw_max_scroll();
+                    self.section_detail.scroll_raw(delta, max);
+                }
+                ViewMode::Structured => {
+                    let len = self.section_selected_len(kind);
+                    self.section_detail.move_selection(delta, len);
+                }
+            },
+            Scene::Detail(_, _) => {
+                // Scroll the detail content. Use a large cap; ratatui handles over-scroll gracefully.
+                self.detail_scroll = (self.detail_scroll as isize + delta)
+                    .max(0) as usize;
             }
-            Scene::Detail(_, _) => {} // Detail has no list cursor
         }
     }
 
@@ -369,8 +424,15 @@ impl App {
             Scene::OverallView => match self.mode {
                 ViewMode::Raw => {
                     if let Some(kind) = self.selected_overall_section_kind() {
+                        let new_idx = self.overall.selected();
+                        let same = self.section_detail.last_kind == Some(kind)
+                            && self.section_detail.entered_raw_section_idx == new_idx;
+                        self.section_detail.entered_raw_section_idx = new_idx;
+                        self.section_detail.last_kind = Some(kind);
                         self.current_scene = Scene::SectionDetail(kind);
-                        self.section_detail.reset();
+                        if !same {
+                            self.section_detail.reset();
+                        }
                     }
                 }
                 ViewMode::Structured => {
@@ -381,19 +443,25 @@ impl App {
                         .get(sel)
                         .and_then(|r| r.kind)
                     {
+                        let same = self.section_detail.last_kind == Some(kind);
+                        self.section_detail.last_kind = Some(kind);
                         self.current_scene = Scene::SectionDetail(kind);
-                        self.section_detail.reset();
+                        if !same {
+                            self.section_detail.reset();
+                        }
                     }
                 }
             },
-            Scene::SectionDetail(kind) => {
+            // In Raw mode SectionDetail is a scrollable hexdump — no sub-entries to drill into.
+            Scene::SectionDetail(kind) if self.mode == ViewMode::Structured => {
                 let idx = self.section_detail.selected();
                 let len = self.section_selected_len(kind);
                 if len > 0 && idx < len {
+                    self.detail_scroll = 0;
                     self.current_scene = Scene::Detail(kind, idx);
                 }
             }
-            Scene::Detail(_, _) => {} // no further drilling from Detail
+            Scene::SectionDetail(_) | Scene::Detail(_, _) => {} // no drilling
         }
     }
 
