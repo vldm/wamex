@@ -1,0 +1,4 @@
+1. Diff mode
+2. hexdump with links
+3. disasm of functions
+4. hexdump as default for raw sections

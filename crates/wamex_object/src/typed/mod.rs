@@ -33,6 +33,7 @@ pub mod snapshot;
 const INDIRECT_TABLE_NAME: &str = "__indirect_function_table";
 
 const MEM_BASE_NAME: &str = "__memory_base";
+const MAIN_MEM_NAME: &str = "memory";
 const TABLE_BASE_NAME: &str = "__table_base";
 
 impl_entity_index! {
@@ -397,10 +398,10 @@ impl<'src> Module<'src> {
         memories
             .iter()
             .filter_map(|(id, def)| def.name().cloned().map(|name| (name, id)))
-            .find(|(name, _)| *name == MEM_BASE_NAME)
+            .find(|(name, _)| *name == MAIN_MEM_NAME)
             .or_else(|| {
                 if memories.len() == 1 {
-                    Some((MEM_BASE_NAME.into(), memories.iter().next().unwrap().0))
+                    Some((MAIN_MEM_NAME.into(), memories.iter().next().unwrap().0))
                 } else {
                     None
                 }

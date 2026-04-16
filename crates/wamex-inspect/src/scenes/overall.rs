@@ -98,6 +98,8 @@ fn sections_structural(app: &App, area: Rect) -> Paragraph<'static> {
         .map(|(idx, row)| {
             let style = if idx == app.overall_selected() {
                 theme::selection()
+            } else if row.kind.is_none() {
+                theme::title()
             } else {
                 Style::default().fg(Color::White)
             };

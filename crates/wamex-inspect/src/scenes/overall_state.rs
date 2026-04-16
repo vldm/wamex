@@ -4,16 +4,9 @@ use crate::{
     source::{RawSectionBlock, format_size_len},
 };
 
+#[derive(Default)]
 pub struct OverallState {
     pub(crate) selection: ListSelectionState,
-}
-
-impl Default for OverallState {
-    fn default() -> Self {
-        Self {
-            selection: ListSelectionState::default(),
-        }
-    }
 }
 
 impl OverallState {

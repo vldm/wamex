@@ -37,28 +37,28 @@ impl App {
     pub fn load(path: PathBuf) -> anyhow::Result<Self> {
         let bytes = std::fs::read(&path)?;
         let file_size = bytes.len();
-        let mut loader = FileLoader::new();
-        let file_id = loader.load_from_bytes(bytes.clone().into_boxed_slice())?;
+        let mut file_loader = FileLoader::new();
+        let file_id = file_loader.load_from_bytes(bytes.clone().into_boxed_slice())?;
 
         let validation_error = validate_wasm(&bytes);
 
-        let loaded = loader.get_file(file_id);
+        let loaded = file_loader.get_file(file_id);
         let raw_sections = collect_raw_sections(loaded.raw_reader());
-        let summary = RawSummary::from_parts(&loaded, validation_error, file_size);
-        let structural_overview = build_structural_overview(&loaded);
+        let summary = RawSummary::from_parts(loaded, validation_error, file_size);
+        let structural_overview = build_structural_overview(loaded);
 
         Ok(Self {
             source: SourceFile {
                 path,
                 bytes: bytes.into_boxed_slice(),
                 raw_sections,
-                loader,
+                loader: file_loader,
                 file_id,
                 summary,
                 structural_overview,
             },
             current_scene: Scene::OverallView,
-            mode: ViewMode::Raw,
+            mode: ViewMode::Structured,
             show_help: false,
             show_preview: true,
             should_quit: false,
@@ -87,8 +87,8 @@ impl App {
                 let idx = (c as u8 - b'1') as usize;
                 self.jump_to_scene(idx);
             }
-            KeyCode::Char('p') | KeyCode::Char('P') => self.show_preview = !self.show_preview,
-            KeyCode::Char('s') | KeyCode::Char('S') => match self.current_scene {
+            KeyCode::Char('p' | 'P') => self.show_preview = !self.show_preview,
+            KeyCode::Char('s' | 'S') => match self.current_scene {
                 Scene::OverallView | Scene::SectionDetail(_) => self.cycle_mode(),
                 Scene::Detail(kind, _) => {
                     self.current_scene = Scene::SectionDetail(kind);
@@ -202,7 +202,7 @@ impl App {
             &self.source.bytes,
             &self.source.raw_sections,
             self.module(),
-            &loaded,
+            loaded,
             self.mode,
             kind,
         )
@@ -443,4 +443,12 @@ impl App {
             .get(self.overall.selected())
             .and_then(|block| SectionKind::from_section_id(block.section_id))
     }
+}
+
+fn move_index(current: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let next = current as isize + delta;
+    next.clamp(0, len.saturating_sub(1) as isize) as usize
 }

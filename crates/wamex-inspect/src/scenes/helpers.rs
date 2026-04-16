@@ -32,6 +32,7 @@ pub fn truncate_text(text: &str, width: usize) -> String {
     truncated
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub fn render_hexdump_row(row: HexdumpRow) -> Line<'static> {
     let mut spans = vec![Span::styled(
         format!("{:08x}  ", row.offset),

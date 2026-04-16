@@ -1,13 +1,14 @@
 use std::{
+    fmt::Display,
     ops::Range,
     path::{Path, PathBuf},
 };
 
 use wamex_object::{
     index::SectionId,
-    layouts::{DataKind, SealedDataSegment},
+    layouts::{DataKind, ElementKind, SealedDataSegment, SealedElementSegment},
     raw::ObjectReader,
-    typed::{FileId, FileLoader, LoadedFile},
+    typed::{FileId, FileLoader, FunctionRef, LoadedFile, Module},
 };
 
 use crate::scene::SectionKind;
@@ -247,8 +248,12 @@ pub fn build_structural_overview(loaded: &LoadedFile<'_>) -> Vec<StructuralRow> 
             text: String::new(),
             kind: None,
         });
+        rows.push(StructuralRow {
+            text: String::from("- Data segments:"),
+            kind: None,
+        });
         for (_seg_id, segment) in segments {
-            rows.push(data_segment_row(segment));
+            rows.push(data_segment_row(segment, module));
         }
     }
 
@@ -259,25 +264,51 @@ pub fn build_structural_overview(loaded: &LoadedFile<'_>) -> Vec<StructuralRow> 
             text: String::new(),
             kind: None,
         });
+        rows.push(StructuralRow {
+            text: String::from("- Element segments:"),
+            kind: None,
+        });
         for (_seg_id, segment) in elem_segments {
-            let name = segment.name.as_ref();
-            let name = if name.len() > 20 { &name[..20] } else { name };
-            rows.push(StructuralRow {
-                text: format!(
-                    "element \"{}\"  kind: {:?}  items: {}",
-                    name,
-                    segment.kind,
-                    segment.parts.len(),
-                ),
-                kind: Some(SectionKind::Elements),
-            });
+            rows.push(element_segment_row(segment, module));
         }
     }
 
     rows
 }
 
-fn data_segment_row(segment: &SealedDataSegment<'_>) -> StructuralRow {
+fn element_segment_row(
+    segment: &SealedElementSegment<'_, FunctionRef>,
+    module: &Module<'_>,
+) -> StructuralRow {
+    let name = segment.name.as_ref();
+    let name = if name.len() > 20 { &name[..20] } else { name };
+    let mut table_name = String::new();
+    let location = match &segment.kind {
+        ElementKind::Active {
+            table_ref,
+            location,
+        } => {
+            table_name = module
+                .tables
+                .get_entity(*table_ref)
+                .name()
+                .map_or("<anon>".to_owned(), ToString::to_string);
+            if let Some(base) = location.global_ref().map(|g| module.get_name(g.into())) {
+                format!("va_offset: {base}+0x{:09x}", location.offset())
+            } else {
+                format!("va_offset: 0x{:09x}", location.offset())
+            }
+        }
+        ElementKind::Passive => "passive".to_owned(),
+        ElementKind::Declared => "declared".to_owned(),
+    };
+    let name = format!("{table_name}:{name}");
+    StructuralRow {
+        text: format!("{name:<40}  {location}  items: {}", segment.parts.len()),
+        kind: Some(SectionKind::Elements),
+    }
+}
+fn data_segment_row(segment: &SealedDataSegment<'_>, module: &Module<'_>) -> StructuralRow {
     let total_size: usize = segment
         .parts
         .values()
@@ -286,18 +317,30 @@ fn data_segment_row(segment: &SealedDataSegment<'_>) -> StructuralRow {
     let items = segment.parts.len();
     let name = segment.name.as_ref();
     let name = if name.len() > 20 { &name[..20] } else { name };
+    let mut memory_name = String::new();
     let location = match &segment.va_address {
-        DataKind::Active { location, .. } => {
-            format!("offset: 0x{:x}", location.offset())
+        DataKind::Active {
+            location,
+            memory_ref,
+        } => {
+            memory_name = module
+                .memories
+                .get_entity(*memory_ref)
+                .name()
+                .map_or("<anon>".to_owned(), ToString::to_string);
+            if let Some(base) = location.global_ref().map(|g| module.get_name(g.into())) {
+                format!("va_offset: {base}+0x{:09x}", location.offset())
+            } else {
+                format!("va_offset: 0x{:09x}", location.offset())
+            }
         }
         DataKind::Passive => "passive".to_owned(),
     };
+    let name = format!("{memory_name}:{name}");
     StructuralRow {
         text: format!(
-            "data \"{}\"  size: {}  {}  items: {}",
-            name,
+            "{name:<25}  size: {:<30}  {location}  items: {}",
             format_size_len(total_size),
-            location,
             items,
         ),
         kind: Some(SectionKind::Data),
@@ -356,7 +399,7 @@ pub fn entity_name(name: Option<impl AsRef<str>>) -> String {
 
 pub fn format_size_len(bytes: usize) -> String {
     format!(
-        "{:<10} ({})",
+        "{:>10} ({})",
         format_size_units(bytes),
         format_hex_len(bytes)
     )
@@ -378,6 +421,46 @@ fn format_size_units(bytes: usize) -> String {
 fn format_hex_len(bytes: usize) -> String {
     let width = format!("{bytes:x}").len().max(8);
     format!("0x{bytes:0width$x}")
+}
+
+pub fn global_type_label(global_type: wasmparser::GlobalType) -> String {
+    let mutability = if global_type.mutable { "mut " } else { "" };
+    let shared = if global_type.shared { "shared " } else { "" };
+    format!(
+        "{mutability}{shared}{}",
+        val_type_label(global_type.content_type)
+    )
+}
+
+pub fn table_type_label(table_type: &wasmparser::TableType) -> String {
+    let limits = format!(
+        "size: {}{}",
+        table_type.initial,
+        table_type
+            .maximum
+            .map_or_else(String::new, |max| format!("..={max}"))
+    );
+    let shared = if table_type.shared { "shared " } else { "" };
+    let table64 = if table_type.table64 { "64-bit " } else { "" };
+    format!("{shared}{table64}{limits}")
+}
+
+pub fn memory_type_label(mem_type: &wasmparser::MemoryType) -> String {
+    let limits = format!(
+        "size: {}{} pages",
+        mem_type.initial,
+        mem_type
+            .maximum
+            .map_or_else(String::new, |max| format!("..={max}"))
+    );
+    let page_size = if let Some(page_size) = mem_type.page_size_log2 {
+        1 << page_size
+    } else {
+        64 * 1024 // default page size is 64KiB
+    };
+    let shared = if mem_type.shared { "shared " } else { "" };
+    let mem64 = if mem_type.memory64 { "64-bit " } else { "" };
+    format!("{shared}{mem64}{limits} (page size: {page_size} bytes)")
 }
 
 pub fn function_type_label(func_type: &wasmparser::FuncType) -> String {

@@ -33,7 +33,7 @@ pub fn accent(accent: Accent) -> Style {
             .fg(Color::LightRed)
             .add_modifier(Modifier::BOLD),
         Accent::Muted => Style::default().fg(Color::Gray),
-        Accent::Warning => Style::default().fg(Color::LightYellow),
+        Accent::Warning => Style::default().fg(Color::Yellow),
     }
 }
 

@@ -4,8 +4,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::{App, SectionKind, scene::ViewMode, theme};
 use super::helpers::{content_height, content_width, truncate_text};
+use crate::{App, SectionKind, scene::ViewMode, theme};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind) {
     match app.mode() {

@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 
 use wamex_object::{
-    index::SectionId,
-    layouts::DataSymbolRef,
     linkage::reloc::Relative,
-    typed::{EntityKind, FunctionRef, LoadedFile, Module},
+    typed::{EntityKind, LoadedFile, Module},
 };
 
 use crate::{
     hexdump::{HexdumpRow, RawBlockView, plain_hexdump_rows},
     scene::{InspectTarget, Scene, SectionKind, ViewMode},
     scroll::{ListSelectionState, adjust_scroll, wrap_index},
-    source::{RawSectionBlock, entity_name, format_size_len, function_type_label},
+    source::{
+        RawSectionBlock, entity_name, format_size_len, function_type_label, global_type_label,
+        memory_type_label, table_type_label,
+    },
 };
 
 // ─── Display types ────────────────────────────────────────────────────────────
@@ -55,16 +56,9 @@ pub struct DetailView {
 
 // ─── SectionDetailState ───────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct SectionDetailState {
     pub(crate) selection: ListSelectionState,
-}
-
-impl Default for SectionDetailState {
-    fn default() -> Self {
-        Self {
-            selection: ListSelectionState::default(),
-        }
-    }
 }
 
 impl SectionDetailState {
@@ -303,8 +297,7 @@ pub fn entity_label(module: &Module<'_>, entity: EntityKind) -> String {
             let name = entity
                 .as_ref()
                 .and_then(|entry| entry.name())
-                .map(|name| name.as_ref())
-                .unwrap_or("<anon>");
+                .map_or("<anon>", |name| name.as_ref());
             format!("func {} {}", func_ref.as_u32(), name)
         }
         EntityKind::DataSymbol(data_ref) => {
@@ -335,8 +328,7 @@ pub fn entity_label(module: &Module<'_>, entity: EntityKind) -> String {
                 entity
                     .as_ref()
                     .and_then(|entry| entry.name())
-                    .map(|name| name.as_ref())
-                    .unwrap_or("<anon>")
+                    .map_or("<anon>", |name| name.as_ref())
             )
         }
         EntityKind::Table(table_ref) => {
@@ -347,8 +339,7 @@ pub fn entity_label(module: &Module<'_>, entity: EntityKind) -> String {
                 entity
                     .as_ref()
                     .and_then(|entry| entry.name())
-                    .map(|name| name.as_ref())
-                    .unwrap_or("<anon>")
+                    .map_or("<anon>", |name| name.as_ref())
             )
         }
         EntityKind::Memory(memory_ref) => {
@@ -359,8 +350,7 @@ pub fn entity_label(module: &Module<'_>, entity: EntityKind) -> String {
                 entity
                     .as_ref()
                     .and_then(|entry| entry.name())
-                    .map(|name| name.as_ref())
-                    .unwrap_or("<anon>")
+                    .map_or("<anon>", |name| name.as_ref())
             )
         }
         EntityKind::Tag(tag_ref) => {
@@ -371,8 +361,7 @@ pub fn entity_label(module: &Module<'_>, entity: EntityKind) -> String {
                 entity
                     .as_ref()
                     .and_then(|entry| entry.name())
-                    .map(|name| name.as_ref())
-                    .unwrap_or("<anon>")
+                    .map_or("<anon>", |name| name.as_ref())
             )
         }
         EntityKind::Type(type_ref) => format!("type {}", type_ref.as_u32()),
@@ -684,11 +673,13 @@ fn function_entries(module: &Module<'_>, loaded: &LoadedFile<'_>) -> Vec<ListEnt
         .iter()
         .map(|(func_ref, entity)| {
             let is_defined = entity.to_defined().is_some();
-            let exports = entity.export_as().names.len();
+            let exports_count = entity.export_as().names.len();
             let reloc_count = relocs
                 .get(&EntityKind::Function(func_ref))
                 .copied()
                 .unwrap_or_default();
+
+            let exports = entity.export_as().names.join(", ");
 
             ListEntry {
                 label: format!(
@@ -697,7 +688,7 @@ fn function_entries(module: &Module<'_>, loaded: &LoadedFile<'_>) -> Vec<ListEnt
                     entity_name(entity.name()),
                     function_type_label(entity.get_type()),
                     reloc_count,
-                    exports,
+                    exports_count,
                 ),
                 accent: if is_defined {
                     Accent::Normal
@@ -711,14 +702,11 @@ fn function_entries(module: &Module<'_>, loaded: &LoadedFile<'_>) -> Vec<ListEnt
                     format!("kind: {}", if is_defined { "defined" } else { "imported" }),
                     format!("name: {}", entity_name(entity.name())),
                     format!("type: {}", function_type_label(entity.get_type())),
-                    format!("exports: {}", exports),
+                    format!("exports: {}", exports_count),
                     format!("relocations: {}", reloc_count),
                     format!(
                         "body bytes: {}",
-                        entity
-                            .to_defined()
-                            .map(|defined| defined.body.len())
-                            .unwrap_or(0)
+                        entity.to_defined().map_or(0, |defined| defined.body.len())
                     ),
                 ],
             }
@@ -732,10 +720,10 @@ fn table_entries(module: &Module<'_>) -> Vec<ListEntry> {
         .iter()
         .map(|(table_ref, entity)| ListEntry {
             label: format!(
-                "[table {}] {}  {:?}",
-                table_ref.as_u32(),
+                "[table {}] {}  {}",
+                table_ref,
                 entity_name(entity.name()),
-                entity.get_type(),
+                table_type_label(entity.get_type()),
             ),
             accent: if entity.to_defined().is_some() {
                 Accent::Normal
@@ -747,7 +735,7 @@ fn table_entries(module: &Module<'_>) -> Vec<ListEntry> {
             inspect_target: None,
             detail_lines: vec![
                 format!("name: {}", entity_name(entity.name())),
-                format!("type: {:?}", entity.get_type()),
+                format!("type: {}", table_type_label(entity.get_type())),
                 format!(
                     "kind: {}",
                     if entity.to_defined().is_some() {
@@ -767,10 +755,10 @@ fn memory_entries(module: &Module<'_>) -> Vec<ListEntry> {
         .iter()
         .map(|(memory_ref, entity)| ListEntry {
             label: format!(
-                "[memory {}] {}  {:?}",
+                "[memory {}] {}  {}",
                 memory_ref.as_u32(),
                 entity_name(entity.name()),
-                entity.get_type(),
+                memory_type_label(entity.get_type()),
             ),
             accent: if entity.to_defined().is_some() {
                 Accent::Normal
@@ -782,7 +770,7 @@ fn memory_entries(module: &Module<'_>) -> Vec<ListEntry> {
             inspect_target: None,
             detail_lines: vec![
                 format!("name: {}", entity_name(entity.name())),
-                format!("type: {:?}", entity.get_type()),
+                format!("type: {}", memory_type_label(entity.get_type())),
                 format!(
                     "kind: {}",
                     if entity.to_defined().is_some() {
@@ -802,10 +790,10 @@ fn global_entries(module: &Module<'_>) -> Vec<ListEntry> {
         .iter()
         .map(|(global_ref, entity)| ListEntry {
             label: format!(
-                "[global {}] {}  {:?}",
+                "[global {}] {} {}",
                 global_ref.as_u32(),
                 entity_name(entity.name()),
-                entity.get_type(),
+                global_type_label(*entity.get_type()),
             ),
             accent: if entity.to_defined().is_some() {
                 Accent::Normal
@@ -817,7 +805,7 @@ fn global_entries(module: &Module<'_>) -> Vec<ListEntry> {
             inspect_target: None,
             detail_lines: vec![
                 format!("name: {}", entity_name(entity.name())),
-                format!("type: {:?}", entity.get_type()),
+                format!("type: {}", global_type_label(*entity.get_type())),
                 format!(
                     "kind: {}",
                     if entity.to_defined().is_some() {

@@ -4,8 +4,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use crate::{App, SectionKind, scene::ViewMode, theme};
 use super::helpers::{content_width, render_hexdump_row, truncate_text};
+use crate::{App, SectionKind, scene::ViewMode, theme};
 
 /// Renders the Detail scene (full screen — one specific section entry).
 pub fn render(frame: &mut Frame, area: Rect, app: &App, kind: SectionKind, idx: usize) {
@@ -56,10 +56,6 @@ pub fn render_structured_detail(
     let mut lines = Vec::new();
 
     if let Some(summary) = app.structured_section_summary(kind) {
-        lines.push(Line::from(Span::styled(
-            truncate_text(&app.section_label(kind), width),
-            theme::title(),
-        )));
         lines.push(Line::from(Span::styled(
             truncate_text(&summary.note, width),
             theme::accent(crate::Accent::Muted),
